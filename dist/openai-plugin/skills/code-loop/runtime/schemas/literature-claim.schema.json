@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Literature Claim",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "source", "claim", "decision", "benefit", "evidence_strength"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "url", "type"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "minLength": 1 },
+        "type": {
+          "enum": ["official-doc", "standard", "security-guide", "paper", "systematic-review", "github-project", "engineering-post"]
+        },
+        "retrieved_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "claim": { "type": "string", "minLength": 1 },
+    "applies_when": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "benefit": {
+      "type": "array",
+      "items": { "enum": ["reliability", "security", "accuracy", "speed", "size", "token-cost"] },
+      "uniqueItems": true
+    },
+    "cost": {
+      "type": "array",
+      "items": { "enum": ["code", "latency", "tokens", "attack-surface", "maintenance", "complexity"] },
+      "uniqueItems": true
+    },
+    "evidence_strength": { "enum": ["primary", "secondary", "weak"] },
+    "decision": { "enum": ["learn", "defer", "reject"] },
+    "reason": { "type": "string" },
+    "can_be_tested_by": { "type": "string" }
+  }
+}

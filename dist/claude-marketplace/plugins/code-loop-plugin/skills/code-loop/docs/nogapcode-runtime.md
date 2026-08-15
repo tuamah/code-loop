@@ -133,6 +133,10 @@ and lessons. This follows the useful part of agent-memory literature: write expe
 into a compact profile, then read only matching context. It deliberately avoids vector memory until
 retrieval needs exceed tags and explicit risk signals.
 
+For external literature, use `docs/literature-learning.md`: NoGapCode may ingest claims from trusted
+sources and high-quality GitHub projects, but every claim must pass source quality, benefit, cost,
+testability, and conflict checks before becoming a lesson.
+
 ## Deferred
 
 Do not build these in the first runtime:

@@ -106,12 +106,14 @@ def main() -> None:
         ROOT / "benchmarks" / "nogapbench" / "__init__.py",
         ROOT / "benchmarks" / "nogapbench" / "test_nogapbench.py",
         ROOT / "docs" / "nogapcode-runtime.md",
+        ROOT / "docs" / "literature-learning.md",
         ROOT / "runtime" / "schemas" / "gate.schema.json",
         ROOT / "runtime" / "schemas" / "claim.schema.json",
         ROOT / "runtime" / "schemas" / "evidence.schema.json",
         ROOT / "runtime" / "schemas" / "run-event.schema.json",
         ROOT / "runtime" / "schemas" / "decision.schema.json",
         ROOT / "runtime" / "schemas" / "lesson.schema.json",
+        ROOT / "runtime" / "schemas" / "literature-claim.schema.json",
     ]
     missing_required = [str(path.relative_to(ROOT)) for path in required_paths if not path.exists()]
     if missing_required:
