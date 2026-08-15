@@ -218,6 +218,22 @@ python scripts/nogap.py literature evaluate /path/to/project --id lit-context-00
 python scripts/nogap.py literature learn /path/to/project --id lit-context-0001
 ```
 
+For continuous repository learning, set one active goal and let `autolearn` process only the
+available gated literature claims that match it:
+
+```bash
+python scripts/nogap.py goal set /path/to/project \
+  --objective "planning ai coding model like codex" \
+  --tag planning \
+  --tag coding-agent
+python scripts/nogap.py autolearn /path/to/project
+python scripts/nogap.py recall /path/to/project --tag coding-agent
+```
+
+The repository also includes `.github/workflows/autolearn.yml`. Run it manually with an objective
+or let the weekly schedule process existing runtime literature. It opens a pull request when
+learning changes are produced; it does not merge automatic learning directly into `main`.
+
 ### Codex / ChatGPT Plugin
 
 The packaged plugin lives at:

@@ -139,6 +139,10 @@ testability, meaning-quality, and conflict checks before becoming a lesson. Mean
 the learned lesson remains accurate to the source, concise enough for recall, and complete enough to
 preserve the operational meaning.
 
+Goal-directed autolearning is a bounded loop over available literature claims, not a free-running
+belief engine. It should run locally or in GitHub Actions, learn only claims that match the active
+goal and pass the existing gates, and submit repository changes through a pull request.
+
 ## Deferred
 
 Do not build these in the first runtime:

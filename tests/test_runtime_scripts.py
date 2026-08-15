@@ -155,6 +155,59 @@ class RuntimeScriptTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("not approved", result.stderr + result.stdout)
 
+    def test_autolearn_uses_active_goal_and_available_literature(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "continuous learning")
+            run_script(
+                "scripts/nogap.py", "goal", "set", str(project),
+                "--objective", "planning ai coding model like codex",
+                "--tag", "planning",
+                "--tag", "coding-agent",
+            )
+            run_script(
+                "scripts/nogap.py", "literature", "add", str(project),
+                "--id", "lit-codex-plan",
+                "--title", "NoGapCode runtime docs",
+                "--url", "docs/nogapcode-runtime.md",
+                "--source-type", "official-doc",
+                "--claim", "Planning an AI coding agent requires gates, evidence, bounded repair, and final decisions.",
+                "--lesson", "Plan coding-agent work with gates, evidence, bounded repair, and final decisions.",
+                "--tag", "planning",
+                "--tag", "coding-agent",
+                "--benefit", "reliability",
+                "--benefit", "accuracy",
+                "--evidence-strength", "primary",
+                "--test", "python scripts/nogap.py recall PROJECT --tag coding-agent",
+                "--accurate",
+                "--concise",
+                "--complete",
+            )
+            run_script(
+                "scripts/nogap.py", "literature", "add", str(project),
+                "--id", "lit-unrelated",
+                "--title", "NoGapCode runtime docs",
+                "--url", "docs/nogapcode-runtime.md",
+                "--source-type", "official-doc",
+                "--claim", "Security gates can reduce untrusted tool use.",
+                "--lesson", "Keep tool authority small at trust boundaries.",
+                "--tag", "security",
+                "--benefit", "security",
+                "--evidence-strength", "primary",
+                "--test", "python scripts/nogap.py recall PROJECT --tag security",
+                "--accurate",
+                "--concise",
+                "--complete",
+            )
+            result = run_script("scripts/nogap.py", "autolearn", str(project))
+            self.assertIn("learned=1", result.stdout)
+            self.assertIn("deferred=1", result.stdout)
+            recalled = run_script("scripts/nogap.py", "recall", str(project), "--tag", "coding-agent")
+            self.assertIn("bounded repair", recalled.stdout)
+            context = run_script("scripts/nogap.py", "context", str(project), "--show")
+            self.assertIn("active-learning-goal", context.stdout)
+            run_script("scripts/nogap.py", "validate", str(project))
+
 
 if __name__ == "__main__":
     unittest.main()

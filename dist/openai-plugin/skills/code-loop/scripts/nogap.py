@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
@@ -24,6 +25,7 @@ LITERATURE_COSTS = {"code", "latency", "tokens", "attack-surface", "maintenance"
 LITERATURE_DECISIONS = {"learn", "defer", "reject"}
 MAX_LITERATURE_CLAIM = 500
 MAX_LITERATURE_LESSON = 280
+TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9-]{2,}", re.IGNORECASE)
 
 
 def now() -> str:
@@ -93,6 +95,21 @@ def load_objects(directory: Path) -> dict[str, dict[str, Any]]:
     return objects
 
 
+def text_tokens(value: str) -> set[str]:
+    return {match.group(0).lower() for match in TOKEN_RE.finditer(value)}
+
+
+def literature_goal_matches(item: dict[str, Any], goal: dict[str, Any]) -> bool:
+    goal_text = " ".join([goal.get("objective", ""), *goal.get("tags", [])])
+    item_text = " ".join([
+        item.get("claim", ""),
+        item.get("lesson", ""),
+        item.get("source", {}).get("title", ""),
+        " ".join(item.get("applies_when", [])),
+    ])
+    return bool(text_tokens(goal_text) & text_tokens(item_text))
+
+
 def literature_checks(item: dict[str, Any]) -> list[str]:
     failures: list[str] = []
     source = item.get("source")
@@ -134,6 +151,47 @@ def literature_checks(item: dict[str, Any]) -> list[str]:
             if quality.get(key) is not True:
                 failures.append(f"meaning must be {key}")
     return failures
+
+
+def learn_literature(root: Path, run_id: str, item_id: str, item: dict[str, Any], actor: str) -> str:
+    decision_id = f"decision-literature-{item_id}"
+    tags = sorted(set(["literature", *item.get("applies_when", [])]))
+    lesson_id = f"lesson-{stable_hash({'run_id': run_id, 'source': item_id, 'text': item['lesson']})[:12]}"
+    if (root / "lessons" / f"{lesson_id}.json").exists():
+        return lesson_id
+    decision = {
+        "id": decision_id,
+        "run_id": run_id,
+        "decision": "accept",
+        "reason": f"literature claim {item_id}: {item.get('reason', '')}",
+        "evidence": [],
+        "created_at": now(),
+        "decided_by": actor,
+    }
+    lesson = {
+        "id": lesson_id,
+        "run_id": run_id,
+        "text": item["lesson"],
+        "applies_when": {
+            "tags": tags,
+            "decision": "accept",
+            "reason": decision["reason"],
+        },
+        "evidence": [],
+        "source_decision": decision_id,
+        "created_at": now(),
+    }
+    write_json(root / "decisions" / f"{decision_id}.json", decision)
+    write_json(root / "lessons" / f"{lesson_id}.json", lesson)
+    append_event(root, {
+        "id": f"event-{lesson_id}",
+        "run_id": run_id,
+        "type": "LITERATURE_LESSON_LEARNED",
+        "created_at": lesson["created_at"],
+        "actor": actor,
+        "payload": {"literature_id": item_id, "lesson_id": lesson_id, "tags": tags}
+    })
+    return lesson_id
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -384,6 +442,32 @@ def cmd_learn(args: argparse.Namespace) -> None:
     print(f"learned {lesson_id}")
 
 
+def cmd_goal(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    run_path = root / "run.json"
+    run = read_json(run_path)
+    if args.action == "show":
+        print(json.dumps(run.get("learning_goal", {}), indent=2, sort_keys=True))
+        return
+    goal = {
+        "objective": args.objective,
+        "tags": sorted(set(args.tag)),
+        "status": "active",
+        "created_at": now(),
+    }
+    run["learning_goal"] = goal
+    write_json(run_path, run)
+    append_event(root, {
+        "id": f"event-learning-goal-{stable_hash(goal)[:12]}",
+        "run_id": run["id"],
+        "type": "LEARNING_GOAL_SET",
+        "created_at": goal["created_at"],
+        "actor": args.actor,
+        "payload": goal,
+    })
+    print(f"learning goal set: {args.objective}")
+
+
 def cmd_literature(args: argparse.Namespace) -> None:
     root = runtime_root(Path(args.path))
     run_id = read_json(root / "run.json")["id"]
@@ -449,42 +533,51 @@ def cmd_literature(args: argparse.Namespace) -> None:
 
     if item.get("decision") != "learn":
         raise SystemExit(f"FAIL: literature claim {args.id} is not approved for learning")
-    decision_id = f"decision-literature-{args.id}"
-    decision = {
-        "id": decision_id,
-        "run_id": run_id,
-        "decision": "accept",
-        "reason": f"literature claim {args.id}: {item.get('reason', '')}",
-        "evidence": [],
-        "created_at": now(),
-        "decided_by": args.actor,
-    }
-    tags = sorted(set(["literature", *item.get("applies_when", [])]))
-    lesson_id = f"lesson-{stable_hash({'run_id': run_id, 'source': args.id, 'text': item['lesson']})[:12]}"
-    lesson = {
-        "id": lesson_id,
-        "run_id": run_id,
-        "text": item["lesson"],
-        "applies_when": {
-            "tags": tags,
-            "decision": "accept",
-            "reason": decision["reason"],
-        },
-        "evidence": [],
-        "source_decision": decision_id,
-        "created_at": now(),
-    }
-    write_json(root / "decisions" / f"{decision_id}.json", decision)
-    write_json(root / "lessons" / f"{lesson_id}.json", lesson)
-    append_event(root, {
-        "id": f"event-{lesson_id}",
-        "run_id": run_id,
-        "type": "LITERATURE_LESSON_LEARNED",
-        "created_at": lesson["created_at"],
-        "actor": args.actor,
-        "payload": {"literature_id": args.id, "lesson_id": lesson_id, "tags": tags}
-    })
+    lesson_id = learn_literature(root, run_id, args.id, item, args.actor)
     print(f"learned {lesson_id} from {args.id}")
+
+
+def cmd_autolearn(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    run = read_json(root / "run.json")
+    goal = run.get("learning_goal")
+    if not isinstance(goal, dict) or goal.get("status") != "active":
+        raise SystemExit("FAIL: set an active learning goal first")
+    learned: list[str] = []
+    rejected: list[str] = []
+    deferred: list[str] = []
+    for path in sorted((root / "literature").glob("*.json")):
+        item = read_json(path)
+        item_id = require_string(item, "id", path)
+        if item.get("decision") == "learn" and args.include_learned:
+            learned.append(learn_literature(root, run["id"], item_id, item, args.actor))
+            continue
+        if item.get("decision") != "defer":
+            continue
+        if not literature_goal_matches(item, goal):
+            item["reason"] = "deferred: not relevant to current learning goal"
+            item["evaluated_at"] = now()
+            write_json(path, item)
+            deferred.append(item_id)
+            continue
+        failures = literature_checks(item)
+        item["decision"] = "reject" if failures else "learn"
+        item["reason"] = "; ".join(failures) if failures else "auto-learned for active goal after all gates passed"
+        item["evaluated_at"] = now()
+        write_json(path, item)
+        if failures:
+            rejected.append(item_id)
+        else:
+            learned.append(learn_literature(root, run["id"], item_id, item, args.actor))
+    append_event(root, {
+        "id": f"event-autolearn-{stable_hash({'learned': learned, 'rejected': rejected, 'deferred': deferred})[:12]}",
+        "run_id": run["id"],
+        "type": "AUTOLEARN_RUN",
+        "created_at": now(),
+        "actor": args.actor,
+        "payload": {"goal": goal, "learned": learned, "rejected": rejected, "deferred": deferred},
+    })
+    print(f"autolearn: learned={len(learned)} rejected={len(rejected)} deferred={len(deferred)}")
 
 
 def cmd_recall(args: argparse.Namespace) -> None:
@@ -521,6 +614,7 @@ def cmd_context(args: argparse.Namespace) -> None:
         "run_id": run["id"],
         "updated_at": now(),
         "objective": run.get("objective", ""),
+        "learning_goal": run.get("learning_goal", {}),
         "gate_statuses": sorted({gate.get("status", "unknown") for gate in gates.values()}),
         "evidence_statuses": sorted({item.get("status", "unknown") for item in evidence.values()}),
         "decisions": sorted({item.get("decision", "unknown") for item in decisions.values()}),
@@ -532,6 +626,7 @@ def cmd_context(args: argparse.Namespace) -> None:
                 "failed-evidence" if any(item.get("status") == "failed" for item in evidence.values()) else "",
                 "repair-decision" if any(item.get("decision") == "repair" for item in decisions.values()) else "",
                 "learned-context" if lessons else "",
+                "active-learning-goal" if run.get("learning_goal", {}).get("status") == "active" else "",
             ]
             if signal
         }),
@@ -578,6 +673,14 @@ def main() -> None:
     learn.add_argument("--actor", default="nogap learn")
     learn.set_defaults(func=cmd_learn)
 
+    goal = sub.add_parser("goal")
+    goal.add_argument("action", choices=["set", "show"])
+    goal.add_argument("path", nargs="?", default=".")
+    goal.add_argument("--objective", required=False)
+    goal.add_argument("--tag", action="append", default=[])
+    goal.add_argument("--actor", default="nogap goal")
+    goal.set_defaults(func=cmd_goal)
+
     recall = sub.add_parser("recall")
     recall.add_argument("path", nargs="?", default=".")
     recall.add_argument("--tag", action="append", default=[])
@@ -608,7 +711,15 @@ def main() -> None:
     literature.add_argument("--actor", default="nogap literature")
     literature.set_defaults(func=cmd_literature)
 
+    autolearn = sub.add_parser("autolearn")
+    autolearn.add_argument("path", nargs="?", default=".")
+    autolearn.add_argument("--include-learned", action="store_true")
+    autolearn.add_argument("--actor", default="nogap autolearn")
+    autolearn.set_defaults(func=cmd_autolearn)
+
     args = parser.parse_args()
+    if args.command == "goal" and args.action == "set" and not args.objective:
+        raise SystemExit("FAIL: goal set requires --objective")
     args.func(args)
 
 

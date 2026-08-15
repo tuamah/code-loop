@@ -1,0 +1,63 @@
+name: autolearn
+
+on:
+  workflow_dispatch:
+    inputs:
+      objective:
+        description: Learning goal to set before autolearn runs
+        required: false
+        type: string
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autolearn:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Set learning goal
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.objective != '' }}
+        env:
+          LEARNING_OBJECTIVE: ${{ inputs.objective }}
+        run: |
+          if [ ! -d .code-loop/runtime ]; then
+            python scripts/nogap.py init . --objective "autolearn"
+          fi
+          python scripts/nogap.py goal set . --objective "$LEARNING_OBJECTIVE"
+      - name: Run autolearn
+        run: |
+          if [ ! -d .code-loop/runtime ]; then
+            echo "No runtime workspace; nothing to learn."
+            exit 0
+          fi
+          python scripts/nogap.py autolearn .
+          python scripts/nogap.py validate .
+          python scripts/nogap.py context .
+      - name: Verify
+        run: |
+          python scripts/lint-instructions.py
+          python -m unittest discover -s tests
+          python -m unittest discover -s benchmarks
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "No learning changes."
+            exit 0
+          fi
+          branch="autolearn/${GITHUB_RUN_ID}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add .code-loop
+          git commit -m "Autolearn gated lessons"
+          git push --set-upstream origin "$branch"
+          gh pr create --title "Autolearn gated lessons" --body "Automated NoGapCode learning update. Merge only after reviewing the learned lessons and CI evidence." --base main --head "$branch"

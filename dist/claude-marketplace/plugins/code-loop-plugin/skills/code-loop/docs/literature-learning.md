@@ -69,6 +69,23 @@ python scripts/nogap.py recall /path/to/project --tag context
 meaning-quality flags pass. `learn` then writes a normal decision-linked lesson, so later runtime
 validation and recall use the same path as project-local lessons.
 
+## Goal-Directed Autolearning
+
+Continuous learning starts with one visible goal:
+
+```bash
+python scripts/nogap.py goal set /path/to/project \
+  --objective "planning ai coding model like codex" \
+  --tag planning \
+  --tag coding-agent
+python scripts/nogap.py autolearn /path/to/project
+```
+
+`autolearn` does not browse, invent, or trust new facts by itself. It processes only literature
+claims already available in the runtime, checks whether they match the active goal, applies the same
+source/benefit/testability/meaning-quality gates, and converts only passing claims into lessons.
+Non-matching claims stay deferred; failing claims are rejected.
+
 ## What To Learn
 
 Learn patterns that close a verified gap:
