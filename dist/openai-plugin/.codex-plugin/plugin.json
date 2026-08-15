@@ -1,0 +1,42 @@
+{
+  "name": "code-loop",
+  "version": "4.0.0",
+  "description": "Expert-minimal discipline for coding agents: best real result, least code, least tokens, lowest risk.",
+  "author": {
+    "name": "tuamah",
+    "url": "https://github.com/tuamah"
+  },
+  "homepage": "https://github.com/tuamah/code-loop",
+  "repository": "https://github.com/tuamah/code-loop",
+  "license": "MIT",
+  "keywords": [
+    "agent-skills",
+    "agents-md",
+    "ai-agents",
+    "claude-code",
+    "codex",
+    "coding-agents",
+    "cursor",
+    "prompt-engineering",
+    "software-engineering"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Code Loop",
+    "shortDescription": "Expert-minimal coding discipline",
+    "longDescription": "A lightweight discipline for coding agents that enables scientific innovation without hallucination: best real result, least code, least tokens, and lowest irreversible risk.",
+    "developerName": "tuamah",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/tuamah/code-loop",
+    "defaultPrompt": [
+      "Use Code Loop to make the smallest verified change.",
+      "Use Code Loop to plan this high-risk change.",
+      "Use Code Loop to invent safely without hallucination."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

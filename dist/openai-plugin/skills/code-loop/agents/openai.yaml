@@ -1,0 +1,4 @@
+interface:
+  display_name: "Code Loop v4"
+  short_description: "Expert-minimal coding discipline"
+  default_prompt: "Use $code-loop to make the smallest verified change with expert risk control."

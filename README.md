@@ -45,6 +45,9 @@ code-loop/
 │   └── token-discipline.md
 ├── scripts/
 │   └── lint-instructions.py
+├── dist/
+│   ├── openai-plugin/
+│   └── claude-marketplace/
 ├── .cursor/rules/code-loop.md
 ├── .windsurf/rules/code-loop.md
 └── .clinerules/code-loop.md
@@ -56,6 +59,43 @@ code-loop/
 
 ```bash
 cp AGENTS.md /path/to/project/AGENTS.md
+```
+
+### Codex / ChatGPT كـ Plugin
+
+الحزمة الجاهزة موجودة في:
+
+```text
+dist/openai-plugin/
+```
+
+يمكن اختبارها محليًا بإضافتها إلى marketplace محلي أو رفعها حسب مسار نشر OpenAI Plugins.
+الـmanifest الأساسي:
+
+```text
+dist/openai-plugin/.codex-plugin/plugin.json
+```
+
+### Claude Code كـ Plugin Marketplace
+
+الحزمة الجاهزة موجودة في:
+
+```text
+dist/claude-marketplace/
+```
+
+بعد نشر المستودع على GitHub:
+
+```text
+/plugin marketplace add tuamah/code-loop
+/plugin install code-loop-plugin@code-loop-marketplace
+```
+
+أو محليًا من مجلد المشروع:
+
+```text
+/plugin marketplace add ./dist/claude-marketplace
+/plugin install code-loop-plugin@code-loop-marketplace
 ```
 
 ### Claude Code كـ Skill
@@ -129,6 +169,7 @@ Next step:
 
 ```bash
 python scripts/lint-instructions.py
+python ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py dist/openai-plugin
 ```
 
 الفحص يتأكد من:

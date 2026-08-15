@@ -1,0 +1,12 @@
+{
+  "name": "code-loop-plugin",
+  "description": "Adds Code Loop v4 as an expert-minimal engineering and innovation discipline.",
+  "version": "4.0.0",
+  "author": {
+    "name": "tuamah",
+    "url": "https://github.com/tuamah"
+  },
+  "homepage": "https://github.com/tuamah/code-loop",
+  "repository": "https://github.com/tuamah/code-loop",
+  "license": "MIT"
+}
