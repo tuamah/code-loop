@@ -1,7 +1,7 @@
 {
   "name": "code-loop",
-  "version": "4.0.0",
-  "description": "Expert-minimal discipline for coding agents: best real result, least code, least tokens, lowest risk.",
+  "version": "5.0.0",
+  "description": "Expert-minimal discipline and council protocol for coding agents: best real result, least code, least tokens, lowest risk.",
   "author": {
     "name": "tuamah",
     "url": "https://github.com/tuamah"
@@ -15,6 +15,7 @@
     "ai-agents",
     "claude-code",
     "codex",
+    "council",
     "coding-agents",
     "cursor",
     "prompt-engineering",
@@ -23,8 +24,8 @@
   "skills": "./skills/",
   "interface": {
     "displayName": "Code Loop",
-    "shortDescription": "Expert-minimal coding discipline",
-    "longDescription": "A lightweight discipline for coding agents that enables scientific innovation without hallucination: best real result, least code, least tokens, and lowest irreversible risk.",
+    "shortDescription": "Expert-minimal agent council",
+    "longDescription": "A lightweight discipline and vendor-neutral council protocol for coding agents, enabling scientific innovation and multi-model coordination without hallucination.",
     "developerName": "tuamah",
     "category": "Productivity",
     "capabilities": [
@@ -35,7 +36,7 @@
     "defaultPrompt": [
       "Use Code Loop to make the smallest verified change.",
       "Use Code Loop to plan this high-risk change.",
-      "Use Code Loop to invent safely without hallucination."
+      "Use Code Loop Council to coordinate Codex, Claude, and Gemini."
     ],
     "brandColor": "#2563EB"
   }

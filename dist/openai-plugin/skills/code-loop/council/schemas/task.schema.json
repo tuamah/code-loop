@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Code Loop Task",
+  "type": "object",
+  "required": ["id", "objective", "risk", "status"],
+  "properties": {
+    "id": { "type": "string" },
+    "objective": { "type": "string" },
+    "risk": { "enum": ["low", "medium", "high", "critical"] },
+    "status": { "enum": ["planning", "building", "verifying", "reviewing", "repairing", "blocked", "accepted"] },
+    "budget": {
+      "type": "object",
+      "properties": {
+        "max_agents": { "type": "integer", "minimum": 1 },
+        "max_rounds": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "roles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "success_criteria": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

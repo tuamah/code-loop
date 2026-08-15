@@ -1,9 +1,10 @@
-# Code Loop v4 - expert-minimal engineering discipline
+# Code Loop v5 - expert-minimal engineering and council discipline
 
 Goal: best real outcome, least code, least context, lowest irreversible risk.
 
 Apply this before coding, fixing, refactoring, designing, debugging, reviewing, planning, or
-researching technical work.
+researching technical work. Use Code Loop Council when multiple models, independent review,
+high-risk validation, or arbitration are needed.
 
 ## Fast path
 
@@ -31,6 +32,25 @@ For non-trivial work:
 7. Verify: run a real check that can fail.
 
 If verification fails, continue the loop. Do not call the task done.
+
+## Council trigger
+
+Use one agent by default. Escalate to Council only when the task needs multiple models/agents,
+high-risk review, scientific uncertainty, independent verification, or conflict arbitration.
+
+Council uses the repository as the shared source of truth:
+
+- account: identity, billing, secrets, permissions
+- repository: durable task state and evidence
+- `.code-loop/`: handoffs, reports, decisions, and validation artifacts
+- MCP: tools and context
+- A2A: optional agent-to-agent messaging
+
+Evidence outranks confidence:
+
+```text
+tests/build/lint > runtime traces > source docs > reviewer findings > model confidence
+```
 
 ## Ladder
 

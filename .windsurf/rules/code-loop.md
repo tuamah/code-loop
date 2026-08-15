@@ -1,4 +1,4 @@
-# Code Loop v4
+# Code Loop v5
 
 Goal: best real outcome, least code, least context, lowest irreversible risk.
 
@@ -16,6 +16,10 @@ For non-trivial work:
 5. Risk-check confidence, blast radius, and trust boundaries.
 6. Build in small reversible increments.
 7. Verify with a check that can fail.
+
+Use Code Loop Council only when multiple models/agents, high-risk review, scientific uncertainty,
+independent verification, or arbitration are needed. Council uses `.code-loop/` in the repository
+as durable shared state; MCP is for tools/context and A2A is optional agent-to-agent messaging.
 
 Stop at the first Ladder rung that solves the need: do not build, reuse local code, use standard
 library, use platform, use installed dependency, write one line, then minimum new code.

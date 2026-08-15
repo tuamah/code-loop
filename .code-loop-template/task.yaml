@@ -1,0 +1,13 @@
+id: "task-0001"
+objective: "Replace this with the user's concrete objective."
+risk: "low"
+status: "planning"
+budget:
+  max_agents: 3
+  max_rounds: 2
+roles:
+  - orchestrator
+  - implementer
+  - verifier
+success_criteria:
+  - "A real verification check passes or the gap is explicitly reported."

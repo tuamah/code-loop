@@ -1,9 +1,9 @@
 ---
 name: code-loop
-description: "Expert-minimal engineering discipline for coding agents. Use before building, fixing, refactoring, designing, debugging, reviewing, planning, or researching technical work. Optimizes for the best real result with the least code, least context, lowest risk, and fastest useful response. Routes high-risk or expert domains such as security, data, ML/statistics, physics/engineering, medicine, product planning, and UI/design to lightweight reference checks only when needed."
+description: "Expert-minimal engineering and multi-agent coordination discipline for coding agents. Use before building, fixing, refactoring, designing, debugging, reviewing, planning, researching, or coordinating work across Codex, Claude, Gemini, local models, or humans. Optimizes for the best real result with the least code, least context, lowest risk, and fastest useful response. Uses Code Loop Council for high-risk or multi-model work through repository-based handoffs, optional MCP tool access, and optional A2A agent messaging."
 ---
 
-# Code Loop v4
+# Code Loop v5
 
 Goal: best real outcome, least code, least context, lowest irreversible risk.
 
@@ -35,6 +35,23 @@ For anything non-trivial, run this loop before editing:
 7. **Verify**: run a real check that can fail.
 
 If verification fails, continue the loop. Do not call the task done.
+
+## Council Trigger
+
+Use one agent unless the task needs more. Escalate to Code Loop Council when:
+
+- the user explicitly wants multiple models or agents
+- blast radius is high
+- independent review or validation is needed
+- research, invention, or scientific uncertainty matters
+- evidence conflicts and needs arbitration
+
+Council work uses the repository as source of truth. Do not rely on one vendor account or hidden
+chat memory for handoff. Initialize `.code-loop/` from `.code-loop-template/`, then assign roles
+and write reports there.
+
+Read `references/council-protocol.md` for the agent budget ladder and decision rules.
+Read `council/README.md` when implementing or operating a multi-agent workflow.
 
 ## Ladder
 
@@ -155,3 +172,4 @@ Before finalizing, answer silently:
 - Did I run or honestly report verification?
 - Did I spend no more code or tokens than the risk required?
 - If I invented or speculated, did I label hypotheses and give a way to test them?
+- If multiple agents were used, did their durable handoffs and evidence land in `.code-loop/`?

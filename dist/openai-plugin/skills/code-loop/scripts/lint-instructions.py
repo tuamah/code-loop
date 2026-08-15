@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 
@@ -15,10 +14,12 @@ TEXT_FILES = [
     ROOT / "README.md",
     ROOT / "agents" / "openai.yaml",
     *sorted((ROOT / "references").glob("*.md")),
+    *sorted((ROOT / "council" / "roles").glob("*.md")),
+    *sorted((ROOT / "council" / "workflows").glob("*.md")),
 ]
 
-MAX_SKILL_LINES = 180
-MAX_AGENTS_LINES = 130
+MAX_SKILL_LINES = 190
+MAX_AGENTS_LINES = 150
 BAN_PATTERNS = {
     "pycache mention": re.compile(r"__pycache__|\.pyc\b"),
     "vague quality command": re.compile(r"\b(write|make|produce) (clean|good|best) code\b", re.I),
@@ -34,6 +35,8 @@ def main() -> None:
     missing = [str(path.relative_to(ROOT)) for path in TEXT_FILES if not path.exists()]
     if missing:
         fail("missing files: " + ", ".join(missing))
+    if (ROOT / "README.ar.md").exists():
+        fail("README.ar.md should not exist; public package is English-only")
 
     skill = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     if not skill.startswith("---\nname: code-loop\n"):
@@ -41,6 +44,9 @@ def main() -> None:
     openai_yaml = (ROOT / "agents" / "openai.yaml").read_text(encoding="utf-8")
     if "$code-loop" not in openai_yaml:
         fail("agents/openai.yaml default_prompt must mention $code-loop")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    if "README.ar.md" in readme or "العربية" in readme:
+        fail("README.md must be English-only")
 
     line_counts = {
         "SKILL.md": len(skill.splitlines()),
@@ -59,6 +65,7 @@ def main() -> None:
                 fail(f"{rel} contains banned pattern: {label}")
 
     required_refs = [
+        "references/council-protocol.md",
         "references/domain-router.md",
         "references/innovation-protocol.md",
         "references/risk-matrix.md",
@@ -68,6 +75,21 @@ def main() -> None:
     for ref in required_refs:
         if ref not in skill:
             fail(f"SKILL.md does not reference {ref}")
+
+    required_paths = [
+        ROOT / "council" / "README.md",
+        ROOT / "council" / "schemas" / "task.schema.json",
+        ROOT / "council" / "schemas" / "handoff.schema.json",
+        ROOT / "council" / "schemas" / "decision.schema.json",
+        ROOT / ".code-loop-template" / "task.yaml",
+        ROOT / ".code-loop-template" / "plan.md",
+        ROOT / ".code-loop-template" / "state.json",
+        ROOT / "scripts" / "init-council.py",
+        ROOT / "scripts" / "validate-council.py",
+    ]
+    missing_required = [str(path.relative_to(ROOT)) for path in required_paths if not path.exists()]
+    if missing_required:
+        fail("missing v5 council files: " + ", ".join(missing_required))
 
     print("OK: instruction hygiene checks passed")
 

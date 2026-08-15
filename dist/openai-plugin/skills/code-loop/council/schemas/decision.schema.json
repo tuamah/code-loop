@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Code Loop Decision",
+  "type": "object",
+  "required": ["decision", "reason", "evidence"],
+  "properties": {
+    "decision": { "enum": ["accept", "repair", "rerun", "ask-human", "reject"] },
+    "reason": { "type": "string" },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "required_next_role": { "type": "string" }
+  }
+}

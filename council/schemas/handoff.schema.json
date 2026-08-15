@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Code Loop Handoff",
+  "type": "object",
+  "required": ["role", "status", "summary", "evidence"],
+  "properties": {
+    "role": { "type": "string" },
+    "agent": { "type": "string" },
+    "model": { "type": "string" },
+    "status": { "enum": ["pass", "fail", "blocked", "needs-review"] },
+    "summary": { "type": "string" },
+    "changed_files": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

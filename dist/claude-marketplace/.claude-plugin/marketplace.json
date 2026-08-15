@@ -4,15 +4,15 @@
     "name": "tuamah",
     "url": "https://github.com/tuamah"
   },
-  "description": "Marketplace for Code Loop agent discipline plugins.",
-  "version": "4.0.0",
+  "description": "Marketplace for Code Loop agent discipline and council plugins.",
+  "version": "5.0.0",
   "plugins": [
     {
       "name": "code-loop-plugin",
       "source": "./plugins/code-loop-plugin",
       "displayName": "Code Loop",
-      "description": "Expert-minimal discipline for coding agents.",
-      "version": "4.0.0",
+      "description": "Expert-minimal discipline and council protocol for coding agents.",
+      "version": "5.0.0",
       "author": {
         "name": "tuamah",
         "url": "https://github.com/tuamah"
@@ -25,6 +25,7 @@
         "agent-skills",
         "codex",
         "claude-code",
+        "council",
         "coding-agents"
       ]
     }

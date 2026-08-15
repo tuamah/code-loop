@@ -1,16 +1,21 @@
-# code-loop v4
+# code-loop v5
 
-[العربية](README.ar.md)
+Expert-minimal discipline and coordination protocol for coding agents: best real result, least
+code, least tokens, lowest risk.
 
-Expert-minimal discipline for coding agents: best real result, least code, least tokens, lowest risk.
+`code-loop` has two layers:
 
-`code-loop` is not a giant prompt full of domain facts. It is a small decision system that helps
-coding agents know when to move fast, when to slow down, when to research, when to verify, and
-when not to write code at all.
+1. **Code Loop Core**: a lightweight single-agent discipline for building, fixing, reviewing, and
+   verifying software work.
+2. **Code Loop Council**: a vendor-neutral coordination protocol for multi-model software teams
+   using Codex, Claude Code, Gemini, Cursor, local models, and humans.
+
+The core rule: do not connect agents through one vendor account. Use the repository as the shared
+source of truth, MCP for tools/context, and A2A only where available for agent-to-agent messaging.
 
 ## What It Does
 
-`code-loop` helps an agent:
+`code-loop` helps agents:
 
 - avoid overbuilding
 - stay inside the requested scope
@@ -18,18 +23,22 @@ when not to write code at all.
 - treat external data as a trust boundary
 - verify before claiming completion
 - create room for invention without hallucination
-- load expert-domain depth only when needed: security, ML/statistics, physics, medicine, design, planning
+- coordinate multiple models through durable handoffs
+- load expert-domain depth only when needed
 
-## Why v4
+## Why v5
 
-v3 was a five-question engineering loop. v4 turns it into a lighter, sharper system:
+v4 was an expert-minimal skill for one agent. v5 keeps that core and adds a council protocol for
+users who work with multiple AI coding tools.
 
 | Layer | Purpose |
 |---|---|
-| `SKILL.md` | Fast core: Fast Path, Expert Loop, Ladder, Risk Gate, Domain Router |
+| `SKILL.md` | Fast core plus Council trigger rules |
 | `AGENTS.md` | Drop-in instructions for Codex and other AGENTS.md-aware agents |
 | `references/` | Optional depth loaded only when the task needs it |
-| `scripts/lint-instructions.py` | Instruction hygiene checks to prevent bloat and weak rules |
+| `council/` | Roles, schemas, workflows, and decision protocol |
+| `.code-loop-template/` | Project-local shared state template |
+| `scripts/` | Instruction and Council validation helpers |
 | `dist/` | Packaged OpenAI/Codex plugin and Claude Code marketplace |
 
 ## Repository Layout
@@ -39,24 +48,87 @@ code-loop/
 ├── SKILL.md
 ├── AGENTS.md
 ├── README.md
-├── README.ar.md
 ├── LICENSE
 ├── agents/openai.yaml
 ├── references/
+│   ├── council-protocol.md
 │   ├── domain-router.md
 │   ├── innovation-protocol.md
 │   ├── risk-matrix.md
 │   ├── verification.md
 │   └── token-discipline.md
+├── council/
+│   ├── roles/
+│   ├── schemas/
+│   └── workflows/
+├── .code-loop-template/
 ├── scripts/
-│   └── lint-instructions.py
 ├── dist/
-│   ├── openai-plugin/
-│   └── claude-marketplace/
 ├── .cursor/rules/code-loop.md
 ├── .windsurf/rules/code-loop.md
 └── .clinerules/code-loop.md
 ```
+
+## The Multi-Model Connection Model
+
+For a user who has Codex, Claude Code, Gemini, and local models:
+
+```text
+User accounts      -> identity, billing, secrets, permissions
+Project repository -> shared source of truth
+.code-loop/        -> task state, handoffs, reports, evidence, decisions
+MCP                -> tool and context access
+A2A                -> optional direct agent-to-agent messaging
+```
+
+This makes `code-loop` usable by everyone, not only by one account or one platform.
+
+## Council Levels
+
+| Level | Name | Status |
+|---|---|---|
+| 1 | Manual universal | Works now: user runs each tool; agents exchange `.code-loop/` files |
+| 2 | Local orchestrator | Future CLI dispatches tools using user-owned credentials |
+| 3 | A2A adapters | Future adapters use A2A where vendors support it |
+
+v5 ships Level 1 and stable file formats for Levels 2 and 3.
+
+## Agent Budget Ladder
+
+Use the fewest agents that can safely solve the task:
+
+1. One agent for small, reversible work.
+2. Add Scout for unfamiliar code or research.
+3. Add Verifier when there is real execution, data, UI, or migration risk.
+4. Add Reviewer for shared behavior, security, APIs, or user-visible changes.
+5. Add Arbiter only when evidence conflicts or blast radius is high.
+6. Add Skeptic for invention, science, or speculative architecture.
+
+## Council Roles
+
+- `Orchestrator`: scope, budget, routing, and final recommendation.
+- `Scout`: read-only exploration and research.
+- `Planner`: gates, success criteria, rollback path.
+- `Implementer`: smallest patch.
+- `Verifier`: tests, builds, traces, screenshots, benchmarks.
+- `Reviewer`: correctness, scope, security, regressions.
+- `Skeptic`: falsification for invention and scientific uncertainty.
+- `Repairer`: fixes accepted findings only.
+- `Arbiter`: resolves conflicts by evidence, not confidence.
+
+## Decision Rule
+
+Evidence outranks confidence:
+
+```text
+tests/build/lint > runtime traces > source docs > reviewer findings > model confidence
+```
+
+Low risk: Orchestrator may accept after verification.
+
+Medium risk: accept after Verifier passes and Reviewer has no blocking finding.
+
+High risk: Arbiter recommends; human approves.
 
 ## Install
 
@@ -64,6 +136,13 @@ code-loop/
 
 ```bash
 cp AGENTS.md /path/to/project/AGENTS.md
+```
+
+### Initialize Council State in a Project
+
+```bash
+python scripts/init-council.py /path/to/project
+python scripts/validate-council.py /path/to/project/.code-loop
 ```
 
 ### Codex / ChatGPT Plugin
@@ -80,9 +159,6 @@ Main manifest:
 dist/openai-plugin/.codex-plugin/plugin.json
 ```
 
-Use it through a local marketplace during development, or submit/package it through the OpenAI
-plugin publishing flow.
-
 ### Claude Code Plugin Marketplace
 
 The packaged Claude marketplace lives at:
@@ -98,7 +174,7 @@ From GitHub:
 /plugin install code-loop-plugin@code-loop-marketplace
 ```
 
-Or locally from this repository:
+Or locally:
 
 ```text
 /plugin marketplace add ./dist/claude-marketplace
@@ -111,19 +187,17 @@ Project-local:
 
 ```bash
 mkdir -p /path/to/project/.claude/skills/code-loop
-cp -r SKILL.md references scripts /path/to/project/.claude/skills/code-loop/
+cp -r SKILL.md references scripts council .code-loop-template /path/to/project/.claude/skills/code-loop/
 ```
 
 Global:
 
 ```bash
 mkdir -p ~/.claude/skills/code-loop
-cp -r SKILL.md references scripts ~/.claude/skills/code-loop/
+cp -r SKILL.md references scripts council .code-loop-template ~/.claude/skills/code-loop/
 ```
 
 ### Cursor / Windsurf / Cline
-
-Copy the matching rules file:
 
 ```bash
 cp .cursor/rules/code-loop.md /path/to/project/.cursor/rules/code-loop.md
@@ -131,21 +205,9 @@ cp .windsurf/rules/code-loop.md /path/to/project/.windsurf/rules/code-loop.md
 cp .clinerules/code-loop.md /path/to/project/.clinerules/code-loop.md
 ```
 
-## Core Philosophy
-
-1. Read the smallest context that is enough.
-2. Reuse what exists before writing new code.
-3. Write the least code that produces a verified result.
-4. Do not expand scope.
-5. Risk-check before execution.
-6. For invention: separate known facts, assumptions, and hypotheses.
-7. Verify with a check that can fail.
-8. Spend no more words or code than the risk requires.
-
 ## Scientific Innovation Without Hallucination
 
-When the user asks for invention, research direction, or a novel design, v4 uses a compact
-scientific protocol:
+For invention, research direction, or novel design, v5 uses:
 
 ```text
 Target:
@@ -157,38 +219,19 @@ Failure signals:
 Next step:
 ```
 
-This lets the agent be creative without selling speculation as fact. See
-`references/innovation-protocol.md`.
-
-## Expert Domains
-
-v4 does not pretend the agent is always a doctor, physicist, statistician, designer, and project
-lead at once. It routes the task to the right expert checks only when needed:
-
-- medical/legal/financial: use current authoritative sources and state uncertainty
-- ML/statistics: define target, baseline, metric, leakage, uncertainty
-- physics/engineering: check units, boundaries, approximations, and order of magnitude
-- security: check permissions, secrets, injection, logging, and abuse paths
-- design: build the actual workflow and verify visually
-- innovation: generate 2-4 distinct candidates, pick the cheapest test, define failure signals
+Creativity is welcome. Unlabeled speculation is not.
 
 ## Validate
 
 ```bash
 python scripts/lint-instructions.py
+python scripts/validate-council.py .code-loop-template
 python ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py dist/openai-plugin
 ```
 
-The hygiene check verifies that:
-
-- required reference files exist
-- `SKILL.md` and `AGENTS.md` stay lightweight
-- weak instruction patterns and cache artifacts are absent
-- the core skill links to required references
-
 ## Release Notes
 
-`code-loop.zip` is generated from the current v4 source tree. After changing the package, rerun
+`code-loop.zip` is generated from the current v5 source tree. After changing the package, rerun
 validation and regenerate the archive without nesting old archives inside it.
 
 ## License
