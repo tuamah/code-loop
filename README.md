@@ -157,6 +157,15 @@ High risk: Arbiter recommends; human approves.
 cp AGENTS.md /path/to/project/AGENTS.md
 ```
 
+Safe installer that never replaces existing project instructions:
+
+```bash
+python scripts/install-project.py /path/to/project
+```
+
+If the project already has `AGENTS.md` or `CLAUDE.md`, the installer appends a small Code Loop
+Bridge instead of overwriting the file. If neither exists, it creates `AGENTS.md` from Code Loop.
+
 ### Initialize Council State in a Project
 
 ```bash
@@ -244,6 +253,7 @@ Creativity is welcome. Unlabeled speculation is not.
 
 ```bash
 python scripts/lint-instructions.py
+python scripts/install-project.py /tmp/demo-project
 python scripts/validate-council.py .code-loop-template
 python ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py dist/openai-plugin
 ```

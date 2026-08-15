@@ -94,6 +94,7 @@ def main() -> None:
         ROOT / ".code-loop-template" / "plan.md",
         ROOT / ".code-loop-template" / "state.json",
         ROOT / "scripts" / "init-council.py",
+        ROOT / "scripts" / "install-project.py",
         ROOT / "scripts" / "validate-council.py",
     ]
     missing_required = [str(path.relative_to(ROOT)) for path in required_paths if not path.exists()]

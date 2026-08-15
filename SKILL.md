@@ -53,6 +53,9 @@ and write reports there.
 Read `references/council-protocol.md` for the agent budget ladder and decision rules.
 Read `council/README.md` when implementing or operating a multi-agent workflow.
 
+When installing Code Loop into a project, never replace existing `AGENTS.md` or `CLAUDE.md`.
+Append a bridge or use `scripts/install-project.py`.
+
 ## CLO Commands
 
 Treat short `clo/` inputs as command shortcuts: `clo/on`, `clo/off`, `clo/council`,
