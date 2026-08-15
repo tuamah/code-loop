@@ -1,40 +1,45 @@
 # code-loop v4
 
-منهجية خفيفة لوكلاء البرمجة: أعلى نتيجة حقيقية، بأقل كود، أقل توكنز، وأقل مخاطرة.
+[العربية](README.ar.md)
 
-الفكرة ليست أن نحشو الوكيل بموسوعة طب وفيزياء ورياضيات وتعلم آلة. الفكرة أن نعطيه نواة قرار
-خبيرة: يعرف متى يتحرك بسرعة، متى يبطئ، متى يبحث، متى يتحقق، ومتى لا يكتب كودًا أصلًا.
+Expert-minimal discipline for coding agents: best real result, least code, least tokens, lowest risk.
 
-## ماذا يفعل
+`code-loop` is not a giant prompt full of domain facts. It is a small decision system that helps
+coding agents know when to move fast, when to slow down, when to research, when to verify, and
+when not to write code at all.
 
-`code-loop` يجعل الوكيل:
+## What It Does
 
-- يقلل البناء الزائد.
-- يلمس النطاق المطلوب فقط.
-- يفرق بين التعديل المحلي والتغيير عالي المخاطر.
-- يعامل المدخلات الخارجية كحدود ثقة تحتاج تحققًا.
-- يختار فحصًا حقيقيًا قبل إعلان الانتهاء.
-- يفتح مساحة ابتكار فعلية، لكن يوسم الفرضيات ويطلب تجربة قابلة للتكذيب.
-- يستدعي عمق المجال فقط عند الحاجة: أمن، ML، إحصاء، فيزياء، طب، تصميم، تخطيط.
+`code-loop` helps an agent:
 
-## لماذا v4
+- avoid overbuilding
+- stay inside the requested scope
+- distinguish local edits from high-risk changes
+- treat external data as a trust boundary
+- verify before claiming completion
+- create room for invention without hallucination
+- load expert-domain depth only when needed: security, ML/statistics, physics, medicine, design, planning
 
-v3 كانت خمسة أسئلة قوية. v4 تحولها إلى نظام أخف وأذكى:
+## Why v4
 
-| الطبقة | الغرض |
+v3 was a five-question engineering loop. v4 turns it into a lighter, sharper system:
+
+| Layer | Purpose |
 |---|---|
-| `SKILL.md` | النواة السريعة: Fast Path، Expert Loop، Ladder، Risk Gate، Domain Router |
-| `AGENTS.md` | نسخة مباشرة لأي وكيل يقرأ AGENTS.md مثل Codex |
-| `references/` | عمق اختياري لا يستهلك السياق إلا عند الحاجة |
-| `scripts/lint-instructions.py` | فحص يمنع تضخم التعليمات والأنماط الضعيفة |
+| `SKILL.md` | Fast core: Fast Path, Expert Loop, Ladder, Risk Gate, Domain Router |
+| `AGENTS.md` | Drop-in instructions for Codex and other AGENTS.md-aware agents |
+| `references/` | Optional depth loaded only when the task needs it |
+| `scripts/lint-instructions.py` | Instruction hygiene checks to prevent bloat and weak rules |
+| `dist/` | Packaged OpenAI/Codex plugin and Claude Code marketplace |
 
-## البنية
+## Repository Layout
 
 ```text
 code-loop/
 ├── SKILL.md
 ├── AGENTS.md
 ├── README.md
+├── README.ar.md
 ├── LICENSE
 ├── agents/openai.yaml
 ├── references/
@@ -53,61 +58,63 @@ code-loop/
 └── .clinerules/code-loop.md
 ```
 
-## التركيب
+## Install
 
-### Codex أو أي وكيل يدعم AGENTS.md
+### Codex or Any AGENTS.md-Aware Agent
 
 ```bash
 cp AGENTS.md /path/to/project/AGENTS.md
 ```
 
-### Codex / ChatGPT كـ Plugin
+### Codex / ChatGPT Plugin
 
-الحزمة الجاهزة موجودة في:
+The packaged plugin lives at:
 
 ```text
 dist/openai-plugin/
 ```
 
-يمكن اختبارها محليًا بإضافتها إلى marketplace محلي أو رفعها حسب مسار نشر OpenAI Plugins.
-الـmanifest الأساسي:
+Main manifest:
 
 ```text
 dist/openai-plugin/.codex-plugin/plugin.json
 ```
 
-### Claude Code كـ Plugin Marketplace
+Use it through a local marketplace during development, or submit/package it through the OpenAI
+plugin publishing flow.
 
-الحزمة الجاهزة موجودة في:
+### Claude Code Plugin Marketplace
+
+The packaged Claude marketplace lives at:
 
 ```text
 dist/claude-marketplace/
 ```
 
-بعد نشر المستودع على GitHub:
+From GitHub:
 
 ```text
 /plugin marketplace add tuamah/code-loop
 /plugin install code-loop-plugin@code-loop-marketplace
 ```
 
-أو محليًا من مجلد المشروع:
+Or locally from this repository:
 
 ```text
 /plugin marketplace add ./dist/claude-marketplace
 /plugin install code-loop-plugin@code-loop-marketplace
 ```
 
-### Claude Code كـ Skill
+### Claude Code Skill
 
-داخل مشروع واحد:
+Project-local:
 
 ```bash
 mkdir -p /path/to/project/.claude/skills/code-loop
 cp -r SKILL.md references scripts /path/to/project/.claude/skills/code-loop/
 ```
 
-عالميًا:
+Global:
 
 ```bash
 mkdir -p ~/.claude/skills/code-loop
@@ -116,7 +123,7 @@ cp -r SKILL.md references scripts ~/.claude/skills/code-loop/
 
 ### Cursor / Windsurf / Cline
 
-انسخ إحدى النسخ الجاهزة:
+Copy the matching rules file:
 
 ```bash
 cp .cursor/rules/code-loop.md /path/to/project/.cursor/rules/code-loop.md
@@ -124,33 +131,21 @@ cp .windsurf/rules/code-loop.md /path/to/project/.windsurf/rules/code-loop.md
 cp .clinerules/code-loop.md /path/to/project/.clinerules/code-loop.md
 ```
 
-## الفلسفة المختصرة
+## Core Philosophy
 
-1. افهم أقل سياق يكفي.
-2. استخدم الموجود قبل كتابة الجديد.
-3. اكتب أقل كود يحقق نتيجة قابلة للتحقق.
-4. لا توسع النطاق.
-5. قيّم المخاطر قبل التنفيذ.
-6. عند الابتكار: افصل المعروف عن المفترض عن الفرضي.
-7. تحقق بفحص يمكن أن يفشل.
-8. اختصر الكلام بقدر ما تسمح به المخاطرة.
+1. Read the smallest context that is enough.
+2. Reuse what exists before writing new code.
+3. Write the least code that produces a verified result.
+4. Do not expand scope.
+5. Risk-check before execution.
+6. For invention: separate known facts, assumptions, and hypotheses.
+7. Verify with a check that can fail.
+8. Spend no more words or code than the risk requires.
 
-## المجالات عالية الخبرة
+## Scientific Innovation Without Hallucination
 
-v4 لا يدعي أن الوكيل طبيب أو فيزيائي أو إحصائي دائمًا. بدلًا من ذلك يوجهه إلى أسئلة الخبراء:
-
-- في الطب/القانون/المال: استخدم مصادر حديثة واذكر عدم اليقين.
-- في ML والإحصاء: حدد الهدف، baseline، metric، leakage، uncertainty.
-- في الفيزياء والهندسة: افحص الوحدات، الحدود، التقريبات، والحجم التقريبي.
-- في الأمن: افحص الصلاحيات، الأسرار، الحقن، السجلات، وسوء الاستخدام.
-- في التصميم: ابنِ workflow حقيقيًا وتحقق بصريًا.
-- في الابتكار: ولّد 2-4 أفكار مختلفة، اختر الأرخص اختبارًا، واذكر ما الذي يجعلها خاطئة.
-
-التفاصيل موجودة في `references/domain-router.md` ولا تُقرأ إلا عند الحاجة.
-
-## مساحة الابتكار بلا هلوسة
-
-عند طلب اختراع أو فكرة جديدة، يستخدم v4 بروتوكولًا علميًا:
+When the user asks for invention, research direction, or a novel design, v4 uses a compact
+scientific protocol:
 
 ```text
 Target:
@@ -162,28 +157,40 @@ Failure signals:
 Next step:
 ```
 
-هذا يسمح للوكيل أن يكون خلاقًا، لكن لا يسمح له أن يبيع التخمين كحقيقة. التفاصيل في
+This lets the agent be creative without selling speculation as fact. See
 `references/innovation-protocol.md`.
 
-## فحص الحزمة
+## Expert Domains
+
+v4 does not pretend the agent is always a doctor, physicist, statistician, designer, and project
+lead at once. It routes the task to the right expert checks only when needed:
+
+- medical/legal/financial: use current authoritative sources and state uncertainty
+- ML/statistics: define target, baseline, metric, leakage, uncertainty
+- physics/engineering: check units, boundaries, approximations, and order of magnitude
+- security: check permissions, secrets, injection, logging, and abuse paths
+- design: build the actual workflow and verify visually
+- innovation: generate 2-4 distinct candidates, pick the cheapest test, define failure signals
+
+## Validate
 
 ```bash
 python scripts/lint-instructions.py
 python ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py dist/openai-plugin
 ```
 
-الفحص يتأكد من:
+The hygiene check verifies that:
 
-- وجود الملفات المرجعية الأساسية.
-- أن `SKILL.md` و`AGENTS.md` بقيا خفيفين.
-- عدم وجود أنماط تعليمات ضعيفة أو مخلفات Python cache في النصوص.
-- أن النواة تشير إلى المراجع المطلوبة.
+- required reference files exist
+- `SKILL.md` and `AGENTS.md` stay lightweight
+- weak instruction patterns and cache artifacts are absent
+- the core skill links to required references
 
-## ملاحظات نشر
+## Release Notes
 
-`code-loop.zip` أرشيف توزيع مولد من ملفات v4 الحالية. عند تعديل الحزمة، أعد تشغيل الفحص ثم
-أعد توليد الأرشيف من الجذر بدون تضمين أي أرشيفات قديمة داخله.
+`code-loop.zip` is generated from the current v4 source tree. After changing the package, rerun
+validation and regenerate the archive without nesting old archives inside it.
 
-## الترخيص
+## License
 
 MIT.
