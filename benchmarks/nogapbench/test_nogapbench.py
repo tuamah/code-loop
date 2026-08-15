@@ -79,6 +79,9 @@ class NoGapBench(unittest.TestCase):
             result = run_nogap(project, "decide")
             self.assertIn("repair:", result.stdout)
             run_nogap(project, "validate")
+            context = run_nogap(project, "context", "--show")
+            self.assertIn("failed-evidence", context.stdout)
+            self.assertIn("repair-decision", context.stdout)
 
     def test_lesson_without_source_decision_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

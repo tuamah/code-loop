@@ -342,6 +342,45 @@ def cmd_recall(args: argparse.Namespace) -> None:
         print(f"{lesson['id']} [{tags}]: {lesson['text']}")
 
 
+def cmd_context(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    run = read_json(root / "run.json")
+    gates = load_objects(root / "gates")
+    evidence = load_objects(root / "evidence")
+    decisions = load_objects(root / "decisions")
+    lessons = load_objects(root / "lessons")
+
+    tags = sorted({
+        tag
+        for lesson in lessons.values()
+        for tag in lesson.get("applies_when", {}).get("tags", [])
+    })
+    profile = {
+        "run_id": run["id"],
+        "updated_at": now(),
+        "objective": run.get("objective", ""),
+        "gate_statuses": sorted({gate.get("status", "unknown") for gate in gates.values()}),
+        "evidence_statuses": sorted({item.get("status", "unknown") for item in evidence.values()}),
+        "decisions": sorted({item.get("decision", "unknown") for item in decisions.values()}),
+        "lesson_tags": tags,
+        "risk_signals": sorted({
+            signal
+            for signal in [
+                "frozen-gate" if any(gate.get("status") == "frozen" for gate in gates.values()) else "",
+                "failed-evidence" if any(item.get("status") == "failed" for item in evidence.values()) else "",
+                "repair-decision" if any(item.get("decision") == "repair" for item in decisions.values()) else "",
+                "learned-context" if lessons else "",
+            ]
+            if signal
+        }),
+    }
+    write_json(root / "context.json", profile)
+    if args.show:
+        print(json.dumps(profile, indent=2, sort_keys=True))
+    else:
+        print(f"updated context: {root / 'context.json'}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -381,6 +420,11 @@ def main() -> None:
     recall.add_argument("path", nargs="?", default=".")
     recall.add_argument("--tag", action="append", default=[])
     recall.set_defaults(func=cmd_recall)
+
+    context = sub.add_parser("context")
+    context.add_argument("path", nargs="?", default=".")
+    context.add_argument("--show", action="store_true")
+    context.set_defaults(func=cmd_context)
 
     args = parser.parse_args()
     args.func(args)

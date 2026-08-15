@@ -128,6 +128,11 @@ which decision/evidence produced it
 This keeps learning small and prevents stale context from becoming hidden authority. Recall should
 filter by tags, decision type, or gate context; if no context matches, the lesson should stay quiet.
 
+The runtime also maintains a small `context.json` profile derived from gates, evidence, decisions,
+and lessons. This follows the useful part of agent-memory literature: write experience, manage it
+into a compact profile, then read only matching context. It deliberately avoids vector memory until
+retrieval needs exceed tags and explicit risk signals.
+
 ## Deferred
 
 Do not build these in the first runtime:
