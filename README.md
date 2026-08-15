@@ -278,6 +278,7 @@ python scripts/lint-instructions.py
 python scripts/install-project.py /tmp/demo-project
 python scripts/validate-council.py .code-loop-template
 python -m unittest discover -s tests
+python -m unittest discover -s benchmarks
 python ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py dist/openai-plugin
 ```
 

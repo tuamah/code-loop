@@ -16,5 +16,7 @@ jobs:
         run: python scripts/lint-instructions.py
       - name: Runtime tests
         run: python -m unittest discover -s tests
+      - name: NoGapBench
+        run: python -m unittest discover -s benchmarks
       - name: Council template
         run: python scripts/validate-council.py .code-loop-template
