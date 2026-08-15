@@ -21,6 +21,11 @@ Use Code Loop Council only when multiple models/agents, high-risk review, scient
 independent verification, or arbitration are needed. Council uses `.code-loop/` in the repository
 as durable shared state; MCP is for tools/context and A2A is optional agent-to-agent messaging.
 
+Treat `clo/` inputs as shortcuts: `clo/on`, `clo/off`, `clo/council`, `clo/security`,
+`clo/verify`, `clo/min`. Run the Security Gate when requested or when work touches auth, secrets,
+user input, parsing, database queries, shell commands, paths, permissions, PII, network calls,
+production config, dependencies, supply chain, or CI/CD.
+
 Stop at the first Ladder rung that solves the need: do not build, reuse local code, use standard
 library, use platform, use installed dependency, write one line, then minimum new code.
 

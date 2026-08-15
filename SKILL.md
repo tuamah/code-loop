@@ -53,6 +53,13 @@ and write reports there.
 Read `references/council-protocol.md` for the agent budget ladder and decision rules.
 Read `council/README.md` when implementing or operating a multi-agent workflow.
 
+## CLO Commands
+
+Treat short `clo/` inputs as command shortcuts: `clo/on`, `clo/off`, `clo/council`,
+`clo/security`, `clo/verify`, and `clo/min`.
+
+Read `references/clo-commands.md` when implementing command behavior or security gating.
+
 ## Ladder
 
 Stop at the first rung that solves the real need:
@@ -126,6 +133,8 @@ Use the lightest domain check that prevents expert-level mistakes:
 Read `references/domain-router.md` only when the task depends on one of these domains.
 Read `references/innovation-protocol.md` when the user asks for invention, novel design,
 research direction, ideation, or a better-than-standard solution.
+Read `references/clo-commands.md` when security-sensitive surfaces are touched or `clo/security`
+is requested.
 
 ## Verification Contract
 
@@ -173,3 +182,4 @@ Before finalizing, answer silently:
 - Did I spend no more code or tokens than the risk required?
 - If I invented or speculated, did I label hypotheses and give a way to test them?
 - If multiple agents were used, did their durable handoffs and evidence land in `.code-loop/`?
+- If security-sensitive surfaces were touched, did the Security Gate pass?

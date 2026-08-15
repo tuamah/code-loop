@@ -60,6 +60,12 @@ Do not treat a code-only diff as sufficient when existing data must change.
 
 Report exact commands or checks run and whether they passed. If not run, say why.
 
+## Security gate verification
+
+For security-sensitive changes, verification must include at least one relevant boundary check:
+bad input, missing auth, wrong tenant/user, secret exposure, injection attempt, or unsafe error/log
+behavior.
+
 ## Innovation protocol
 
 For novel ideas, verification can be a prototype, simulation, derivation, paper/source check,

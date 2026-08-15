@@ -44,6 +44,9 @@ Check:
 
 Never trade security for minimal code.
 
+If the user writes `clo/security` or the task touches security-sensitive surfaces, use
+`references/clo-commands.md` and report the Security Gate result.
+
 ## Data, ML, and statistics
 
 Define before building:

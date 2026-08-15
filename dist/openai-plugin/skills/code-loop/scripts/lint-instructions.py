@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import json
 from pathlib import Path
 
 
@@ -65,6 +66,7 @@ def main() -> None:
                 fail(f"{rel} contains banned pattern: {label}")
 
     required_refs = [
+        "references/clo-commands.md",
         "references/council-protocol.md",
         "references/domain-router.md",
         "references/innovation-protocol.md",
@@ -75,6 +77,13 @@ def main() -> None:
     for ref in required_refs:
         if ref not in skill:
             fail(f"SKILL.md does not reference {ref}")
+
+    schema_files = sorted((ROOT / "council" / "schemas").glob("*.schema.json"))
+    for path in schema_files:
+        try:
+            json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            fail(f"{path.relative_to(ROOT)} is invalid JSON: {exc}")
 
     required_paths = [
         ROOT / "council" / "README.md",

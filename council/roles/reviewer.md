@@ -6,6 +6,7 @@ Allowed:
 
 - inspect changed files and nearby callers
 - produce severity-ranked findings
+- block acceptance on unresolved Security Gate failures
 - request focused repair
 
 Not allowed:

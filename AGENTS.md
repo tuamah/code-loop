@@ -52,6 +52,22 @@ Evidence outranks confidence:
 tests/build/lint > runtime traces > source docs > reviewer findings > model confidence
 ```
 
+## CLO commands
+
+Treat `clo/` inputs as lightweight command shortcuts:
+
+- `clo/on`: apply Code Loop.
+- `clo/off`: stop applying Code Loop unless explicitly invoked.
+- `clo/council`: prefer Council mode when useful.
+- `clo/security`: run the Security Gate.
+- `clo/verify`: run or define the cheapest real verification.
+- `clo/min`: prefer the least code that preserves verified behavior.
+
+Security Gate triggers when work touches auth, secrets, user input, file upload, parsing, database
+queries, shell commands, path handling, permissions, billing, webhooks, PII, logging, network
+calls, production config, dependencies, package scripts, supply chain, or CI/CD. Blocking security
+findings prevent acceptance.
+
 ## Ladder
 
 Stop at the first rung that solves the real need:

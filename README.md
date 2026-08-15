@@ -24,6 +24,7 @@ source of truth, MCP for tools/context, and A2A only where available for agent-t
 - verify before claiming completion
 - create room for invention without hallucination
 - coordinate multiple models through durable handoffs
+- use short `clo/` commands such as `clo/on`, `clo/security`, and `clo/council`
 - load expert-domain depth only when needed
 
 ## Why v5
@@ -52,6 +53,7 @@ code-loop/
 ├── agents/openai.yaml
 ├── references/
 │   ├── council-protocol.md
+│   ├── clo-commands.md
 │   ├── domain-router.md
 │   ├── innovation-protocol.md
 │   ├── risk-matrix.md
@@ -103,6 +105,23 @@ Use the fewest agents that can safely solve the task:
 4. Add Reviewer for shared behavior, security, APIs, or user-visible changes.
 5. Add Arbiter only when evidence conflicts or blast radius is high.
 6. Add Skeptic for invention, science, or speculative architecture.
+
+## CLO Commands
+
+`clo/` commands are lightweight chat shortcuts:
+
+| Command | Meaning |
+|---|---|
+| `clo/on` | Apply Code Loop |
+| `clo/off` | Stop applying Code Loop unless explicitly invoked |
+| `clo/council` | Use Council mode when useful |
+| `clo/security` | Run the Security Gate |
+| `clo/verify` | Run or define the cheapest real verification |
+| `clo/min` | Prefer the least code that preserves verified behavior |
+
+The Security Gate triggers automatically when work touches auth, secrets, user input, parsing,
+database queries, shell commands, path handling, permissions, PII, network calls, production config,
+dependencies, package scripts, supply chain, or CI/CD.
 
 ## Council Roles
 
