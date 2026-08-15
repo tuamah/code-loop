@@ -95,6 +95,66 @@ class RuntimeScriptTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("hash mismatch", result.stderr + result.stdout)
 
+    def test_literature_learning_requires_compact_complete_meaning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "learn only gated context")
+            run_script(
+                "scripts/nogap.py", "literature", "add", str(project),
+                "--id", "lit-context-0001",
+                "--title", "NoGapCode runtime docs",
+                "--url", "docs/nogapcode-runtime.md",
+                "--source-type", "official-doc",
+                "--claim", "Useful context learning should be conditional, evidence-linked, and recalled only when matching tags apply.",
+                "--lesson", "Learn conditional, evidence-linked lessons; recall them only by matching tags.",
+                "--tag", "context",
+                "--benefit", "accuracy",
+                "--benefit", "token-cost",
+                "--cost", "maintenance",
+                "--evidence-strength", "primary",
+                "--test", "python scripts/nogap.py recall PROJECT --tag context",
+                "--accurate",
+                "--concise",
+                "--complete",
+            )
+            evaluated = run_script("scripts/nogap.py", "literature", "evaluate", str(project), "--id", "lit-context-0001")
+            self.assertIn("learn:", evaluated.stdout)
+            run_script("scripts/nogap.py", "literature", "learn", str(project), "--id", "lit-context-0001")
+            recalled = run_script("scripts/nogap.py", "recall", str(project), "--tag", "context")
+            self.assertIn("conditional, evidence-linked", recalled.stdout)
+            run_script("scripts/nogap.py", "validate", str(project))
+
+    def test_literature_learning_rejects_incomplete_meaning_even_with_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "reject vague learning")
+            run_script(
+                "scripts/nogap.py", "literature", "add", str(project),
+                "--id", "lit-vague-0001",
+                "--title", "NoGapCode runtime docs",
+                "--url", "docs/nogapcode-runtime.md",
+                "--source-type", "official-doc",
+                "--claim", "Context lessons should stay scoped.",
+                "--lesson", "Use scoped lessons.",
+                "--tag", "context",
+                "--benefit", "accuracy",
+                "--evidence-strength", "primary",
+                "--test", "python scripts/nogap.py recall PROJECT --tag context",
+                "--accurate",
+                "--concise",
+            )
+            evaluated = run_script("scripts/nogap.py", "literature", "evaluate", str(project), "--id", "lit-vague-0001")
+            self.assertIn("reject:", evaluated.stdout)
+            self.assertIn("meaning must be complete", evaluated.stdout)
+            result = subprocess.run(
+                [sys.executable, "scripts/nogap.py", "literature", "learn", str(project), "--id", "lit-vague-0001"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not approved", result.stderr + result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

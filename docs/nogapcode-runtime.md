@@ -135,7 +135,9 @@ retrieval needs exceed tags and explicit risk signals.
 
 For external literature, use `docs/literature-learning.md`: NoGapCode may ingest claims from trusted
 sources and high-quality GitHub projects, but every claim must pass source quality, benefit, cost,
-testability, and conflict checks before becoming a lesson.
+testability, meaning-quality, and conflict checks before becoming a lesson. Meaning-quality means
+the learned lesson remains accurate to the source, concise enough for recall, and complete enough to
+preserve the operational meaning.
 
 ## Deferred
 

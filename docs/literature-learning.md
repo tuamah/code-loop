@@ -9,6 +9,12 @@ The learning path is:
 source -> claim -> benefit gate -> evidence link -> lesson/context -> recall
 ```
 
+Even after a claim passes the source and benefit gates, the learned lesson must be:
+
+- accurate: faithful to the cited claim, without stronger wording than the source supports
+- concise: short enough to be recalled without wasting context
+- complete: covers the full operational meaning, not only a catchy fragment
+
 ## Trusted Source Priority
 
 1. Standards, security guidance, and official docs: NIST, OWASP, MCP, OpenAI, Anthropic, Temporal,
@@ -32,9 +38,36 @@ Does it help NoGapCode now or later?
 Does it improve reliability, security, accuracy, speed, size, or token cost?
 What complexity or attack surface does it add?
 Can it become a test, gate, benchmark, or context lesson?
+Is the learned lesson accurate, concise, and complete?
 Does it conflict with existing evidence?
 Learn, defer, or reject?
 ```
+
+## Runtime Command
+
+```bash
+python scripts/nogap.py literature add /path/to/project \
+  --id lit-context-0001 \
+  --title "NoGapCode runtime docs" \
+  --url docs/nogapcode-runtime.md \
+  --source-type official-doc \
+  --claim "Useful context learning should be conditional, evidence-linked, and recalled only when matching tags apply." \
+  --lesson "Learn conditional, evidence-linked lessons; recall them only by matching tags." \
+  --tag context \
+  --benefit accuracy \
+  --benefit token-cost \
+  --evidence-strength primary \
+  --test "python scripts/nogap.py recall PROJECT --tag context" \
+  --accurate --concise --complete
+
+python scripts/nogap.py literature evaluate /path/to/project --id lit-context-0001
+python scripts/nogap.py literature learn /path/to/project --id lit-context-0001
+python scripts/nogap.py recall /path/to/project --tag context
+```
+
+`evaluate` rejects the claim unless source, benefit, testability, evidence strength, and all three
+meaning-quality flags pass. `learn` then writes a normal decision-linked lesson, so later runtime
+validation and recall use the same path as project-local lessons.
 
 ## What To Learn
 
@@ -50,4 +83,3 @@ Learn patterns that close a verified gap:
 
 Reject claims that only recommend more agents, more storage, more abstraction, or more automation
 without a measurable reliability/security/accuracy/speed/size/token benefit.
-

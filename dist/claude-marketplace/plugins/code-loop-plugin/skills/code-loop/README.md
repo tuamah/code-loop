@@ -197,6 +197,27 @@ claims to prove work must reference the frozen gate hash. Lessons are scoped, ta
 evidence-linked. The context profile is rebuilt from gates, evidence, decisions, and lessons so the
 runtime learns from use without trusting raw memory.
 
+For literature learning, add a claim, evaluate it, then learn only if it passes source, benefit,
+testability, evidence-strength, and meaning-quality gates:
+
+```bash
+python scripts/nogap.py literature add /path/to/project \
+  --id lit-context-0001 \
+  --title "NoGapCode runtime docs" \
+  --url docs/nogapcode-runtime.md \
+  --source-type official-doc \
+  --claim "Useful context learning should be conditional, evidence-linked, and recalled only when matching tags apply." \
+  --lesson "Learn conditional, evidence-linked lessons; recall them only by matching tags." \
+  --tag context \
+  --benefit accuracy \
+  --benefit token-cost \
+  --evidence-strength primary \
+  --test "python scripts/nogap.py recall PROJECT --tag context" \
+  --accurate --concise --complete
+python scripts/nogap.py literature evaluate /path/to/project --id lit-context-0001
+python scripts/nogap.py literature learn /path/to/project --id lit-context-0001
+```
+
 ### Codex / ChatGPT Plugin
 
 The packaged plugin lives at:

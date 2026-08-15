@@ -12,10 +12,18 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME_DIRS = ["gates", "claims", "evidence", "events", "decisions", "lessons", "artifacts"]
+RUNTIME_DIRS = ["gates", "claims", "evidence", "events", "decisions", "lessons", "artifacts", "literature"]
 EVIDENCE_STATUS = {"passed", "failed", "blocked", "inconclusive"}
 CLAIM_STATUS = {"unverified", "supported", "contradicted", "superseded"}
 DECISIONS = {"accept", "repair", "rerun", "ask-human", "reject", "abstain"}
+LITERATURE_SOURCE_TYPES = {
+    "official-doc", "standard", "security-guide", "paper", "systematic-review", "github-project", "engineering-post"
+}
+LITERATURE_BENEFITS = {"reliability", "security", "accuracy", "speed", "size", "token-cost"}
+LITERATURE_COSTS = {"code", "latency", "tokens", "attack-surface", "maintenance", "complexity"}
+LITERATURE_DECISIONS = {"learn", "defer", "reject"}
+MAX_LITERATURE_CLAIM = 500
+MAX_LITERATURE_LESSON = 280
 
 
 def now() -> str:
@@ -83,6 +91,49 @@ def load_objects(directory: Path) -> dict[str, dict[str, Any]]:
             raise SystemExit(f"FAIL: duplicate id {object_id} in {directory}")
         objects[object_id] = data
     return objects
+
+
+def literature_checks(item: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    source = item.get("source")
+    if not isinstance(source, dict):
+        failures.append("missing source")
+    else:
+        if source.get("type") not in LITERATURE_SOURCE_TYPES:
+            failures.append("untrusted source type")
+        if not source.get("title") or not source.get("url"):
+            failures.append("source title and url required")
+
+    claim = item.get("claim")
+    lesson = item.get("lesson")
+    if not isinstance(claim, str) or not claim.strip():
+        failures.append("claim required")
+    elif len(claim) > MAX_LITERATURE_CLAIM:
+        failures.append("claim too long")
+    if not isinstance(lesson, str) or not lesson.strip():
+        failures.append("lesson required")
+    elif len(lesson) > MAX_LITERATURE_LESSON:
+        failures.append("lesson too long")
+
+    benefits = item.get("benefit")
+    if not isinstance(benefits, list) or not benefits or any(value not in LITERATURE_BENEFITS for value in benefits):
+        failures.append("valid benefit required")
+    costs = item.get("cost", [])
+    if not isinstance(costs, list) or any(value not in LITERATURE_COSTS for value in costs):
+        failures.append("invalid cost")
+    if item.get("evidence_strength") not in {"primary", "secondary"}:
+        failures.append("primary or secondary evidence required")
+    if not isinstance(item.get("can_be_tested_by"), str) or not item["can_be_tested_by"].strip():
+        failures.append("testability required")
+
+    quality = item.get("meaning_quality")
+    if not isinstance(quality, dict):
+        failures.append("meaning quality required")
+    else:
+        for key in ("accurate", "concise", "complete"):
+            if quality.get(key) is not True:
+                failures.append(f"meaning must be {key}")
+    return failures
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -172,6 +223,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
     evidence = load_objects(root / "evidence")
     decisions = load_objects(root / "decisions")
     lessons = load_objects(root / "lessons")
+    literature = load_objects(root / "literature")
 
     frozen_hashes: set[str] = set()
     for gate_id, gate in gates.items():
@@ -231,6 +283,13 @@ def cmd_validate(args: argparse.Namespace) -> None:
         for evidence_id in lesson.get("evidence", []):
             if evidence_id not in evidence:
                 raise SystemExit(f"FAIL: lesson {lesson_id} references missing evidence {evidence_id}")
+
+    for item_id, item in literature.items():
+        if item.get("decision") not in LITERATURE_DECISIONS:
+            raise SystemExit(f"FAIL: literature claim {item_id} has invalid decision")
+        failures = literature_checks(item)
+        if item.get("decision") == "learn" and failures:
+            raise SystemExit(f"FAIL: literature claim {item_id} cannot be learned: {', '.join(failures)}")
 
     for path in sorted((root / "events").glob("*.jsonl")):
         for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -323,6 +382,109 @@ def cmd_learn(args: argparse.Namespace) -> None:
         "payload": {"lesson_id": lesson_id, "tags": tags}
     })
     print(f"learned {lesson_id}")
+
+
+def cmd_literature(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    run_id = read_json(root / "run.json")["id"]
+    ensure_runtime(root)
+    if args.action == "add":
+        for key in ("title", "url", "claim", "lesson", "test"):
+            if not getattr(args, key):
+                raise SystemExit(f"FAIL: literature add requires --{key.replace('_', '-')}")
+        item_id = args.id or f"lit-{stable_hash({'source': args.url, 'claim': args.claim})[:12]}"
+        item = {
+            "id": item_id,
+            "source": {
+                "title": args.title,
+                "url": args.url,
+                "type": args.source_type,
+                "retrieved_at": now(),
+            },
+            "claim": args.claim,
+            "lesson": args.lesson,
+            "applies_when": sorted(set(args.tag)),
+            "benefit": sorted(set(args.benefit)),
+            "cost": sorted(set(args.cost)),
+            "evidence_strength": args.evidence_strength,
+            "decision": "defer",
+            "reason": "not evaluated",
+            "can_be_tested_by": args.test,
+            "meaning_quality": {
+                "accurate": args.accurate,
+                "concise": args.concise,
+                "complete": args.complete,
+            },
+        }
+        write_json(root / "literature" / f"{item_id}.json", item)
+        append_event(root, {
+            "id": f"event-{item_id}-added",
+            "run_id": run_id,
+            "type": "LITERATURE_CLAIM_ADDED",
+            "created_at": item["source"]["retrieved_at"],
+            "actor": args.actor,
+            "payload": {"literature_id": item_id}
+        })
+        print(f"added literature claim {item_id}")
+        return
+
+    item_path = root / "literature" / f"{args.id}.json"
+    item = read_json(item_path)
+    if args.action == "evaluate":
+        failures = literature_checks(item)
+        item["decision"] = "reject" if failures else "learn"
+        item["reason"] = "; ".join(failures) if failures else "passed source, benefit, testability, and meaning-quality gates"
+        item["evaluated_at"] = now()
+        write_json(item_path, item)
+        append_event(root, {
+            "id": f"event-{args.id}-evaluated",
+            "run_id": run_id,
+            "type": "LITERATURE_CLAIM_EVALUATED",
+            "created_at": item["evaluated_at"],
+            "actor": args.actor,
+            "payload": {"literature_id": args.id, "decision": item["decision"], "reason": item["reason"]}
+        })
+        print(f"{item['decision']}: {item['reason']}")
+        return
+
+    if item.get("decision") != "learn":
+        raise SystemExit(f"FAIL: literature claim {args.id} is not approved for learning")
+    decision_id = f"decision-literature-{args.id}"
+    decision = {
+        "id": decision_id,
+        "run_id": run_id,
+        "decision": "accept",
+        "reason": f"literature claim {args.id}: {item.get('reason', '')}",
+        "evidence": [],
+        "created_at": now(),
+        "decided_by": args.actor,
+    }
+    tags = sorted(set(["literature", *item.get("applies_when", [])]))
+    lesson_id = f"lesson-{stable_hash({'run_id': run_id, 'source': args.id, 'text': item['lesson']})[:12]}"
+    lesson = {
+        "id": lesson_id,
+        "run_id": run_id,
+        "text": item["lesson"],
+        "applies_when": {
+            "tags": tags,
+            "decision": "accept",
+            "reason": decision["reason"],
+        },
+        "evidence": [],
+        "source_decision": decision_id,
+        "created_at": now(),
+    }
+    write_json(root / "decisions" / f"{decision_id}.json", decision)
+    write_json(root / "lessons" / f"{lesson_id}.json", lesson)
+    append_event(root, {
+        "id": f"event-{lesson_id}",
+        "run_id": run_id,
+        "type": "LITERATURE_LESSON_LEARNED",
+        "created_at": lesson["created_at"],
+        "actor": args.actor,
+        "payload": {"literature_id": args.id, "lesson_id": lesson_id, "tags": tags}
+    })
+    print(f"learned {lesson_id} from {args.id}")
 
 
 def cmd_recall(args: argparse.Namespace) -> None:
@@ -425,6 +587,26 @@ def main() -> None:
     context.add_argument("path", nargs="?", default=".")
     context.add_argument("--show", action="store_true")
     context.set_defaults(func=cmd_context)
+
+    literature = sub.add_parser("literature")
+    literature.add_argument("action", choices=["add", "evaluate", "learn"])
+    literature.add_argument("path", nargs="?", default=".")
+    literature.add_argument("--id")
+    literature.add_argument("--title")
+    literature.add_argument("--url")
+    literature.add_argument("--source-type", choices=sorted(LITERATURE_SOURCE_TYPES), default="official-doc")
+    literature.add_argument("--claim")
+    literature.add_argument("--lesson")
+    literature.add_argument("--tag", action="append", default=[])
+    literature.add_argument("--benefit", action="append", choices=sorted(LITERATURE_BENEFITS), default=[])
+    literature.add_argument("--cost", action="append", choices=sorted(LITERATURE_COSTS), default=[])
+    literature.add_argument("--evidence-strength", choices=["primary", "secondary", "weak"], default="primary")
+    literature.add_argument("--test")
+    literature.add_argument("--accurate", action="store_true")
+    literature.add_argument("--concise", action="store_true")
+    literature.add_argument("--complete", action="store_true")
+    literature.add_argument("--actor", default="nogap literature")
+    literature.set_defaults(func=cmd_literature)
 
     args = parser.parse_args()
     args.func(args)

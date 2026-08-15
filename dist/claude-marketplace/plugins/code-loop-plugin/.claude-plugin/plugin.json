@@ -1,7 +1,7 @@
 {
   "name": "code-loop-plugin",
   "description": "Adds Code Loop v5 plus NoGapCode runtime contracts for gates, evidence, and decisions.",
-  "version": "5.1.0",
+  "version": "5.1.3",
   "author": {
     "name": "tuamah",
     "url": "https://github.com/tuamah"

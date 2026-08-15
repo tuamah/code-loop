@@ -3,7 +3,7 @@
   "title": "NoGapCode Literature Claim",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "source", "claim", "decision", "benefit", "evidence_strength"],
+  "required": ["id", "source", "claim", "lesson", "decision", "benefit", "evidence_strength", "meaning_quality"],
   "properties": {
     "id": { "type": "string", "minLength": 1 },
     "source": {
@@ -19,7 +19,8 @@
         "retrieved_at": { "type": "string", "format": "date-time" }
       }
     },
-    "claim": { "type": "string", "minLength": 1 },
+    "claim": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "lesson": { "type": "string", "minLength": 1, "maxLength": 280 },
     "applies_when": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
@@ -38,6 +39,17 @@
     "evidence_strength": { "enum": ["primary", "secondary", "weak"] },
     "decision": { "enum": ["learn", "defer", "reject"] },
     "reason": { "type": "string" },
-    "can_be_tested_by": { "type": "string" }
+    "can_be_tested_by": { "type": "string" },
+    "meaning_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["accurate", "concise", "complete"],
+      "properties": {
+        "accurate": { "type": "boolean" },
+        "concise": { "type": "boolean" },
+        "complete": { "type": "boolean" }
+      }
+    },
+    "evaluated_at": { "type": "string", "format": "date-time" }
   }
 }
