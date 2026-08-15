@@ -77,6 +77,8 @@ Stop at the first rung that solves the real need:
 
 Minimalism never excuses weak validation, security, accessibility, data safety, or correctness.
 If a shortcut is deliberate, comment the ceiling and the upgrade path.
+Before adding code, classify it as current need or future option. Build only when the benefit is
+testable across reliability, security, accuracy, speed, size, or token cost; otherwise defer.
 
 ## Scope Guard
 

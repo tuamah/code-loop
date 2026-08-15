@@ -78,7 +78,8 @@ def main() -> None:
         if ref not in skill:
             fail(f"SKILL.md does not reference {ref}")
 
-    schema_files = sorted((ROOT / "council" / "schemas").glob("*.schema.json"))
+    schema_roots = [ROOT / "council" / "schemas", ROOT / "runtime" / "schemas"]
+    schema_files = [path for root in schema_roots for path in sorted(root.glob("*.schema.json"))]
     for path in schema_files:
         try:
             json.loads(path.read_text(encoding="utf-8"))
@@ -96,6 +97,17 @@ def main() -> None:
         ROOT / "scripts" / "init-council.py",
         ROOT / "scripts" / "install-project.py",
         ROOT / "scripts" / "validate-council.py",
+        ROOT / "scripts" / "runtime_common.py",
+        ROOT / "scripts" / "init-runtime.py",
+        ROOT / "scripts" / "freeze-gate.py",
+        ROOT / "scripts" / "validate-runtime.py",
+        ROOT / "scripts" / "decide-runtime.py",
+        ROOT / "docs" / "nogapcode-runtime.md",
+        ROOT / "runtime" / "schemas" / "gate.schema.json",
+        ROOT / "runtime" / "schemas" / "claim.schema.json",
+        ROOT / "runtime" / "schemas" / "evidence.schema.json",
+        ROOT / "runtime" / "schemas" / "run-event.schema.json",
+        ROOT / "runtime" / "schemas" / "decision.schema.json",
     ]
     missing_required = [str(path.relative_to(ROOT)) for path in required_paths if not path.exists()]
     if missing_required:

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Runtime Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "run_id", "decision", "reason", "evidence"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "decision": { "enum": ["accept", "repair", "rerun", "ask-human", "reject", "abstain"] },
+    "reason": { "type": "string", "minLength": 1 },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "decided_by": { "type": "string" },
+    "required_next_role": { "type": "string" }
+  }
+}

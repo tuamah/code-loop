@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Immutable Gate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "run_id", "version", "status", "rules"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "version": { "type": "integer", "minimum": 1 },
+    "status": { "enum": ["draft", "frozen", "superseded"] },
+    "hash": { "type": "string" },
+    "frozen_by": { "type": "string" },
+    "frozen_at": { "type": "string", "format": "date-time" },
+    "rules": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "protected_paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "forbidden_paths": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "required_commands": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "forbidden_changes": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "operator", "value"],
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "operator": { "enum": ["lt", "lte", "eq", "gte", "gt"] },
+              "value": { "type": "number" },
+              "tolerance": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "invariants": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "name": "code-loop",
-  "version": "5.0.2",
-  "description": "Expert-minimal discipline and council protocol for coding agents: best real result, least code, least tokens, lowest risk.",
+  "version": "5.1.0",
+  "description": "Expert-minimal discipline, council protocol, and NoGapCode runtime contracts for verified coding agents.",
   "author": {
     "name": "tuamah",
     "url": "https://github.com/tuamah"
@@ -25,7 +25,7 @@
   "interface": {
     "displayName": "Code Loop",
     "shortDescription": "Expert-minimal agent council",
-    "longDescription": "A lightweight discipline and vendor-neutral council protocol for coding agents, enabling scientific innovation and multi-model coordination without hallucination.",
+    "longDescription": "A lightweight discipline, vendor-neutral council protocol, and early NoGapCode runtime for coding agents: immutable gates, evidence, and decisions without false success.",
     "developerName": "tuamah",
     "category": "Productivity",
     "capabilities": [

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Claim",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "run_id", "text", "status"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "text": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["unverified", "supported", "contradicted", "superseded"] },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "agent_id": { "type": "string" },
+        "role": { "type": "string" },
+        "commit": { "type": "string" },
+        "source": { "type": "string" }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}
