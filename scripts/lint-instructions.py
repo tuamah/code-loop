@@ -78,9 +78,13 @@ def main() -> None:
         if ref not in skill:
             fail(f"SKILL.md does not reference {ref}")
 
-    schema_roots = [ROOT / "council" / "schemas", ROOT / "runtime" / "schemas"]
-    schema_files = [path for root in schema_roots for path in sorted(root.glob("*.schema.json"))]
-    for path in schema_files:
+    json_files = [
+        *[path for root in [ROOT / "council" / "schemas", ROOT / "runtime" / "schemas"] for path in sorted(root.glob("*.schema.json"))],
+        ROOT / "dist" / "openai-plugin" / ".codex-plugin" / "plugin.json",
+        ROOT / "dist" / "claude-marketplace" / ".claude-plugin" / "marketplace.json",
+        ROOT / "dist" / "claude-marketplace" / "plugins" / "code-loop-plugin" / ".claude-plugin" / "plugin.json",
+    ]
+    for path in json_files:
         try:
             json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
