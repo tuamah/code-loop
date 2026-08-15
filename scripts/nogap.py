@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME_DIRS = ["gates", "claims", "evidence", "events", "decisions", "artifacts"]
+RUNTIME_DIRS = ["gates", "claims", "evidence", "events", "decisions", "lessons", "artifacts"]
 EVIDENCE_STATUS = {"passed", "failed", "blocked", "inconclusive"}
 CLAIM_STATUS = {"unverified", "supported", "contradicted", "superseded"}
 DECISIONS = {"accept", "repair", "rerun", "ask-human", "reject", "abstain"}
@@ -171,6 +171,7 @@ def cmd_validate(args: argparse.Namespace) -> None:
     claims = load_objects(root / "claims")
     evidence = load_objects(root / "evidence")
     decisions = load_objects(root / "decisions")
+    lessons = load_objects(root / "lessons")
 
     frozen_hashes: set[str] = set()
     for gate_id, gate in gates.items():
@@ -218,6 +219,18 @@ def cmd_validate(args: argparse.Namespace) -> None:
                 raise SystemExit(f"FAIL: decision {decision_id} references missing evidence {evidence_id}")
             if decision["decision"] == "accept" and evidence[evidence_id].get("status") != "passed":
                 raise SystemExit(f"FAIL: decision {decision_id} accepts non-passing evidence {evidence_id}")
+
+    for lesson_id, lesson in lessons.items():
+        if lesson.get("run_id") != run_id:
+            raise SystemExit(f"FAIL: lesson {lesson_id} references a different run_id")
+        applies_when = lesson.get("applies_when")
+        if not isinstance(applies_when, dict) or not applies_when.get("tags"):
+            raise SystemExit(f"FAIL: lesson {lesson_id} missing applies_when.tags")
+        if lesson.get("source_decision") not in decisions:
+            raise SystemExit(f"FAIL: lesson {lesson_id} references missing source_decision")
+        for evidence_id in lesson.get("evidence", []):
+            if evidence_id not in evidence:
+                raise SystemExit(f"FAIL: lesson {lesson_id} references missing evidence {evidence_id}")
 
     for path in sorted((root / "events").glob("*.jsonl")):
         for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -277,6 +290,58 @@ def cmd_decide(args: argparse.Namespace) -> None:
     print(f"{decision}: {reason}")
 
 
+def cmd_learn(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    run_id = read_json(root / "run.json")["id"]
+    decision_path = root / "decisions" / args.decision
+    decision = read_json(decision_path)
+    tags = sorted(set(args.tag))
+    if not tags:
+        tags = [decision.get("decision", "unknown")]
+
+    lesson_id = args.id or f"lesson-{stable_hash({'run_id': run_id, 'tags': tags, 'text': args.text})[:12]}"
+    lesson = {
+        "id": lesson_id,
+        "run_id": run_id,
+        "text": args.text,
+        "applies_when": {
+            "tags": tags,
+            "decision": decision.get("decision"),
+            "reason": decision.get("reason", "")
+        },
+        "evidence": decision.get("evidence", []),
+        "source_decision": decision.get("id"),
+        "created_at": now()
+    }
+    write_json(root / "lessons" / f"{lesson_id}.json", lesson)
+    append_event(root, {
+        "id": f"event-{lesson_id}",
+        "run_id": run_id,
+        "type": "LESSON_LEARNED",
+        "created_at": lesson["created_at"],
+        "actor": args.actor,
+        "payload": {"lesson_id": lesson_id, "tags": tags}
+    })
+    print(f"learned {lesson_id}")
+
+
+def cmd_recall(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    wanted = set(args.tag)
+    lessons = [read_json(path) for path in sorted((root / "lessons").glob("*.json"))]
+    matches = []
+    for lesson in lessons:
+        tags = set(lesson.get("applies_when", {}).get("tags", []))
+        if not wanted or wanted & tags:
+            matches.append(lesson)
+    if not matches:
+        print("no matching lessons")
+        return
+    for lesson in matches:
+        tags = ",".join(lesson.get("applies_when", {}).get("tags", []))
+        print(f"{lesson['id']} [{tags}]: {lesson['text']}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -302,6 +367,20 @@ def main() -> None:
     decide.add_argument("path", nargs="?", default=".")
     decide.add_argument("--actor", default="nogap decide")
     decide.set_defaults(func=cmd_decide)
+
+    learn = sub.add_parser("learn")
+    learn.add_argument("path", nargs="?", default=".")
+    learn.add_argument("--decision", default="decision-0001.json")
+    learn.add_argument("--text", required=True)
+    learn.add_argument("--tag", action="append", default=[])
+    learn.add_argument("--id")
+    learn.add_argument("--actor", default="nogap learn")
+    learn.set_defaults(func=cmd_learn)
+
+    recall = sub.add_parser("recall")
+    recall.add_argument("path", nargs="?", default=".")
+    recall.add_argument("--tag", action="append", default=[])
+    recall.set_defaults(func=cmd_recall)
 
     args = parser.parse_args()
     args.func(args)

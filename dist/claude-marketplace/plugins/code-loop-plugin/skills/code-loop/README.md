@@ -187,10 +187,13 @@ python scripts/nogap.py init /path/to/project --objective "Fix the bug without c
 python scripts/nogap.py freeze /path/to/project
 python scripts/nogap.py validate /path/to/project
 python scripts/nogap.py decide /path/to/project
+python scripts/nogap.py learn /path/to/project --tag gate --text "Freeze the gate before trusting evidence."
+python scripts/nogap.py recall /path/to/project --tag gate
 ```
 
 The runtime is intentionally local-first. A frozen gate is hash-locked for the run; evidence that
-claims to prove work must reference the frozen gate hash.
+claims to prove work must reference the frozen gate hash. Lessons are scoped, tagged, and
+evidence-linked so the runtime recalls context only when the next task matches.
 
 ### Codex / ChatGPT Plugin
 

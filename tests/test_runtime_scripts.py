@@ -64,6 +64,13 @@ class RuntimeScriptTests(unittest.TestCase):
             result = run_script("scripts/nogap.py", "decide", str(project))
             self.assertIn("accept:", result.stdout)
             run_script("scripts/nogap.py", "validate", str(project))
+            run_script(
+                "scripts/nogap.py", "learn", str(project),
+                "--tag", "gate",
+                "--text", "Freeze the gate before trusting evidence."
+            )
+            recalled = run_script("scripts/nogap.py", "recall", str(project), "--tag", "gate")
+            self.assertIn("Freeze the gate", recalled.stdout)
 
     def test_runtime_rejects_tampered_frozen_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

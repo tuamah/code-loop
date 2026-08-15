@@ -114,6 +114,20 @@ Claim C17
 
 Start with files or SQLite. Defer graph infrastructure until queries prove it is needed.
 
+## Context Learning
+
+NoGapCode should learn context as conditional lessons, not as raw memory. A lesson is useful only
+when it records:
+
+```text
+what was learned
+when it applies
+which decision/evidence produced it
+```
+
+This keeps learning small and prevents stale context from becoming hidden authority. Recall should
+filter by tags, decision type, or gate context; if no context matches, the lesson should stay quiet.
+
 ## Deferred
 
 Do not build these in the first runtime:
