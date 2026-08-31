@@ -739,7 +739,7 @@ def cmd_run(args: argparse.Namespace) -> None:
         "plan_id": plan_id,
         "route_id": route_id,
         "status": "intended",
-        "reason": "orchestration-only milestone: execution dispatch is not implemented yet",
+        "reason": "dispatch records intent only; execution outcome, if any, is recorded separately as execution evidence",
     }
     write_json(root / "dispatches" / f"{dispatch_id}.json", dispatch)
     append_event(root, {
@@ -751,7 +751,148 @@ def cmd_run(args: argparse.Namespace) -> None:
         "payload": {"dispatch_id": dispatch_id, "provider": selected["provider"]},
     })
     print(f"plan {plan_id} -> route {route_id} ({selected['provider']}) -> dispatch {dispatch_id} [intended]")
-    print("execution dispatch is not implemented in this runtime milestone; the AgentRuntime was not invoked.")
+
+    if not args.execute:
+        print("execution dispatch is not implemented by default; pass --execute to run the selected AgentRuntime.")
+        return
+
+    from nogap_adapters import ADAPTERS, ExecutorNotReady
+    from nogap_execution import GitWorktreeExecutionBackend
+
+    adapter = ADAPTERS.get(selected["provider"])
+    if adapter is None or not hasattr(adapter, "build_exec_command"):
+        print(f"execution not available: no execution-capable adapter registered for {selected['provider']!r}.")
+        return
+
+    prompt = plan["steps"][0]["summary"]
+    try:
+        backend = GitWorktreeExecutionBackend(Path(args.path).resolve())
+        result = backend.run(
+            lambda worktree: adapter.build_exec_command(prompt, worktree),
+            timeout=args.execute_timeout,
+        )
+    except ExecutorNotReady as exc:
+        print(f"execution aborted: {exc}")
+        return
+
+    from nogap_effects import ExpectedEffect, classify_agent_execution, verify_effect
+
+    # M6-C default: we only know the agent should produce *some* change addressing the
+    # objective, not which files. change_type=ANY still refuses to call an empty patch a
+    # pass - the RC=0-but-nothing-happened case observed live against Codex's Windows
+    # sandbox. Execution success requires BOTH a normal process exit (per the adapter's
+    # own allowed_exit_codes policy) AND a satisfied effect: a process that crashed after
+    # leaving a partial effect in the patch is exactly as untrustworthy as a clean exit
+    # with no effect at all, so neither fact alone is allowed to imply "passed".
+    effect = verify_effect(result.patch, ExpectedEffect(change_type="ANY"))
+    allowed_exit_codes = adapter.capabilities().get("allowed_exit_codes", [0])
+    exec_status, execution_status, reason = classify_agent_execution(
+        result.process_outcome, result.returncode, effect, allowed_exit_codes,
+    )
+    evidence_id, artifact_path = write_execution_evidence(
+        root, run_id, result, actor, exec_status, execution_status, reason,
+        dispatch_id=dispatch_id, provider=selected["provider"], runtime_id=selected["runtime"],
+    )
+    print(
+        f"execute {result.execution_id}: {exec_status} ({execution_status}: {reason}) "
+        f"evidence={evidence_id} patch={artifact_path}"
+    )
+    print("execution evidence is not authoritative on its own: independent verification is still required for ACCEPT.")
+
+
+def classify_generic_execution(result: Any) -> tuple[str, str, str]:
+    """Maps raw process facts to a status for `nogap execute`'s arbitrary-command case.
+
+    Unlike AgentRuntime dispatch, an arbitrary command's returncode (a test runner, a
+    linter) really is the authoritative signal here - that is what exit codes are for.
+    This mapping is deliberately explicit and lives in the caller, not the backend.
+    """
+    if result.cancelled:
+        return "blocked", "CANCELLED", "execution was cancelled before completion"
+    if result.timed_out:
+        return "inconclusive", "TIMED_OUT", "execution exceeded its timeout"
+    if result.returncode == 0:
+        return "passed", "PROCESS_EXIT_OK", "process exited with code 0"
+    return "failed", "PROCESS_EXIT_ERROR", f"process exited with code {result.returncode}"
+
+
+def write_execution_evidence(
+    root: Path,
+    run_id: str,
+    result: Any,
+    actor: str,
+    status: str,
+    execution_status: str,
+    reason: str,
+    *,
+    dispatch_id: str | None = None,
+    provider: str | None = None,
+    runtime_id: str | None = None,
+) -> tuple[str, Path]:
+    """Records an isolated-worktree execution as non-authoritative evidence.
+
+    status/execution_status/reason are supplied by the caller (classify_generic_execution
+    for arbitrary commands, verify_effect for AgentRuntime dispatch): this function does not
+    judge success itself. authority is always "execution" - is_authoritative_evidence() only
+    ever counts verification/human authority, so this alone can never satisfy ACCEPT.
+    """
+    gates = load_objects(root / "gates")
+    frozen_hashes = [
+        gate_hash(gate)
+        for gate in gates.values()
+        if gate.get("status") == "frozen" and gate.get("hash") == gate_hash(gate)
+    ]
+
+    artifact_path = root / "artifacts" / f"{result.execution_id}.patch"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(result.patch, encoding="utf-8")
+
+    log_path = root / "artifacts" / f"{result.execution_id}.log"
+    log_path.write_text(
+        f"command: {' '.join(result.command)}\n"
+        f"process_outcome: {result.process_outcome} returncode: {result.returncode}\n"
+        f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}\n",
+        encoding="utf-8",
+    )
+
+    evidence_id = f"evidence-{result.execution_id}"
+    provenance: dict[str, Any] = {
+        "created_by": actor,
+        "created_at": now(),
+        "actor_id": actor,
+        "authority": "execution",
+        "role": "implementer",
+        "commit": result.base_commit,
+        "command": " ".join(result.command),
+        "artifact_path": str(artifact_path),
+        "log_path": str(log_path),
+    }
+    if frozen_hashes:
+        provenance["gate_hash"] = frozen_hashes[0]
+    if dispatch_id:
+        provenance["dispatch_id"] = dispatch_id
+    if provider:
+        provenance["provider"] = provider
+    if runtime_id:
+        provenance["runtime"] = runtime_id
+    evidence = {
+        "id": evidence_id,
+        "run_id": run_id,
+        "kind": "execution",
+        "status": status,
+        "provenance": provenance,
+        "summary": f"{execution_status}: {reason} (process_outcome={result.process_outcome}, returncode={result.returncode})",
+    }
+    write_json(root / "evidence" / f"{evidence_id}.json", evidence)
+    append_event(root, {
+        "id": f"event-{evidence_id}",
+        "run_id": run_id,
+        "type": "EXECUTION_COMPLETED",
+        "created_at": now(),
+        "actor": actor,
+        "payload": {"execution_id": result.execution_id, "status": status, "evidence_id": evidence_id},
+    })
+    return evidence_id, artifact_path
 
 
 def cmd_execute(args: argparse.Namespace) -> None:
@@ -772,52 +913,12 @@ def cmd_execute(args: argparse.Namespace) -> None:
     backend = GitWorktreeExecutionBackend(project_root)
     result = backend.run(command, timeout=args.timeout)
 
-    gates = load_objects(root / "gates")
-    frozen_hashes = [
-        gate_hash(gate)
-        for gate in gates.values()
-        if gate.get("status") == "frozen" and gate.get("hash") == gate_hash(gate)
-    ]
-
-    artifact_path = root / "artifacts" / f"{result.execution_id}.patch"
-    artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    artifact_path.write_text(result.patch, encoding="utf-8")
-
-    evidence_id = f"evidence-{result.execution_id}"
-    provenance: dict[str, Any] = {
-        "created_by": args.actor,
-        "created_at": now(),
-        "actor_id": args.actor,
-        "authority": "execution",
-        "role": "implementer",
-        "commit": result.base_commit,
-        "command": " ".join(result.command),
-        "artifact_path": str(artifact_path),
-    }
-    if frozen_hashes:
-        provenance["gate_hash"] = frozen_hashes[0]
-    evidence = {
-        "id": evidence_id,
-        "run_id": run_id,
-        "kind": "execution",
-        "status": result.status,
-        "provenance": provenance,
-        "summary": (
-            f"isolated worktree run: returncode={result.returncode} "
-            f"timed_out={result.timed_out} cancelled={result.cancelled}"
-        ),
-    }
-    write_json(root / "evidence" / f"{evidence_id}.json", evidence)
-    append_event(root, {
-        "id": f"event-{evidence_id}",
-        "run_id": run_id,
-        "type": "EXECUTION_COMPLETED",
-        "created_at": now(),
-        "actor": args.actor,
-        "payload": {"execution_id": result.execution_id, "status": result.status, "evidence_id": evidence_id},
-    })
+    exec_status, execution_status, reason = classify_generic_execution(result)
+    evidence_id, artifact_path = write_execution_evidence(
+        root, run_id, result, args.actor, exec_status, execution_status, reason,
+    )
     print(
-        f"execution {result.execution_id}: {result.status} (returncode={result.returncode}) "
+        f"execution {result.execution_id}: {exec_status} (returncode={result.returncode}) "
         f"evidence={evidence_id} patch={artifact_path}"
     )
     print("execution evidence is not authoritative on its own: independent verification is still required for ACCEPT.")
@@ -1180,6 +1281,12 @@ def main() -> None:
     run_cmd = sub.add_parser("run")
     run_cmd.add_argument("path", nargs="?", default=".")
     run_cmd.add_argument("--actor", default="nogap orchestrator")
+    run_cmd.add_argument(
+        "--execute",
+        action="store_true",
+        help="After an intended dispatch, actually run the selected AgentRuntime inside an isolated worktree",
+    )
+    run_cmd.add_argument("--execute-timeout", type=int, default=600)
     run_cmd.set_defaults(func=cmd_run)
 
     execute = sub.add_parser(

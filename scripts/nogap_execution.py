@@ -4,12 +4,15 @@
 This is the sandbox boundary from the Execution Plane. It never touches the real
 working tree: it creates a detached worktree from the project's current HEAD, runs
 one explicit argv command inside it under a hard timeout, captures whatever changed
-as a patch, and always removes the worktree afterward, whether the command passed,
-failed, timed out, or was cancelled.
+as a patch, and always removes the worktree afterward, regardless of how the process
+ended (exited, timed out, or was cancelled).
 
-Nothing here is wired to an AgentRuntime yet. can_execute stays False on the
-adapters in nogap_adapters.py until this backend has proven itself; this module is
-that proof, exercised directly (via `nogap execute` or tests), not through dispatch.
+The command may be a fixed argv list, or a (worktree_path) -> argv builder for
+callers (like an AgentRuntime adapter's build_exec_command) that need to know the
+worktree path to construct their command. This module never declares success or
+failure - it only reports facts (process outcome, returncode, patch). See
+ExecutionResult's docstring for why, and nogap_effects.py for how a caller turns
+those facts into a verdict.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 def _git(args: list[str], cwd: Path, timeout: int = 60) -> subprocess.CompletedProcess[str]:
@@ -36,10 +39,22 @@ def _git(args: list[str], cwd: Path, timeout: int = 60) -> subprocess.CompletedP
 
 @dataclass
 class ExecutionResult:
+    """Facts observed about one execution. Deliberately carries no success/failure verdict:
+
+    a process exiting 0 is not proof that its task succeeded (a coding agent can exit clean
+    while accomplishing nothing, e.g. because its own internal sandbox silently failed to
+    write). process_outcome only ever describes *how the process ended* (exited, timed_out,
+    cancelled); returncode is the raw exit code, unequal. Turning these facts into a verdict
+    is the caller's job: nogap.py's classify_generic_execution() for arbitrary commands where
+    returncode really is authoritative (e.g. a test runner), or nogap_effects.verify_effect()
+    for AgentRuntime dispatch, which checks the patch (observed world state) against what was
+    actually expected instead of trusting the process's own exit code or narrative.
+    """
+
     execution_id: str
     command: list[str]
     returncode: int | None
-    status: str
+    process_outcome: str
     stdout: str
     stderr: str
     duration_seconds: float
@@ -53,7 +68,7 @@ class ExecutionResult:
             "execution_id": self.execution_id,
             "command": self.command,
             "returncode": self.returncode,
-            "status": self.status,
+            "process_outcome": self.process_outcome,
             "duration_seconds": round(self.duration_seconds, 3),
             "base_commit": self.base_commit,
             "cancelled": self.cancelled,
@@ -89,13 +104,13 @@ class GitWorktreeExecutionBackend:
 
     def run(
         self,
-        command: list[str],
+        command: list[str] | Callable[[Path], list[str]],
         *,
         timeout: int = 300,
         handle: ExecutionHandle | None = None,
     ) -> ExecutionResult:
-        if not command:
-            raise ValueError("command must be a non-empty argv list")
+        if not callable(command) and not command:
+            raise ValueError("command must be a non-empty argv list or a (worktree) -> argv builder")
 
         head = _git(["rev-parse", "HEAD"], cwd=self.project_root)
         if head.returncode != 0:
@@ -112,11 +127,15 @@ class GitWorktreeExecutionBackend:
 
         handle = handle or ExecutionHandle()
         stdout, stderr, returncode, timed_out = "", "", None, False
+        resolved_command: list[str] = []
         started = time.monotonic()
         try:
+            resolved_command = command(worktree_path) if callable(command) else command
+            if not resolved_command:
+                raise ValueError("command builder returned an empty argv list")
             if not handle.cancelled:
                 process = subprocess.Popen(
-                    command,
+                    resolved_command,
                     cwd=worktree_path,
                     text=True,
                     stdout=subprocess.PIPE,
@@ -145,19 +164,17 @@ class GitWorktreeExecutionBackend:
                 _git(["worktree", "prune"], cwd=self.project_root, timeout=30)
 
         if handle.cancelled:
-            status = "blocked"
+            process_outcome = "cancelled"
         elif timed_out:
-            status = "inconclusive"
-        elif returncode == 0:
-            status = "passed"
+            process_outcome = "timed_out"
         else:
-            status = "failed"
+            process_outcome = "exited"
 
         return ExecutionResult(
             execution_id=execution_id,
-            command=command,
+            command=resolved_command,
             returncode=returncode,
-            status=status,
+            process_outcome=process_outcome,
             stdout=stdout[-8000:],
             stderr=stderr[-8000:],
             duration_seconds=duration,
