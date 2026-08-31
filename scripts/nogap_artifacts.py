@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""M7-E: executable pre-build lifecycle artifacts (P0-P11).
+"""M7-E/M7-F: executable pre-build (P0-P11) and BUILD-entry (P12, P14) artifacts.
 
-Turns DEFINE/RESEARCH/DESIGN/PREPARE from lifecycle labels into structured,
+Turns DEFINE/RESEARCH/DESIGN/PREPARE/BUILD from lifecycle labels into structured,
 versioned records the MethodologyEngine can evaluate. Artifacts are facts,
 never agent prose treated as authority: creation and every later read both
 run the same validation (required fields present, references resolve to
@@ -18,10 +18,21 @@ already uses, but nothing here ever writes to .code-loop/runtime/gates/ -
 the Trust Runtime's frozen gate stays the sole authority during execution
 and acceptance.
 
-BUILD (P12) is out of scope here entirely - see prebuild_readiness() for the
-one thing this module exposes toward it: whether P0-P11's obligations, for
-the project's active profile, are currently satisfied. Nothing here wires
-that readiness check into `nogap run` - that integration is M7-F.
+P12 (Task Contract) is the canonical, structured record of what a BUILD
+attempt is allowed to do - never a free-form agent prompt. P14 (Self-Check)
+captures what the implementer observed about its own execution (changed
+files, patch hash, process outcome, expected-effect result, limitations,
+unresolved issues); its `self_check_authority` field is always forced to
+"execution" here, never accepted from caller input, so it can never be
+mistaken for or smuggled in as independent verification. P13 (the isolated
+execution itself) has no artifact type of its own - it is represented by
+the existing M6 execution evidence in .code-loop/runtime/, which P14
+references by evidence_refs (see nogap_build.py for the actual binding).
+
+Binding this registry's prebuild_readiness()/P12/P14 into `nogap run` so
+that it causally gates execution is nogap_build.py's job (M7-F), kept in a
+separate module deliberately: this file stays the artifact registry, that
+one is where "may execution begin?" gets decided and enforced.
 """
 
 from __future__ import annotations
@@ -132,10 +143,33 @@ ARTIFACT_TYPES: dict[str, dict[str, Any]] = {
         "profile_required_fields": {},
         "reference_fields": {"requirement_refs": "P6_REQUIREMENT_ID"},
     },
+    # M7-F: BUILD phases. requirement_refs/gate_plan_refs are deliberately absent from
+    # required_fields (only present in reference_fields) - "TaskContract must reference real
+    # active P6 requirements *where applicable*": a task can legitimately reference zero
+    # requirements or zero gate plans, but any reference it does supply must resolve.
+    "P12_TASK_CONTRACT": {
+        "phase_id": "P12",
+        "required_fields": ["task_id", "goal", "scope", "forbidden_scope", "acceptance_criteria", "planned_tests", "required_evidence", "stop_conditions"],
+        "profile_required_fields": {},
+        "reference_fields": {"requirement_refs": "P6_REQUIREMENT_ID", "gate_plan_refs": "P11_GATE_PLAN"},
+    },
+    "P14_SELF_CHECK": {
+        "phase_id": "P14",
+        "required_fields": ["task_id", "execution_evidence_ids", "changed_files", "patch_hash", "process_outcome", "expected_effect_result"],
+        "profile_required_fields": {},
+        "reference_fields": {},
+    },
 }
 
 PHASE_TO_ARTIFACT_TYPE = {info["phase_id"]: name for name, info in ARTIFACT_TYPES.items()}
 PREBUILD_PHASES = [f"P{n}" for n in range(12)]  # P0..P11
+
+# Stable, monotonically-increasing ID namespaces distinct from the generic artifact_id -
+# never reused, checked for uniqueness whether auto-generated or explicitly supplied.
+_STABLE_ID_FIELDS = {
+    "P6_REQUIREMENT": "requirement_id",
+    "P12_TASK_CONTRACT": "task_id",
+}
 
 
 def artifacts_dir(project: Path) -> Path:
@@ -195,17 +229,25 @@ def get_phase_artifacts(project: Path, phase_id: str) -> list[dict[str, Any]]:
     return list_artifacts(project, phase_id=phase_id)
 
 
-def next_requirement_id(project: Path) -> str:
-    existing = list_artifacts(project, artifact_type="P6_REQUIREMENT")
+def _next_stable_id(project: Path, artifact_type: str, id_field: str, prefix: str) -> str:
+    existing = list_artifacts(project, artifact_type=artifact_type)
     max_n = 0
     for record in existing:
-        req_id = record.get("fields", {}).get("requirement_id", "")
-        if req_id.startswith("REQ-"):
+        stable_id = record.get("fields", {}).get(id_field, "")
+        if stable_id.startswith(f"{prefix}-"):
             try:
-                max_n = max(max_n, int(req_id[4:]))
+                max_n = max(max_n, int(stable_id[len(prefix) + 1:]))
             except ValueError:
                 continue
-    return f"REQ-{max_n + 1:03d}"
+    return f"{prefix}-{max_n + 1:03d}"
+
+
+def next_requirement_id(project: Path) -> str:
+    return _next_stable_id(project, "P6_REQUIREMENT", "requirement_id", "REQ")
+
+
+def next_task_id(project: Path) -> str:
+    return _next_stable_id(project, "P12_TASK_CONTRACT", "task_id", "TASK")
 
 
 def _resolve_reference(project: Path, ref: str, target: str) -> bool:
@@ -284,6 +326,34 @@ def validate_record(project: Path, record: dict[str, Any]) -> list[str]:
                 f"{state.get('intent')!r} - state.json is the canonical owner of intent"
             )
 
+    if artifact_type == "P12_TASK_CONTRACT":
+        criteria = fields.get("acceptance_criteria")
+        if isinstance(criteria, list):
+            malformed = [c for c in criteria if not isinstance(c, str) or not c.strip()]
+            if malformed:
+                problems.append(f"acceptance_criteria must be a list of non-empty strings, found: {malformed!r}")
+        requirement_refs = fields.get("requirement_refs") or []
+        allow_non_active = bool(fields.get("allow_non_active_requirement_refs", False))
+        if not allow_non_active and isinstance(requirement_refs, list):
+            requirements = list_artifacts(project, artifact_type="P6_REQUIREMENT")
+            for ref in requirement_refs:
+                matches = [r for r in requirements if r.get("fields", {}).get("requirement_id") == ref]
+                if matches and matches[0].get("status") in {"SUPERSEDED", "REJECTED"}:
+                    problems.append(
+                        f"requirement_refs references {matches[0]['status']} requirement {ref!r}; "
+                        f"set allow_non_active_requirement_refs=true to reference it explicitly"
+                    )
+
+    if artifact_type == "P14_SELF_CHECK":
+        task_id = fields.get("task_id")
+        if task_id is not None:
+            known = any(
+                r.get("fields", {}).get("task_id") == task_id
+                for r in list_artifacts(project, artifact_type="P12_TASK_CONTRACT")
+            )
+            if not known:
+                problems.append(f"task_id references unknown P12_TASK_CONTRACT: {task_id!r}")
+
     return problems
 
 
@@ -310,18 +380,25 @@ def create_artifact(
     if load_artifact(project, artifact_id) is not None:
         raise MethodologyValidationError(f"duplicate artifact_id: {artifact_id}")
 
-    if artifact_type == "P6_REQUIREMENT":
-        requirement_id = fields.get("requirement_id") or next_requirement_id(project)
+    if artifact_type in _STABLE_ID_FIELDS:
+        id_field = _STABLE_ID_FIELDS[artifact_type]
+        id_generator = next_requirement_id if artifact_type == "P6_REQUIREMENT" else next_task_id
+        stable_id = fields.get(id_field) or id_generator(project)
         duplicate = any(
-            r.get("fields", {}).get("requirement_id") == requirement_id
-            for r in list_artifacts(project, artifact_type="P6_REQUIREMENT")
+            r.get("fields", {}).get(id_field) == stable_id
+            for r in list_artifacts(project, artifact_type=artifact_type)
         )
         if duplicate:
-            raise MethodologyValidationError(f"duplicate requirement_id: {requirement_id}")
-        fields = {**fields, "requirement_id": requirement_id}
+            raise MethodologyValidationError(f"duplicate {id_field}: {stable_id}")
+        fields = {**fields, id_field: stable_id}
         status_history: list[dict[str, Any]] | None = [{"status": status, "actor_id": actor, "reason": "created", "changed_at": _now()}]
     else:
         status_history = None
+
+    if artifact_type == "P14_SELF_CHECK":
+        # Never mark P14 as verified acceptance: authority is forced, not accepted from input,
+        # so a caller cannot smuggle "verification" in here by setting the field themselves.
+        fields = {**fields, "self_check_authority": "execution"}
 
     timestamp = _now()
     record: dict[str, Any] = {
