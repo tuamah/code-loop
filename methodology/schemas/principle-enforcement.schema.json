@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Golden Principle Enforcement Record",
+  "description": "One entry per canonical principle (M7-D). Describes ENFORCEMENT CAPABILITY - whether the mechanism exists and is tested - not any specific project's compliance. Read by scripts/nogap_methodology.py; never consulted by the trust runtime itself (nogap.py) to make any decision. Editing this file changes only what is reported, never what is enforced.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "principle_id", "classification", "status", "scope", "owner_component",
+    "mechanism", "evidence_kind", "implemented_by", "tests", "future_milestone", "notes"
+  ],
+  "properties": {
+    "principle_id": { "type": "string", "pattern": "^GP-([1-9]|1[0-9]|20)$" },
+    "classification": {
+      "enum": ["A", "B", "C"],
+      "description": "A = machine-enforceable trust/runtime invariant. B = workflow-enforceable methodology rule. C = advisory/optimization principle. Reused unchanged from methodology/principles.json - never re-derived here."
+    },
+    "status": {
+      "enum": ["ENFORCED", "PARTIAL", "DECLARED", "ADVISORY", "DEFERRED"],
+      "description": "ENFORCED: a real mechanism exists, is active by default, and is tested end to end. PARTIAL: a real mechanism exists and is tested, but does not yet cover the full principle (a named future milestone completes it). DECLARED: the principle is represented (contract/schema/data) but no enforcement code exists yet. ADVISORY: intentionally never a hard gate, by design - status stays ADVISORY permanently, not a placeholder for future ENFORCED. DEFERRED: enforcement depends on a component that does not exist yet (e.g. Model Router)."
+    },
+    "scope": {
+      "enum": ["trust_runtime", "methodology_engine", "cross_cutting"],
+      "description": "Which layer currently owns whatever enforcement exists. cross_cutting when both layers contribute."
+    },
+    "owner_component": {
+      "type": "string",
+      "description": "A known component identifier (see OWNER_COMPONENTS in nogap_methodology.py), or \"none\" if nothing implements this yet."
+    },
+    "mechanism": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One or two sentences: what actually happens today, stated plainly. Never describes a planned mechanism as if it exists."
+    },
+    "evidence_kind": {
+      "type": ["string", "null"],
+      "description": "What kind of record would demonstrate this principle held for a specific case (e.g. \"decision records\", \"transition_history\"), or null if none exists yet."
+    },
+    "implemented_by": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "File[:function] references. Each file must exist on disk - checked by the loader, not asserted here."
+    },
+    "tests": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Test file (optionally ::Class::test_name) references. Each file must exist on disk where given."
+    },
+    "future_milestone": {
+      "type": ["string", "null"],
+      "description": "The milestone that would move this toward ENFORCED, or null if none is needed (ENFORCED already, or permanently ADVISORY)."
+    },
+    "notes": { "type": "string" }
+  }
+}
