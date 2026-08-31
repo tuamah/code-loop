@@ -1337,7 +1337,7 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
 
 
 def cmd_methodology(args: argparse.Namespace) -> None:
-    """Thin CLI dispatcher only: all methodology logic lives in nogap_methodology.py."""
+    """Thin CLI dispatcher only: all methodology logic lives in nogap_methodology.py / nogap_artifacts.py."""
     from nogap_methodology import (
         MethodologyValidationError,
         active_loops,
@@ -1351,6 +1351,9 @@ def cmd_methodology(args: argparse.Namespace) -> None:
     from nogap_methodology import list_principle_enforcement
     from nogap_methodology import status as methodology_status
     from nogap_methodology import transition as do_transition
+
+    if args.action in {"artifact-create", "artifact-list", "artifact-show", "readiness"}:
+        return _cmd_methodology_artifacts(args)
 
     project = Path(args.path)
     try:
@@ -1425,6 +1428,68 @@ def cmd_methodology(args: argparse.Namespace) -> None:
                 raise SystemExit("FAIL: methodology downgrade requires --profile and --reason")
             downgrade_profile(project, args.profile, args.actor, args.reason)
             print(f"downgraded effective profile to {args.profile} (recorded: actor={args.actor}, reason={args.reason!r})")
+            return
+    except MethodologyValidationError as exc:
+        raise SystemExit(f"FAIL: {exc}") from exc
+
+
+def _cmd_methodology_artifacts(args: argparse.Namespace) -> None:
+    """Thin dispatcher for the M7-E artifact actions; logic lives in nogap_artifacts.py."""
+    from nogap_methodology import MethodologyValidationError
+    from nogap_artifacts import (
+        ARTIFACT_TYPES,
+        create_artifact,
+        list_artifacts,
+        load_artifact,
+        prebuild_readiness,
+    )
+
+    project = Path(args.path)
+    try:
+        if args.action == "artifact-create":
+            if not (args.type and args.fields_json):
+                raise SystemExit("FAIL: artifact-create requires --type and --fields-json")
+            if args.type not in ARTIFACT_TYPES:
+                raise SystemExit(f"FAIL: unknown artifact type {args.type!r}; choices: {sorted(ARTIFACT_TYPES)}")
+            try:
+                fields = json.loads(args.fields_json)
+            except json.JSONDecodeError as exc:
+                raise SystemExit(f"FAIL: --fields-json is not valid JSON: {exc}") from exc
+            record = create_artifact(
+                project, args.type, fields, args.actor,
+                source_refs=args.source_ref or [], decision_refs=args.decision_ref or [],
+                evidence_refs=args.evidence_ref or [], assumptions=args.assumption or [],
+                limitations=args.limitation or [],
+            )
+            print(f"created {record['artifact_type']} {record['artifact_id']} (phase {record['phase_id']})")
+            if record["artifact_type"] == "P6_REQUIREMENT":
+                print(f"requirement_id={record['fields']['requirement_id']}")
+            return
+        if args.action == "artifact-list":
+            records = list_artifacts(project, artifact_type=args.type, phase_id=args.phase)
+            print(f"{len(records)} artifact(s)")
+            for record in records:
+                print(f"  {record['artifact_id']} [{record['artifact_type']}] phase={record['phase_id']} status={record['status']}")
+            return
+        if args.action == "artifact-show":
+            if not args.artifact_id:
+                raise SystemExit("FAIL: artifact-show requires --artifact-id")
+            record = load_artifact(project, args.artifact_id)
+            if record is None:
+                raise SystemExit(f"FAIL: unknown artifact_id {args.artifact_id!r}")
+            print(json.dumps(record, indent=2, sort_keys=True))
+            return
+        if args.action == "readiness":
+            result = prebuild_readiness(project)
+            print(f"Current phase: {result['current_phase']}")
+            print(f"Profile: {result['profile']}")
+            if result["ready"]:
+                print("PREBUILD_READY: true")
+            else:
+                print("PREBUILD_READY: false")
+                print("Missing:")
+                for reason in result["missing"]:
+                    print(f"  - {reason}")
             return
     except MethodologyValidationError as exc:
         raise SystemExit(f"FAIL: {exc}") from exc
@@ -1554,19 +1619,29 @@ def main() -> None:
     dashboard.set_defaults(func=cmd_dashboard)
 
     methodology = sub.add_parser("methodology")
-    methodology.add_argument("action", choices=["init", "status", "principles", "can-transition", "transition", "escalate", "downgrade"])
+    methodology.add_argument("action", choices=[
+        "init", "status", "principles", "can-transition", "transition", "escalate", "downgrade",
+        "artifact-create", "artifact-list", "artifact-show", "readiness",
+    ])
     methodology.add_argument("path", nargs="?", default=".")
     methodology.add_argument("--intent", choices=["research", "production", "experimental"])
     methodology.add_argument("--risk", choices=["low", "medium", "high"])
     methodology.add_argument("--claim-strength", dest="claim_strength", choices=["low", "medium", "high"])
     methodology.add_argument("--force", action="store_true")
-    methodology.add_argument("--phase", help="P-id, REPAIR_LOOP, or macro phase (e.g. VERIFY) - transition target, or phase to escalate")
+    methodology.add_argument("--phase", help="P-id, REPAIR_LOOP, or macro phase (e.g. VERIFY) - transition target, phase to escalate, or artifact-list filter")
     methodology.add_argument("--profile", choices=["LIGHT", "STANDARD", "STRICT"])
     methodology.add_argument("--reason", help="required for transition/downgrade")
     methodology.add_argument("--actor", default="nogap methodology")
-    methodology.add_argument("--evidence-ref", action="append", help="repeatable; evidence id(s) supporting a transition")
+    methodology.add_argument("--evidence-ref", action="append", help="repeatable; evidence id(s) supporting a transition or artifact")
     methodology.add_argument("--artifact-ref", action="append", help="repeatable; artifact id(s) supporting a transition")
     methodology.add_argument("--authority", choices=["execution", "verification", "acceptance", "human", "tool"])
+    methodology.add_argument("--type", dest="type", help="artifact type, e.g. P0_PROJECT_INTENT (artifact-create/artifact-list)")
+    methodology.add_argument("--fields-json", help="artifact-create: a JSON object with the artifact type's fields")
+    methodology.add_argument("--artifact-id", help="artifact-show: which artifact to print")
+    methodology.add_argument("--source-ref", action="append", help="repeatable; artifact-create source_refs")
+    methodology.add_argument("--decision-ref", action="append", help="repeatable; artifact-create decision_refs")
+    methodology.add_argument("--assumption", action="append", help="repeatable; artifact-create assumptions")
+    methodology.add_argument("--limitation", action="append", help="repeatable; artifact-create limitations")
     methodology.set_defaults(func=cmd_methodology)
 
     argv = sys.argv[1:]
