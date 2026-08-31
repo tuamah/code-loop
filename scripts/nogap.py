@@ -9,6 +9,7 @@ import json
 import re
 import shutil
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1036,6 +1037,61 @@ def cmd_execute(args: argparse.Namespace) -> None:
     print("execution evidence is not authoritative on its own: independent verification is still required for ACCEPT.")
 
 
+def _write_skip_evidence(
+    root: Path, run_id: str, actor: str, dispatch_id: str, phase_id: str, reason: str,
+    task_id: str, methodology_version: str,
+) -> str:
+    """A tiny, honest evidence stub for a VERIFY phase explicitly skipped per profile
+    policy - never a real check result, so the phase's required_evidence for
+    transition() has a real, resolvable id to cite instead of a fabricated string
+    (mirrors nogap_build.py's record_plan_evidence). kind="skip", authority=
+    "methodology" - never "verification", so it can never be mistaken for a real check."""
+    evidence_dir = root / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    evidence_id = f"evidence-skip-{phase_id.lower()}-{uuid.uuid4().hex[:8]}"
+    evidence = {
+        "id": evidence_id,
+        "run_id": run_id,
+        "kind": "skip",
+        "status": "recorded",
+        "provenance": {
+            "created_by": actor, "actor_id": actor, "authority": "methodology",
+            "task_id": task_id, "methodology_version": methodology_version, "dispatch_id": dispatch_id,
+        },
+        "summary": f"{phase_id} explicitly skipped: {reason}",
+    }
+    (evidence_dir / f"{evidence_id}.json").write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return evidence_id
+
+
+def _finalize_verification(project_root: Path, verification_result: dict[str, Any], gate: dict[str, Any], actor: str) -> dict[str, Any]:
+    """The one place a P18_VERIFICATION_RESULT's terminal status is decided: never
+    ACCEPTED, and never COMPLETE_AWAITING_DECISION if the binding it was computed
+    against has since gone stale (checked here, not deferred to M8)."""
+    import nogap_verify_binding as vb
+    from nogap_artifacts import update_verification_result
+
+    review_result = verification_result["fields"]["independent_review_result"]
+    if review_result == "failed":
+        status, label = "VERIFICATION_FAILED", "INDEPENDENT_REVIEW_FAILED"
+    elif review_result == "inconclusive":
+        status, label = "VERIFICATION_INCONCLUSIVE", "INDEPENDENT_REVIEW_INCONCLUSIVE"
+    else:
+        stale_reasons = vb.verification_staleness(project_root, verification_result, gate.get("hash"))
+        if stale_reasons:
+            status, label = "VERIFICATION_INCONCLUSIVE", "STALE_VERIFICATION_EVIDENCE"
+            for reason in stale_reasons:
+                print(f"  [staleness] {reason}")
+        else:
+            status, label = "VERIFICATION_COMPLETE_AWAITING_DECISION", "VERIFICATION_COMPLETE_AWAITING_DECISION"
+
+    updated = update_verification_result(
+        project_root, verification_result["fields"]["verification_run_id"], actor, f"verification finalized: {label}", status=status,
+    )
+    print(f"verification_status={label}")
+    return updated
+
+
 def cmd_verify(args: argparse.Namespace) -> None:
     root = runtime_root(Path(args.path))
     status = compute_status(root)
@@ -1071,6 +1127,7 @@ def cmd_verify(args: argparse.Namespace) -> None:
         raise SystemExit(f"FAIL: patch artifact missing: {patch_path}")
     patch = patch_path.read_text(encoding="utf-8")
     executor_provider = execution["provenance"].get("provider")
+    executor_actor_id = execution["provenance"].get("actor_id")
 
     gates = load_objects(root / "gates")
     frozen_gates = [gate for gate in gates.values() if gate.get("status") == "frozen" and gate.get("hash") == gate_hash(gate)]
@@ -1084,16 +1141,199 @@ def cmd_verify(args: argparse.Namespace) -> None:
     written: list[str] = []
     print(f"verifying dispatch {dispatch_id} (executed by {executor_provider or 'unknown'}) against gate {gate['id']}")
 
+    # M7-G: methodology binding only engages when the CANDIDATE itself carries a
+    # task_id (written into execution evidence provenance by M7-F) on a
+    # methodology-tracked project - the same "smallest explicit compatibility policy"
+    # M7-F used for `nogap run`: a legacy execution with no task binding gets exactly
+    # the pre-M7-G behavior below, never a fabricated methodology wrapper.
+    from nogap_methodology import MethodologyValidationError as _MethodologyValidationError
+    from nogap_methodology import load_state as _load_state
+    from nogap_methodology import transition as _transition
+
+    task_id = execution["provenance"].get("task_id")
+    state = _load_state(project_root)
+    methodology_tracked = state is not None and task_id is not None
+
+    task_contract = None
+    requirement_refs: list[str] = []
+    depth = None
+    plan = None
+    verification_result = None
+    halted = False
+
+    if methodology_tracked:
+        import nogap_verify_binding as vb
+        from nogap_artifacts import create_artifact, list_artifacts as _list_artifacts, update_verification_result
+
+        if state["current_phase"] not in vb.VERIFY_ENTRY_PHASES:
+            print(
+                f"verification BLOCKED by methodology: current phase {state['current_phase']!r} does not "
+                f"permit VERIFY entry (must be one of {vb.VERIFY_ENTRY_PHASES})"
+            )
+            print("verification_status=METHODOLOGY_BLOCKED")
+            return
+
+        try:
+            task_contract = vb.load_task_contract(project_root, task_id)
+            requirement_refs = list(task_contract["fields"].get("requirement_refs", []))
+            self_check = vb.latest_self_check(project_root, task_id)
+            if self_check is None:
+                raise _MethodologyValidationError(f"no P14_SELF_CHECK recorded for task {task_id!r}")
+            patch_hash_value = self_check["fields"]["patch_hash"]
+            candidate_hash = vb.compute_candidate_hash(task_id, patch_hash_value)
+            depth = vb.derive_verification_depth(project_root)
+
+            existing_plans = [
+                r for r in _list_artifacts(project_root, artifact_type="P15_VERIFICATION_PLAN")
+                if r["fields"].get("task_id") == task_id and r.get("status") == "ACTIVE"
+            ]
+            plan = existing_plans[-1] if existing_plans else create_artifact(
+                project_root, "P15_VERIFICATION_PLAN",
+                {
+                    "task_id": task_id, "requirement_refs": requirement_refs,
+                    "profile": depth["profile"], "risk": state["risk"], "claim_strength": state["claim_strength"],
+                    "required_levels": depth["required_levels"],
+                    "required_validation_levels": depth["required_validation_levels"],
+                    "required_evidence_kinds": (
+                        ["deterministic"]
+                        + (["reproducibility"] if depth["reproducibility_required"] else [])
+                        + (["independent_review"] if depth["independent_review_required"] else [])
+                    ),
+                    "independent_review_required": depth["independent_review_required"],
+                    "reproducibility_required": depth["reproducibility_required"],
+                    "external_validation_required": depth["external_validation_required"],
+                },
+                actor=args.actor,
+            )
+            print(f"verification plan {plan['fields']['verification_plan_id']} (profile={depth['profile']})")
+
+            self_check_evidence_id = self_check["fields"]["execution_evidence_ids"][0]
+            if state["current_phase"] == "P14":
+                _transition(
+                    project_root, "P15", args.actor, "BUILD candidate awaiting verification; entering verification ladder",
+                    artifact_refs=[plan["artifact_id"]], evidence_refs=[self_check_evidence_id], authority_class="tool",
+                )
+                state = _load_state(project_root)
+            if state["current_phase"] == "P15":
+                _transition(
+                    project_root, "P16", args.actor, "verification plan selected; entering three-level validation",
+                    artifact_refs=[plan["artifact_id"]], authority_class="tool",
+                )
+                state = _load_state(project_root)
+        except _MethodologyValidationError as exc:
+            raise SystemExit(f"FAIL: {exc}") from exc
+
+    deterministic_statuses: list[str] = []
     for check in run_deterministic_layer(project_root, patch, gate, timeout=args.timeout):
         kind = "review" if check.check == "effect-scope" else "test"
         evidence_id, _ = write_isolated_run_evidence(
             root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
             authority="verification", kind=kind, role="verifier", event_type="VERIFICATION_COMPLETED",
             dispatch_id=dispatch_id,
+            task_id=task_id if methodology_tracked else None,
+            requirement_refs=requirement_refs if methodology_tracked else None,
+            methodology_version=state["methodology_version"] if methodology_tracked else None,
         )
         written.append(evidence_id)
+        deterministic_statuses.append(check.status)
         print(f"  [deterministic] {check.check}: {check.status} ({check.execution_status}: {check.reason})")
 
+    if methodology_tracked:
+        deterministic_passed = all(s == "passed" for s in deterministic_statuses)
+        deterministic_result = "passed" if deterministic_passed else "failed"
+        levels_attempted = ["STATIC_CHECKS"] + (["UNIT_TESTS"] if gate.get("rules", {}).get("required_commands") else [])
+        levels_passed = list(levels_attempted) if deterministic_passed else []
+        result_status = "VERIFICATION_IN_PROGRESS" if deterministic_passed else "VERIFICATION_FAILED"
+
+        existing_results = [
+            r for r in _list_artifacts(project_root, artifact_type="P18_VERIFICATION_RESULT")
+            if r["fields"].get("task_id") == task_id and r["fields"].get("candidate_hash") == candidate_hash
+        ]
+        if existing_results:
+            verification_result = update_verification_result(
+                project_root, existing_results[-1]["fields"]["verification_run_id"], args.actor,
+                "deterministic layer re-run", status=result_status,
+                field_updates={"levels_attempted": levels_attempted, "levels_passed": levels_passed, "deterministic_result": deterministic_result},
+            )
+        else:
+            verification_result = create_artifact(
+                project_root, "P18_VERIFICATION_RESULT",
+                {
+                    "verification_plan_id": plan["fields"]["verification_plan_id"], "task_id": task_id,
+                    "candidate_hash": candidate_hash, "patch_hash": patch_hash_value, "gate_hash": gate.get("hash"),
+                    "methodology_version_at_verification": state["methodology_version"],
+                    "profile_at_verification": depth["profile"],
+                    "task_snapshot_hash": vb.task_snapshot_hash_of(task_contract["fields"]),
+                    "requirement_refs": requirement_refs,
+                    "executor_actor_id": executor_actor_id, "levels_attempted": levels_attempted,
+                    "levels_passed": levels_passed, "deterministic_result": deterministic_result,
+                    "reproducibility_result": "PENDING", "independent_review_result": "PENDING",
+                },
+                actor=args.actor, status=result_status, evidence_refs=list(written),
+            )
+        print(f"verification result {verification_result['fields']['verification_run_id']}: deterministic={deterministic_result}")
+
+        if not deterministic_passed:
+            print("verification_status=DETERMINISTIC_VERIFICATION_FAILED")
+            halted = True
+
+    if methodology_tracked and not halted:
+        _transition(
+            project_root, "P17", args.actor, "deterministic verification passed; entering reproducibility",
+            artifact_refs=[verification_result["artifact_id"]], evidence_refs=list(written), authority_class="tool",
+        )
+        state = _load_state(project_root)
+
+        if depth["reproducibility_required"]:
+            rerun_ids: list[str] = []
+            rerun_statuses: list[str] = []
+            for check in run_deterministic_layer(project_root, patch, gate, timeout=args.timeout):
+                kind = "review" if check.check == "effect-scope" else "test"
+                evidence_id, _ = write_isolated_run_evidence(
+                    root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
+                    authority="verification", kind=kind, role="verifier", event_type="VERIFICATION_COMPLETED",
+                    dispatch_id=dispatch_id, task_id=task_id, requirement_refs=requirement_refs,
+                    methodology_version=state["methodology_version"],
+                )
+                rerun_ids.append(evidence_id)
+                rerun_statuses.append(check.status)
+                print(f"  [reproducibility re-run] {check.check}: {check.status} ({check.execution_status}: {check.reason})")
+            written.extend(rerun_ids)
+            rerun_consistent = all(s == "passed" for s in rerun_statuses)
+            reproducibility_result, reproducibility_reason = vb.evaluate_reproducibility(rerun_consistent, depth["external_validation_required"])
+            evidence_refs_p17 = rerun_ids
+        else:
+            reproducibility_result = "SKIPPED_PER_PROFILE_POLICY"
+            reproducibility_reason = f"P17 is skippable at profile {depth['profile']}"
+            evidence_refs_p17 = [_write_skip_evidence(root, run_id, args.actor, dispatch_id, "P17", reproducibility_reason, task_id, state["methodology_version"])]
+        print(f"  [reproducibility] {reproducibility_result}: {reproducibility_reason}")
+
+        verification_result = update_verification_result(
+            project_root, verification_result["fields"]["verification_run_id"], args.actor, reproducibility_reason,
+            field_updates={"reproducibility_result": reproducibility_result},
+        )
+
+        if reproducibility_result not in {"passed", "SKIPPED_PER_PROFILE_POLICY"}:
+            label = "REPRODUCIBILITY_FAILED" if reproducibility_result == "failed" else "EXTERNAL_VALIDATION_UNAVAILABLE"
+            final_status = "VERIFICATION_FAILED" if reproducibility_result == "failed" else "VERIFICATION_INCONCLUSIVE"
+            verification_result = update_verification_result(
+                project_root, verification_result["fields"]["verification_run_id"], args.actor, f"halted: {label}", status=final_status,
+            )
+            print(f"verification_status={label}")
+            halted = True
+        else:
+            _transition(
+                project_root, "P18", args.actor, "reproducibility satisfied; entering independent review",
+                artifact_refs=[verification_result["artifact_id"]], evidence_refs=evidence_refs_p17, authority_class="tool",
+            )
+            state = _load_state(project_root)
+
+    # Independent review (P18) runs whenever --review is requested, regardless of
+    # whether independent_review_required at this profile (nothing stops doing MORE
+    # rigor than required); if it is required but not performed, the candidate is
+    # marked inconclusive, never silently passed.
+    review_performed = False
+    check_status = None
     if args.review:
         from nogap_adapters import ADAPTERS, ExecutorNotReady
 
@@ -1112,13 +1352,41 @@ def cmd_verify(args: argparse.Namespace) -> None:
             except ExecutorNotReady as exc:
                 print(f"independent review aborted: {exc}")
             else:
+                reviewer_actor_id = f"agent:{reviewer.id}"
+                if methodology_tracked and not vb.reviewer_is_independent(executor_actor_id, reviewer_actor_id):
+                    check_status, check_execution_status, check_reason = "inconclusive", "REVIEW_NOT_INDEPENDENT", (
+                        f"reviewer identity {reviewer_actor_id!r} is not independent from executor identity {executor_actor_id!r}"
+                    )
+                else:
+                    check_status, check_execution_status, check_reason = check.status, check.execution_status, check.reason
                 evidence_id, _ = write_isolated_run_evidence(
-                    root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
+                    root, run_id, check, args.actor, check_status, check_execution_status, check_reason,
                     authority="verification", kind="review", role="verifier", event_type="VERIFICATION_COMPLETED",
                     dispatch_id=dispatch_id, provider=reviewer.id, runtime_id=reviewer.id,
+                    task_id=task_id if methodology_tracked else None,
+                    requirement_refs=requirement_refs if methodology_tracked else None,
+                    methodology_version=state["methodology_version"] if methodology_tracked else None,
                 )
                 written.append(evidence_id)
-                print(f"  [independent review by {reviewer.id}] {check.status} ({check.execution_status}: {check.reason})")
+                review_performed = True
+                print(f"  [independent review by {reviewer.id}] {check_status} ({check_execution_status}: {check_reason})")
+
+    if methodology_tracked and not halted:
+        if review_performed:
+            independent_review_result = check_status
+            review_reason = "independent review recorded"
+        elif depth["independent_review_required"]:
+            independent_review_result = "inconclusive"
+            review_reason = "independent review is required at this profile but was not performed (pass --review with a second ready AgentRuntime)"
+        else:
+            independent_review_result = "SKIPPED_PER_PROFILE_POLICY"
+            review_reason = f"P18 is skippable at profile {depth['profile']}"
+
+        verification_result = update_verification_result(
+            project_root, verification_result["fields"]["verification_run_id"], args.actor, review_reason,
+            field_updates={"independent_review_result": independent_review_result},
+        )
+        _finalize_verification(project_root, verification_result, gate, args.actor)
 
     print(f"verification complete: {len(written)} evidence record(s) written")
     print("verification evidence is not ACCEPT: only 'nogap decide' can accept, and only from independent authoritative evidence.")
