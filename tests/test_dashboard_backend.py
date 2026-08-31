@@ -16,7 +16,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("nogap_dashboard", ROOT / "scripts" / "nogap_dashboard.py")
 assert SPEC and SPEC.loader
 nogap_dashboard = importlib.util.module_from_spec(SPEC)
+sys.path.insert(0, str(ROOT / "scripts"))
 SPEC.loader.exec_module(nogap_dashboard)
+
+CONNECTIONS_SPEC = importlib.util.spec_from_file_location("nogap_connections", ROOT / "scripts" / "nogap_connections.py")
+assert CONNECTIONS_SPEC and CONNECTIONS_SPEC.loader
+nogap_connections = importlib.util.module_from_spec(CONNECTIONS_SPEC)
+CONNECTIONS_SPEC.loader.exec_module(nogap_connections)
 
 
 def run_script(*args: str) -> subprocess.CompletedProcess[str]:
@@ -31,6 +37,23 @@ def run_script(*args: str) -> subprocess.CompletedProcess[str]:
 
 def write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+class MemorySecretStore:
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+
+    def get(self, target: str) -> str | None:
+        return self.values.get(target)
+
+    def set(self, target: str, secret: str) -> None:
+        self.values[target] = secret
+
+    def delete(self, target: str) -> None:
+        self.values.pop(target, None)
+
+    def available(self) -> bool:
+        return True
 
 
 class DashboardBackendTests(unittest.TestCase):
@@ -84,6 +107,53 @@ class DashboardBackendTests(unittest.TestCase):
     def test_nogap_cli_exposes_dashboard_command(self) -> None:
         result = run_script("scripts/nogap.py", "--help")
         self.assertIn("dashboard", result.stdout)
+
+    def test_connections_payload_never_returns_openrouter_secret(self) -> None:
+        store = MemorySecretStore()
+        secret = "sk-or-1234567890abcdef"
+        nogap_connections.store_openrouter_key(secret, store, verify=False)
+        payload = nogap_connections.build_connections_payload(store)
+        raw = json.dumps(payload)
+        self.assertNotIn(secret, raw)
+        openrouter = next(item for item in payload["providers"] if item["id"] == "openrouter")
+        self.assertTrue(openrouter["credential_present"])
+        self.assertEqual(openrouter["credential_ref"], nogap_connections.OPENROUTER_TARGET)
+        self.assertTrue(openrouter["credential_hint"].startswith("sk-or-"))
+
+    def test_openrouter_rejects_invalid_key_before_storage(self) -> None:
+        store = MemorySecretStore()
+        with self.assertRaises(ValueError):
+            nogap_connections.store_openrouter_key("short", store)
+        self.assertIsNone(store.get(nogap_connections.OPENROUTER_TARGET))
+
+    def test_openrouter_pkce_login_keeps_verifier_server_side(self) -> None:
+        store = MemorySecretStore()
+        before = set(nogap_connections.OPENROUTER_PENDING_AUTH)
+        payload = nogap_connections.start_openrouter_login(
+            "http://127.0.0.1:8766/api/connections/openrouter/callback",
+            store,
+            open_browser=False,
+        )
+        after = set(nogap_connections.OPENROUTER_PENDING_AUTH)
+        new_states = after - before
+        self.assertEqual(payload["status"], "auth_pending")
+        self.assertEqual(len(new_states), 1)
+        self.assertIn("code_challenge=", payload["auth_url"])
+        self.assertNotIn("code_verifier", payload["auth_url"])
+        for state in new_states:
+            nogap_connections.OPENROUTER_PENDING_AUTH.pop(state, None)
+
+    def test_openrouter_callback_requires_known_state(self) -> None:
+        store = MemorySecretStore()
+        with self.assertRaises(ValueError):
+            nogap_connections.complete_openrouter_login("code", "unknown-state", store)
+
+    def test_cli_connection_probe_is_sanitized_when_missing(self) -> None:
+        payload = nogap_connections.cli_connection("missing", "Missing CLI", "nogap-missing-cli-for-test")
+        raw = json.dumps(payload)
+        self.assertEqual(payload["status"], "disconnected")
+        self.assertIn("runtime_executable", raw)
+        self.assertNotIn("api_key", raw)
 
 
 if __name__ == "__main__":

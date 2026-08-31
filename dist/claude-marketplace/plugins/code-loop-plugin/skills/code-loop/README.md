@@ -211,6 +211,20 @@ Run it against a real project runtime with:
 python scripts/nogap.py dashboard /path/to/project
 ```
 
+The Dashboard also exposes a backend-backed `Settings / Connections` view:
+
+- `GET /api/connections` returns sanitized provider, model, and AgentRuntime status.
+- `POST /api/connections/openrouter/connect` starts local OpenRouter OAuth PKCE login in the
+  system browser, then stores the returned key in the OS credential store.
+- `POST /api/connections/openrouter` stores the OpenRouter key in the OS credential store on
+  Windows and never writes it to runtime JSON, localStorage, or event logs.
+- `POST /api/connections/openrouter/test` performs a real authenticated model-discovery probe.
+- `POST /api/connections/codex/test` probes the official local Codex CLI login and doctor output.
+- `POST /api/connections/claude/test` reports the Claude Code CLI status without copying tokens.
+
+Provider, model, and AgentRuntime are separate concepts. The current build routing is: Terra plans,
+5.4 executes, and Sol judges. That is a construction-time policy, not acceptance authority.
+
 The runtime is intentionally local-first and server-ready. A frozen gate is hash-locked for the run;
 evidence that claims to prove work must reference the frozen gate hash. Authoritative evidence
 records producer identity, authority class, role, and provenance. Lessons are scoped, tagged, and

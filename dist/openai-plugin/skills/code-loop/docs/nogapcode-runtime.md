@@ -179,6 +179,38 @@ The current default routing policy is stored as mutable configuration in
 `runtime/config/model-router.policy.json`: `gpt-5.6-terra` plans, `gpt-5.4` implements, and
 `gpt-5.6-sol` judges. This policy selects clients; it does not grant acceptance authority.
 
+During current NoGapCode construction, the working roles are: Terra plans, 5.4 executes, and Sol
+judges. This is build coordination, not a permanent product rule.
+
+## Provider Connections
+
+The Dashboard owns connection UX, but JavaScript never runs provider shell commands directly and
+never stores secrets. The local server exposes a small control-plane API:
+
+- `GET /api/connections`
+- `POST /api/connections/openrouter/connect`
+- `POST /api/connections/openrouter`
+- `POST /api/connections/openrouter/test`
+- `POST /api/connections/openrouter/disconnect`
+- `POST /api/connections/codex/connect`
+- `POST /api/connections/codex/test`
+- `POST /api/connections/claude/connect`
+- `POST /api/connections/claude/test`
+
+OpenRouter supports local OAuth PKCE login. NoGapCode starts that login from the Dashboard, receives
+the localhost callback, exchanges the authorization code for a user-controlled API key, and stores
+that key through the OS credential store on Windows under a credential reference. Manual API-key
+entry remains a fallback. The API returns only `credential_present`, `credential_ref`, and a masked
+hint. Codex and Claude Code use their official local CLI authentication flows; NoGapCode detects and
+probes them but does not ask for, copy, or persist their account tokens.
+
+Connection status is capability based. For Codex, the current probe checks executable presence,
+version, login status, runtime health, provider reachability, and WebSocket streaming through
+redacted `codex doctor --json` output. For OpenRouter, the probe checks secure-store presence,
+authentication, and real model discovery against the OpenRouter API. Model-specific streaming,
+tool-calling, and quota checks remain explicit warnings until the router runs provider-specific
+execution probes.
+
 ## Context Learning
 
 NoGapCode should learn context as conditional lessons, not as raw memory. A lesson is useful only

@@ -674,6 +674,134 @@
       font-size: 18px;
     }
 
+    .view-panel {
+      display: grid;
+      gap: 14px;
+    }
+
+    .view-panel[hidden] {
+      display: none;
+    }
+
+    .connections-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(240px, 1fr));
+      gap: 14px;
+    }
+
+    .connection-card {
+      min-height: 290px;
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .connection-head {
+      display: flex;
+      align-items: start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .connection-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .connection-title strong {
+      display: block;
+      font-size: 15px;
+      margin-bottom: 4px;
+    }
+
+    .connection-title span,
+    .connection-meta,
+    .probe-list {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .connection-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .action-button {
+      min-height: 34px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #0a111c;
+      color: #eef4fb;
+      padding: 0 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .action-button.primary {
+      color: #07110d;
+      background: var(--green);
+      border-color: transparent;
+      font-weight: 750;
+    }
+
+    .secret-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+    }
+
+    .secret-input {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #070d15;
+      color: var(--text);
+      padding: 0 10px;
+      font: inherit;
+    }
+
+    .probe-list {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .probe-list li {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      border-top: 1px solid var(--line);
+      padding-top: 6px;
+    }
+
+    .models-list {
+      display: grid;
+    }
+
+    .model-row {
+      min-height: 52px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 150px 130px;
+      gap: 12px;
+      align-items: center;
+      padding: 0 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .model-row span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
     svg {
       stroke: currentColor;
       fill: none;
@@ -693,6 +821,7 @@
       .sidebar { align-items: center; padding: 18px 10px; }
       .nav-item { justify-content: center; width: 48px; padding: 0; }
       .dashboard-grid { grid-template-columns: 1fr; }
+      .connections-grid { grid-template-columns: 1fr; }
       .wide-card { min-height: auto; }
       .status-bar { grid-template-columns: repeat(2, 1fr); row-gap: 14px; padding: 18px; }
       .status-item:nth-child(2n) { border-right: 0; }
@@ -714,6 +843,8 @@
       .activity-row { grid-template-columns: 34px minmax(0, 1fr); }
       .decision-status,
       .time { grid-column: 2; justify-items: start; margin-top: 0; }
+      .model-row { grid-template-columns: 1fr; padding: 12px 16px; }
+      .secret-row { grid-template-columns: 1fr; }
       .status-bar { grid-template-columns: 1fr; }
       .status-item { border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 0; }
     }
@@ -734,7 +865,7 @@
 
       <nav class="nav">
         <div class="nav-section">
-          <button class="nav-item active" aria-current="page"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg><span>Overview</span></button>
+          <button class="nav-item active" aria-current="page" data-view="overview"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg><span>Overview</span></button>
         </div>
         <div class="nav-section">
           <p class="nav-title">Execution</p>
@@ -760,10 +891,10 @@
         </div>
         <div class="nav-section">
           <p class="nav-title">System</p>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="m4 7 8 4 8-4"></path><path d="M12 11v10"></path></svg><span>Models</span></button>
+          <button class="nav-item" data-view="connections"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="m4 7 8 4 8-4"></path><path d="M12 11v10"></path></svg><span>Models</span></button>
           <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-8 0v2"></path><circle cx="12" cy="7" r="4"></circle><path d="M20 8v6"></path><path d="M23 11h-6"></path></svg><span>Agents</span></button>
           <button class="nav-item"><svg viewBox="0 0 24 24"><path d="m14.7 6.3 3 3"></path><path d="m7 17 7.7-7.7"></path><path d="m5 19 2-2"></path><path d="M17 3l4 4-3 3-4-4Z"></path></svg><span>Tools</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2 3-.2-.1a1.8 1.8 0 0 0-2 .2 1.7 1.7 0 0 0-.8 1.6V22h-4v-.3a1.7 1.7 0 0 0-.8-1.6 1.8 1.8 0 0 0-2-.2l-.2.1-2-3 .1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.4-1H3v-4h.2a1.7 1.7 0 0 0 1.4-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2-3 .2.1a1.8 1.8 0 0 0 2-.2A1.7 1.7 0 0 0 10.8 2H11h4v.3a1.7 1.7 0 0 0 .8 1.6 1.8 1.8 0 0 0 2 .2l.2-.1 2 3-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.4 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"></path></svg><span>Settings</span></button>
+          <button class="nav-item" data-view="connections"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2 3-.2-.1a1.8 1.8 0 0 0-2 .2 1.7 1.7 0 0 0-.8 1.6V22h-4v-.3a1.7 1.7 0 0 0-.8-1.6 1.8 1.8 0 0 0-2-.2l-.2.1-2-3 .1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.4-1H3v-4h.2a1.7 1.7 0 0 0 1.4-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2-3 .2.1a1.8 1.8 0 0 0 2-.2A1.7 1.7 0 0 0 10.8 2H11h4v.3a1.7 1.7 0 0 0 .8 1.6 1.8 1.8 0 0 0 2 .2l.2-.1 2 3-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.4 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"></path></svg><span>Settings</span></button>
         </div>
       </nav>
 
@@ -790,7 +921,7 @@
         </div>
       </header>
 
-      <section class="content">
+      <section class="content view-panel" data-panel="overview">
         <div class="overview">
           <div>
             <h2>Overview</h2>
@@ -871,13 +1002,74 @@
           <div class="trust"><svg viewBox="0 0 24 24" width="32" height="32" class="green"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg><div><small>Sol judges</small><br><strong>92</strong><span> / 100</span></div></div>
         </footer>
       </section>
+
+      <section class="content view-panel" data-panel="connections" hidden>
+        <div class="overview">
+          <div>
+            <h2>Settings / Connections</h2>
+            <p>Provider, model, and AgentRuntime are connected through the backend control plane.</p>
+          </div>
+          <div class="date-filter">Build routing: Terra plans / 5.4 executes / Sol judges</div>
+        </div>
+
+        <div class="connections-grid" aria-label="Provider connections">
+          <article class="card connection-card" data-provider-card="codex">
+            <div class="connection-head">
+              <div class="connection-title"><span class="metric-icon blue"><svg viewBox="0 0 24 24"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg></span><div><strong>OpenAI Codex</strong><span data-field="kind">AgentRuntime</span></div></div>
+              <span class="pill pending" data-field="status">LOADING</span>
+            </div>
+            <div class="connection-meta" data-field="meta">Checking local CLI and official account boundary.</div>
+            <div class="connection-actions">
+              <button class="action-button primary" data-connect="codex"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>Connect</button>
+              <button class="action-button" data-test="codex"><svg viewBox="0 0 24 24" width="16" height="16"><path d="m8 12 3 3 5-6"></path></svg>Test</button>
+            </div>
+            <ul class="probe-list" data-field="probes"></ul>
+          </article>
+
+          <article class="card connection-card" data-provider-card="claude">
+            <div class="connection-head">
+              <div class="connection-title"><span class="metric-icon green"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="m4 7 8 4 8-4"></path><path d="M12 11v10"></path></svg></span><div><strong>Claude Code</strong><span data-field="kind">AgentRuntime</span></div></div>
+              <span class="pill pending" data-field="status">LOADING</span>
+            </div>
+            <div class="connection-meta" data-field="meta">Checking Claude executable and official login boundary.</div>
+            <div class="connection-actions">
+              <button class="action-button primary" data-connect="claude"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>Connect</button>
+              <button class="action-button" data-test="claude"><svg viewBox="0 0 24 24" width="16" height="16"><path d="m8 12 3 3 5-6"></path></svg>Test</button>
+            </div>
+            <ul class="probe-list" data-field="probes"></ul>
+          </article>
+
+          <article class="card connection-card" data-provider-card="openrouter">
+            <div class="connection-head">
+              <div class="connection-title"><span class="metric-icon amber"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="M8 12h8"></path><path d="M12 8v8"></path></svg></span><div><strong>OpenRouter</strong><span data-field="kind">ModelProvider</span></div></div>
+              <span class="pill pending" data-field="status">LOADING</span>
+            </div>
+            <div class="connection-meta" data-field="meta">API key is stored in the OS credential store and never returned.</div>
+            <div class="secret-row">
+              <input class="secret-input" type="password" autocomplete="off" data-openrouter-key aria-label="OpenRouter API key" placeholder="OpenRouter API key">
+              <button class="action-button primary" data-save-openrouter><svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"></path><path d="M17 21v-8H7v8"></path><path d="M7 3v5h8"></path></svg>Save</button>
+            </div>
+            <div class="connection-actions">
+              <button class="action-button primary" data-connect="openrouter"><svg viewBox="0 0 24 24" width="16" height="16"><path d="M15 3h4a2 2 0 0 1 2 2v4"></path><path d="M10 14 21 3"></path><path d="M21 14v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5"></path></svg>Login</button>
+              <button class="action-button" data-test="openrouter"><svg viewBox="0 0 24 24" width="16" height="16"><path d="m8 12 3 3 5-6"></path></svg>Test</button>
+              <button class="action-button" data-disconnect-openrouter><svg viewBox="0 0 24 24" width="16" height="16"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg>Disconnect</button>
+            </div>
+            <ul class="probe-list" data-field="probes"></ul>
+          </article>
+        </div>
+
+        <section class="wide-card">
+          <header class="card-header"><h3>Model Sources</h3><button class="view-link" data-refresh-connections>Refresh</button></header>
+          <div class="models-list" data-models-list></div>
+        </section>
+      </section>
     </main>
   </div>
   <script>
     const statusClass = (status) => {
       const normalized = String(status || "").toLowerCase();
-      if (normalized.includes("fail") || normalized.includes("reject")) return "fail";
-      if (normalized.includes("pending") || normalized.includes("abstain") || normalized.includes("repair")) return "pending";
+      if (normalized.includes("fail") || normalized.includes("reject") || normalized.includes("disconnect") || normalized.includes("not_ready")) return "fail";
+      if (normalized.includes("pending") || normalized.includes("abstain") || normalized.includes("repair") || normalized.includes("limited") || normalized.includes("auth")) return "pending";
       return "pass";
     };
 
@@ -974,6 +1166,140 @@
       `).join("");
     }
 
+    function setView(name) {
+      document.querySelectorAll("[data-panel]").forEach((panel) => {
+        panel.hidden = panel.dataset.panel !== name;
+      });
+      document.querySelectorAll("[data-view]").forEach((button) => {
+        const active = button.dataset.view === name;
+        button.classList.toggle("active", active);
+        if (active) button.setAttribute("aria-current", "page");
+        else button.removeAttribute("aria-current");
+      });
+      if (name === "connections") loadConnections();
+    }
+
+    function probeStatusClass(status) {
+      const normalized = String(status || "").toLowerCase();
+      if (normalized === "fail") return "tone-red";
+      if (normalized === "warn") return "tone-amber";
+      return "tone-green";
+    }
+
+    function renderProvider(provider) {
+      const card = document.querySelector(`[data-provider-card='${provider.id}']`);
+      if (!card) return;
+      const statusNode = card.querySelector("[data-field='status']");
+      const status = String(provider.status || "unknown").toUpperCase();
+      statusNode.textContent = status;
+      statusNode.className = `pill ${statusClass(status)}`;
+      card.querySelector("[data-field='kind']").textContent = provider.kind || "";
+      const meta = card.querySelector("[data-field='meta']");
+      const pieces = [];
+      if (provider.auth_mode) pieces.push(`auth: ${provider.auth_mode}`);
+      if (provider.executable) pieces.push(`cli: ${provider.executable}`);
+      if (provider.credential_hint) pieces.push(`key: ${provider.credential_hint}`);
+      if (provider.model_count) pieces.push(`models: ${provider.model_count}`);
+      pieces.push(`trust: ${provider.trust_status || "NOT_READY"}`);
+      meta.textContent = pieces.join(" / ");
+      const probes = card.querySelector("[data-field='probes']");
+      probes.innerHTML = (provider.probes || []).map((probe) => `
+        <li><span>${escapeHtml(probe.name)}</span><strong class="${probeStatusClass(probe.status)}">${escapeHtml(probe.status)}</strong></li>
+      `).join("");
+    }
+
+    function renderModels(models) {
+      const list = document.querySelector("[data-models-list]");
+      if (!list) return;
+      list.innerHTML = (models || []).map((model) => `
+        <div class="model-row">
+          <div><strong>${escapeHtml(model.id)}</strong><br><span>${escapeHtml(model.role)}</span></div>
+          <span>${escapeHtml(model.source)}</span>
+          <span class="pill ${statusClass(model.status)}">${escapeHtml(String(model.status || "unknown").toUpperCase())}</span>
+        </div>
+      `).join("");
+    }
+
+    async function loadConnections() {
+      try {
+        const response = await fetch("/api/connections", { cache: "no-store" });
+        if (!response.ok) throw new Error(`Connections API returned ${response.status}`);
+        const data = await response.json();
+        (data.providers || []).forEach(renderProvider);
+        renderModels(data.models || []);
+      } catch (error) {
+        document.querySelectorAll("[data-provider-card]").forEach((card) => {
+          const statusNode = card.querySelector("[data-field='status']");
+          statusNode.textContent = "OFFLINE";
+          statusNode.className = "pill fail";
+          card.querySelector("[data-field='meta']").textContent = "Connections API is unavailable.";
+        });
+      }
+    }
+
+    async function postConnection(path, payload = {}) {
+      const response = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        cache: "no-store"
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || `Request failed: ${response.status}`);
+      return data;
+    }
+
+    function setupConnectionActions() {
+      document.querySelectorAll("[data-view]").forEach((button) => {
+        button.addEventListener("click", () => setView(button.dataset.view));
+      });
+      document.querySelectorAll("[data-connect]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          try {
+            const provider = button.dataset.connect;
+            const data = await postConnection(`/api/connections/${provider}/connect`);
+            renderProvider(data);
+            if (data.auth_url && !data.browser_opened) window.open(data.auth_url, "_blank", "noopener");
+          } catch (error) {
+            loadConnections();
+          }
+        });
+      });
+      document.querySelectorAll("[data-test]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          try {
+            const provider = button.dataset.test;
+            const data = await postConnection(`/api/connections/${provider}/test`);
+            if (data.providers) (data.providers || []).forEach(renderProvider);
+            else renderProvider(data);
+            if (data.models) renderModels(data.models);
+          } catch (error) {
+            loadConnections();
+          }
+        });
+      });
+      document.querySelector("[data-save-openrouter]")?.addEventListener("click", async () => {
+        try {
+          const input = document.querySelector("[data-openrouter-key]");
+          const data = await postConnection("/api/connections/openrouter", { api_key: input.value });
+          input.value = "";
+          renderProvider(data);
+        } catch (error) {
+          loadConnections();
+        }
+      });
+      document.querySelector("[data-disconnect-openrouter]")?.addEventListener("click", async () => {
+        try {
+          const data = await postConnection("/api/connections/openrouter/disconnect");
+          renderProvider(data);
+          loadConnections();
+        } catch (error) {
+          loadConnections();
+        }
+      });
+      document.querySelector("[data-refresh-connections]")?.addEventListener("click", loadConnections);
+    }
+
     async function loadDashboard() {
       try {
         const response = await fetch("/api/dashboard", { cache: "no-store" });
@@ -1001,7 +1327,10 @@
       }
     }
 
+    setupConnectionActions();
     loadDashboard();
+    loadConnections();
+    setView(new URLSearchParams(window.location.search).get("view") === "connections" ? "connections" : "overview");
   </script>
 </body>
 </html>

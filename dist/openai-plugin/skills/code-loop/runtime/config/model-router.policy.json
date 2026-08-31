@@ -1,7 +1,9 @@
 {
   "id": "model-router-policy-0001",
   "policy_version": "2026-08-31",
+  "scope": "build-time",
   "authority_note": "Routing selects execution clients; it does not grant acceptance authority.",
+  "coordination_note": "Current construction roles: Terra plans, 5.4 executes, Sol judges.",
   "routes": [
     {
       "role": "planner",

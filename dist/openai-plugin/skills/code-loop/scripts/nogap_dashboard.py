@@ -11,12 +11,22 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
+
+from nogap_connections import (
+    build_connections_payload,
+    complete_openrouter_login,
+    connect_cli,
+    delete_openrouter_key,
+    start_openrouter_login,
+    store_openrouter_key,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_DIR = ROOT / "dashboard"
 RUNTIME_DIRS = ("gates", "claims", "evidence", "events", "decisions", "lessons", "literature")
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def utc_now() -> datetime:
@@ -220,14 +230,85 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (ConnectionAbortedError, BrokenPipeError, ConnectionResetError):
+            return
+
+    def send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        body = json.dumps(payload, indent=2).encode("utf-8")
+        self.send_bytes(status, body, "application/json; charset=utf-8")
+
+    def read_json_body(self) -> dict[str, Any]:
+        length_header = self.headers.get("Content-Length", "0")
+        try:
+            length = int(length_header)
+        except ValueError as exc:
+            raise ValueError("invalid content length") from exc
+        if length < 0 or length > 8192:
+            raise ValueError("request body is too large")
+        raw = self.rfile.read(length)
+        if not raw:
+            return {}
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("invalid JSON body") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("JSON body must be an object")
+        return payload
+
+    def same_origin_post(self) -> bool:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        host = self.headers.get("Host", "")
+        parsed = urlparse(origin)
+        return parsed.scheme == "http" and parsed.netloc == host
+
+    def loopback_callback_url(self) -> str:
+        host = self.headers.get("Host", "127.0.0.1")
+        hostname = host.rsplit(":", 1)[0].strip("[]")
+        if hostname not in LOOPBACK_HOSTS:
+            raise ValueError("connection login must be started from a loopback dashboard host")
+        return f"http://{host}/api/connections/openrouter/callback"
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path == "/api/dashboard":
-            body = json.dumps(build_payload(self.project), indent=2).encode("utf-8")
-            self.send_bytes(HTTPStatus.OK, body, "application/json; charset=utf-8")
+            self.send_json(HTTPStatus.OK, build_payload(self.project))
+            return
+        if parsed.path == "/api/connections":
+            self.send_json(HTTPStatus.OK, build_connections_payload())
+            return
+        if parsed.path == "/api/connections/openrouter/callback":
+            params = parse_qs(parsed.query)
+            try:
+                payload = complete_openrouter_login(
+                    params.get("code", [""])[0],
+                    params.get("state", [""])[0],
+                )
+                body = (
+                    "<!doctype html><meta charset='utf-8'>"
+                    "<title>NoGapCode OpenRouter Connected</title>"
+                    "<body style='font-family:system-ui;background:#070b12;color:#f6f8fb'>"
+                    "<h1>OpenRouter connected</h1>"
+                    f"<p>Status: {payload['status']}. You can return to NoGapCode.</p>"
+                    "</body>"
+                ).encode("utf-8")
+                self.send_bytes(HTTPStatus.OK, body, "text/html; charset=utf-8")
+            except (ValueError, RuntimeError) as exc:
+                body = (
+                    "<!doctype html><meta charset='utf-8'>"
+                    "<title>NoGapCode OpenRouter Login Failed</title>"
+                    "<body style='font-family:system-ui;background:#070b12;color:#f6f8fb'>"
+                    "<h1>OpenRouter login failed</h1>"
+                    f"<p>{str(exc)}</p>"
+                    "</body>"
+                ).encode("utf-8")
+                self.send_bytes(HTTPStatus.BAD_REQUEST, body, "text/html; charset=utf-8")
             return
         rel = "index.html" if parsed.path in {"", "/"} else parsed.path.lstrip("/")
         target = (DASHBOARD_DIR / rel).resolve()
@@ -239,6 +320,45 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
         self.send_bytes(HTTPStatus.OK, target.read_bytes(), content_type)
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        if not self.same_origin_post():
+            self.send_json(HTTPStatus.FORBIDDEN, {"error": "cross-origin connection request rejected"})
+            return
+        try:
+            if parsed.path == "/api/connections/openrouter":
+                payload = self.read_json_body()
+                self.send_json(HTTPStatus.OK, store_openrouter_key(str(payload.get("api_key", ""))))
+                return
+            if parsed.path == "/api/connections/openrouter/connect":
+                self.send_json(HTTPStatus.OK, start_openrouter_login(self.loopback_callback_url()))
+                return
+            if parsed.path == "/api/connections/openrouter/test":
+                self.send_json(HTTPStatus.OK, build_connections_payload(test_provider="openrouter"))
+                return
+            if parsed.path == "/api/connections/openrouter/disconnect":
+                self.send_json(HTTPStatus.OK, delete_openrouter_key())
+                return
+            if parsed.path == "/api/connections/codex/connect":
+                self.send_json(HTTPStatus.OK, connect_cli("codex"))
+                return
+            if parsed.path == "/api/connections/codex/test":
+                self.send_json(HTTPStatus.OK, build_connections_payload())
+                return
+            if parsed.path == "/api/connections/claude/connect":
+                self.send_json(HTTPStatus.OK, connect_cli("claude"))
+                return
+            if parsed.path == "/api/connections/claude/test":
+                self.send_json(HTTPStatus.OK, build_connections_payload())
+                return
+        except ValueError as exc:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
+            return
+        except RuntimeError as exc:
+            self.send_json(HTTPStatus.NOT_IMPLEMENTED, {"error": str(exc)})
+            return
+        self.send_error(HTTPStatus.NOT_FOUND)
 
 
 def serve(project: Path, host: str, port: int) -> None:

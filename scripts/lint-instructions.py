@@ -104,6 +104,7 @@ def main() -> None:
         ROOT / "scripts" / "validate-council.py",
         ROOT / "scripts" / "nogap.py",
         ROOT / "scripts" / "nogap_dashboard.py",
+        ROOT / "scripts" / "nogap_connections.py",
         ROOT / "dashboard" / "index.html",
         ROOT / "runtime" / "config" / "model-router.policy.json",
         ROOT / "benchmarks" / "__init__.py",
