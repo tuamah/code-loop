@@ -789,7 +789,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     exec_status, execution_status, reason = classify_agent_execution(
         result.process_outcome, result.returncode, effect, allowed_exit_codes,
     )
-    evidence_id, artifact_path = write_execution_evidence(
+    evidence_id, artifact_path = write_isolated_run_evidence(
         root, run_id, result, actor, exec_status, execution_status, reason,
         dispatch_id=dispatch_id, provider=selected["provider"], runtime_id=selected["runtime"],
     )
@@ -800,23 +800,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     print("execution evidence is not authoritative on its own: independent verification is still required for ACCEPT.")
 
 
-def classify_generic_execution(result: Any) -> tuple[str, str, str]:
-    """Maps raw process facts to a status for `nogap execute`'s arbitrary-command case.
-
-    Unlike AgentRuntime dispatch, an arbitrary command's returncode (a test runner, a
-    linter) really is the authoritative signal here - that is what exit codes are for.
-    This mapping is deliberately explicit and lives in the caller, not the backend.
-    """
-    if result.cancelled:
-        return "blocked", "CANCELLED", "execution was cancelled before completion"
-    if result.timed_out:
-        return "inconclusive", "TIMED_OUT", "execution exceeded its timeout"
-    if result.returncode == 0:
-        return "passed", "PROCESS_EXIT_OK", "process exited with code 0"
-    return "failed", "PROCESS_EXIT_ERROR", f"process exited with code {result.returncode}"
-
-
-def write_execution_evidence(
+def write_isolated_run_evidence(
     root: Path,
     run_id: str,
     result: Any,
@@ -825,16 +809,26 @@ def write_execution_evidence(
     execution_status: str,
     reason: str,
     *,
+    authority: str = "execution",
+    kind: str = "execution",
+    role: str = "implementer",
+    event_type: str = "EXECUTION_COMPLETED",
     dispatch_id: str | None = None,
     provider: str | None = None,
     runtime_id: str | None = None,
 ) -> tuple[str, Path]:
-    """Records an isolated-worktree execution as non-authoritative evidence.
+    """Records an isolated-worktree run (execution or verification) as evidence.
 
-    status/execution_status/reason are supplied by the caller (classify_generic_execution
-    for arbitrary commands, verify_effect for AgentRuntime dispatch): this function does not
-    judge success itself. authority is always "execution" - is_authoritative_evidence() only
-    ever counts verification/human authority, so this alone can never satisfy ACCEPT.
+    status/execution_status/reason are supplied by the caller (classify_generic_execution,
+    verify_effect+classify_agent_execution, or a verification-pipeline check): this function
+    does not judge success itself. authority defaults to "execution" (M6-C dispatch: never
+    authoritative for ACCEPT on its own) but M6-D's verification pipeline passes
+    authority="verification" - is_authoritative_evidence() only ever counts verification/
+    human authority. When `provider` is known, actor_id is provider-qualified
+    ("agent:codex") rather than the generic CLI actor string, so that acceptability()'s
+    identity-separation check (an executor's evidence cannot also verify) works correctly:
+    if the same provider both executed and reviewed, its evidence correctly cannot count as
+    independent verification.
     """
     gates = load_objects(root / "gates")
     frozen_hashes = [
@@ -856,12 +850,13 @@ def write_execution_evidence(
     )
 
     evidence_id = f"evidence-{result.execution_id}"
+    actor_id = f"agent:{provider}" if provider else actor
     provenance: dict[str, Any] = {
         "created_by": actor,
         "created_at": now(),
-        "actor_id": actor,
-        "authority": "execution",
-        "role": "implementer",
+        "actor_id": actor_id,
+        "authority": authority,
+        "role": role,
         "commit": result.base_commit,
         "command": " ".join(result.command),
         "artifact_path": str(artifact_path),
@@ -878,7 +873,7 @@ def write_execution_evidence(
     evidence = {
         "id": evidence_id,
         "run_id": run_id,
-        "kind": "execution",
+        "kind": kind,
         "status": status,
         "provenance": provenance,
         "summary": f"{execution_status}: {reason} (process_outcome={result.process_outcome}, returncode={result.returncode})",
@@ -887,7 +882,7 @@ def write_execution_evidence(
     append_event(root, {
         "id": f"event-{evidence_id}",
         "run_id": run_id,
-        "type": "EXECUTION_COMPLETED",
+        "type": event_type,
         "created_at": now(),
         "actor": actor,
         "payload": {"execution_id": result.execution_id, "status": status, "evidence_id": evidence_id},
@@ -907,6 +902,7 @@ def cmd_execute(args: argparse.Namespace) -> None:
     run = read_json(root / "run.json")
     run_id = require_string(run, "id", root / "run.json")
 
+    from nogap_effects import classify_generic_execution
     from nogap_execution import GitWorktreeExecutionBackend
 
     project_root = Path(args.path).resolve()
@@ -914,7 +910,7 @@ def cmd_execute(args: argparse.Namespace) -> None:
     result = backend.run(command, timeout=args.timeout)
 
     exec_status, execution_status, reason = classify_generic_execution(result)
-    evidence_id, artifact_path = write_execution_evidence(
+    evidence_id, artifact_path = write_isolated_run_evidence(
         root, run_id, result, args.actor, exec_status, execution_status, reason,
     )
     print(
@@ -922,6 +918,94 @@ def cmd_execute(args: argparse.Namespace) -> None:
         f"evidence={evidence_id} patch={artifact_path}"
     )
     print("execution evidence is not authoritative on its own: independent verification is still required for ACCEPT.")
+
+
+def cmd_verify(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    status = compute_status(root)
+    if not status["runtime_exists"]:
+        raise SystemExit(f"FAIL: no runtime at {root}; run 'nogap init' first")
+
+    run = read_json(root / "run.json")
+    run_id = require_string(run, "id", root / "run.json")
+    objective = run.get("objective", "")
+
+    dispatches = load_objects(root / "dispatches")
+    if args.dispatch:
+        dispatch = dispatches.get(args.dispatch)
+        if dispatch is None:
+            raise SystemExit(f"FAIL: unknown dispatch {args.dispatch}")
+    else:
+        ordered_dispatches = sorted(dispatches.values(), key=lambda item: str(item.get("created_at", "")))
+        if not ordered_dispatches:
+            raise SystemExit("FAIL: no dispatch records found; run 'nogap run --execute' first")
+        dispatch = ordered_dispatches[-1]
+    dispatch_id = dispatch["id"]
+
+    evidence = load_objects(root / "evidence")
+    execution_evidence = [
+        item for item in evidence.values()
+        if item.get("kind") == "execution" and item.get("provenance", {}).get("dispatch_id") == dispatch_id
+    ]
+    if not execution_evidence:
+        raise SystemExit(f"FAIL: no execution evidence found for dispatch {dispatch_id}; run 'nogap run --execute' first")
+    execution = sorted(execution_evidence, key=lambda item: str(item.get("provenance", {}).get("created_at", "")))[-1]
+    patch_path = Path(execution["provenance"]["artifact_path"])
+    if not patch_path.is_file():
+        raise SystemExit(f"FAIL: patch artifact missing: {patch_path}")
+    patch = patch_path.read_text(encoding="utf-8")
+    executor_provider = execution["provenance"].get("provider")
+
+    gates = load_objects(root / "gates")
+    frozen_gates = [gate for gate in gates.values() if gate.get("status") == "frozen" and gate.get("hash") == gate_hash(gate)]
+    if not frozen_gates:
+        raise SystemExit("FAIL: no frozen gate to verify against; run 'nogap freeze' first")
+    gate = frozen_gates[0]
+
+    from nogap_verification import run_deterministic_layer, run_independent_review_layer
+
+    project_root = Path(args.path).resolve()
+    written: list[str] = []
+    print(f"verifying dispatch {dispatch_id} (executed by {executor_provider or 'unknown'}) against gate {gate['id']}")
+
+    for check in run_deterministic_layer(project_root, patch, gate, timeout=args.timeout):
+        kind = "review" if check.check == "effect-scope" else "test"
+        evidence_id, _ = write_isolated_run_evidence(
+            root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
+            authority="verification", kind=kind, role="verifier", event_type="VERIFICATION_COMPLETED",
+            dispatch_id=dispatch_id,
+        )
+        written.append(evidence_id)
+        print(f"  [deterministic] {check.check}: {check.status} ({check.execution_status}: {check.reason})")
+
+    if args.review:
+        from nogap_adapters import ADAPTERS, ExecutorNotReady
+
+        reviewer = None
+        for adapter in ADAPTERS.values():
+            if adapter.id == executor_provider or not hasattr(adapter, "build_exec_command"):
+                continue
+            if adapter.health().get("status") == "connected":
+                reviewer = adapter
+                break
+        if reviewer is None:
+            print("independent review skipped: no other ready AgentRuntime available to review this work")
+        else:
+            try:
+                check = run_independent_review_layer(project_root, patch, objective, reviewer, timeout=args.review_timeout)
+            except ExecutorNotReady as exc:
+                print(f"independent review aborted: {exc}")
+            else:
+                evidence_id, _ = write_isolated_run_evidence(
+                    root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
+                    authority="verification", kind="review", role="verifier", event_type="VERIFICATION_COMPLETED",
+                    dispatch_id=dispatch_id, provider=reviewer.id, runtime_id=reviewer.id,
+                )
+                written.append(evidence_id)
+                print(f"  [independent review by {reviewer.id}] {check.status} ({check.execution_status}: {check.reason})")
+
+    print(f"verification complete: {len(written)} evidence record(s) written")
+    print("verification evidence is not ACCEPT: only 'nogap decide' can accept, and only from independent authoritative evidence.")
 
 
 def cmd_decide(args: argparse.Namespace) -> None:
@@ -1288,6 +1372,15 @@ def main() -> None:
     )
     run_cmd.add_argument("--execute-timeout", type=int, default=600)
     run_cmd.set_defaults(func=cmd_run)
+
+    verify = sub.add_parser("verify")
+    verify.add_argument("path", nargs="?", default=".")
+    verify.add_argument("--dispatch", help="dispatch id to verify (default: most recent)")
+    verify.add_argument("--timeout", type=int, default=300, help="per deterministic command timeout")
+    verify.add_argument("--review", action="store_true", help="also dispatch an independent AgentRuntime to review the patch")
+    verify.add_argument("--review-timeout", type=int, default=300)
+    verify.add_argument("--actor", default="nogap verify")
+    verify.set_defaults(func=cmd_verify)
 
     execute = sub.add_parser(
         "execute",
