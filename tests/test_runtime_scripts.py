@@ -399,6 +399,93 @@ class RuntimeScriptTests(unittest.TestCase):
             self.assertIn("active-learning-goal", context.stdout)
             run_script("scripts/nogap.py", "validate", str(project))
 
+    def test_status_reports_no_runtime_without_fake_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = run_script("scripts/nogap.py", "status", tmp, "--json")
+            status = json.loads(result.stdout)
+            self.assertFalse(status["runtime_exists"])
+            self.assertIn("gates", status["missing_dirs"])
+            self.assertIsNone(status["last_decision"])
+
+    def test_status_reports_counts_for_initialized_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "status check")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            gate_hash = json.loads((runtime / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
+            self.write_claim(runtime, "evidence-verifier")
+            self.write_evidence(runtime, "evidence-verifier", gate_hash, "passed", "agent-b", "verification", "verifier")
+            run_script("scripts/nogap.py", "decide", str(project), "--actor-id", "acceptor-1")
+            result = run_script("scripts/nogap.py", "status", str(project), "--json")
+            status = json.loads(result.stdout)
+            self.assertTrue(status["runtime_exists"])
+            self.assertEqual(status["run_id"], "run-0001")
+            self.assertEqual(status["gate_count"], 1)
+            self.assertEqual(status["frozen_gate_count"], 1)
+            self.assertEqual(status["evidence_count"], 1)
+            self.assertEqual(status["authoritative_pass_count"], 1)
+            self.assertEqual(status["decision_count"], 1)
+            self.assertEqual(status["last_decision"]["decision"], "accept")
+
+    def test_validate_accepts_run_lifecycle_records_and_dispatch_references(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "lifecycle scaffolding")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            (runtime / "plans" / "plan-0001.json").write_text(json.dumps({
+                "id": "plan-0001",
+                "run_id": "run-0001",
+                "created_at": "2026-08-31T00:00:00Z",
+                "actor_id": "terra-planner",
+                "role": "planner",
+                "status": "proposed",
+            }), encoding="utf-8")
+            (runtime / "routes" / "route-0001.json").write_text(json.dumps({
+                "id": "route-0001",
+                "run_id": "run-0001",
+                "selected": {"provider": "codex", "runtime": "codex-cli"},
+                "reason": "codex is configured and healthy",
+                "policy_version": "v1",
+                "created_at": "2026-08-31T00:00:00Z",
+            }), encoding="utf-8")
+            (runtime / "dispatches" / "dispatch-0001.json").write_text(json.dumps({
+                "id": "dispatch-0001",
+                "run_id": "run-0001",
+                "created_at": "2026-08-31T00:00:00Z",
+                "actor_id": "terra-planner",
+                "role": "planner",
+                "plan_id": "plan-0001",
+                "route_id": "route-0001",
+                "status": "intended",
+            }), encoding="utf-8")
+            run_script("scripts/nogap.py", "validate", str(project))
+
+    def test_validate_rejects_dispatch_referencing_missing_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "dangling dispatch")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            (runtime / "dispatches" / "dispatch-0001.json").write_text(json.dumps({
+                "id": "dispatch-0001",
+                "run_id": "run-0001",
+                "created_at": "2026-08-31T00:00:00Z",
+                "actor_id": "terra-planner",
+                "role": "planner",
+                "plan_id": "plan-missing",
+                "status": "intended",
+            }), encoding="utf-8")
+            result = subprocess.run(
+                [sys.executable, "scripts/nogap.py", "validate", str(project)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("references missing plan", result.stderr + result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -197,6 +197,12 @@ class DashboardBackendTests(unittest.TestCase):
             finally:
                 nogap_dashboard.REGISTRY_PATH = original_registry
 
+    def test_compute_status_is_importable_from_dashboard_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            status = nogap_dashboard.compute_status(nogap_dashboard.runtime_root(Path(tmp)))
+            self.assertFalse(status["runtime_exists"])
+            self.assertIsNone(status["last_decision"])
+
     def test_validate_runtime_returns_sanitized_command(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             result = nogap_dashboard.validate_runtime(Path(tmp))
@@ -207,8 +213,26 @@ class DashboardBackendTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             payload = nogap_dashboard.build_payload(Path(tmp))
             self.assertIn("records", payload)
-            for name in ("claims", "evidence", "lessons", "literature", "events"):
+            for name in ("claims", "evidence", "lessons", "literature", "events", "activity"):
                 self.assertIn(name, payload["records"])
+
+    def test_records_activity_is_not_capped_like_the_widget_feed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            events_dir = project / ".code-loop" / "runtime" / "events"
+            events_dir.mkdir(parents=True)
+            lines = [
+                json.dumps({
+                    "type": "TOOL_CALLED",
+                    "actor": f"executor-{index}",
+                    "created_at": f"2026-08-{index + 1:02d}T00:00:00Z",
+                })
+                for index in range(8)
+            ]
+            (events_dir / "events-0001.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            payload = nogap_dashboard.build_payload(project)
+            self.assertEqual(len(payload["activity"]), 5)
+            self.assertEqual(len(payload["records"]["activity"]), 8)
 
 
 if __name__ == "__main__":
