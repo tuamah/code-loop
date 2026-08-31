@@ -779,6 +779,152 @@ def evaluate_phase_status(project: Path, phase_id: str | None = None) -> str:
     return "COMPLETED" if exited_forward else "NOT_STARTED"
 
 
+# ---------------------------------------------------------------------------
+# M7-D: Golden Principle Enforcement Map
+#
+# This is a truthful, read-only description of what enforcement CAPABILITY
+# exists today - never a claim about any specific project's compliance, and
+# never consulted by the trust runtime to make any decision. Editing
+# methodology/enforcement.json changes only what is reported, not what
+# nogap.py actually enforces: acceptability(), gate hashing, verify_effect(),
+# etc. are entirely independent of this file.
+# ---------------------------------------------------------------------------
+
+ENFORCEMENT_STATUSES = {"ENFORCED", "PARTIAL", "DECLARED", "ADVISORY", "DEFERRED"}
+ENFORCEMENT_SCOPES = {"trust_runtime", "methodology_engine", "cross_cutting"}
+# Every owner_component value that appears anywhere in methodology/enforcement.json must be
+# registered here - an unregistered identifier fails closed rather than being silently trusted.
+OWNER_COMPONENTS = {
+    "none",
+    "trust_runtime_event_ledger",
+    "nogap.py:acceptability",
+    "nogap.py:cmd_validate",
+    "nogap.py:cmd_freeze",
+    "nogap.py:write_isolated_run_evidence",
+    "nogap.py:route_implementer",
+    "nogap_adapters.py",
+    "nogap_effects.py",
+    "nogap_methodology.py:init_project",
+    "nogap_methodology.py:transition",
+    "nogap_methodology.py:derive_profile",
+}
+
+
+@dataclass
+class PrincipleEnforcement:
+    principle_id: str
+    classification: str
+    status: str
+    scope: str
+    owner_component: str
+    mechanism: str
+    evidence_kind: str | None
+    implemented_by: list[str]
+    tests: list[str]
+    future_milestone: str | None
+    notes: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "principle_id": self.principle_id, "classification": self.classification, "status": self.status,
+            "scope": self.scope, "owner_component": self.owner_component, "mechanism": self.mechanism,
+            "evidence_kind": self.evidence_kind, "implemented_by": self.implemented_by, "tests": self.tests,
+            "future_milestone": self.future_milestone, "notes": self.notes,
+        }
+
+
+def _resolve_reference(ref: str) -> Path:
+    """A "path" or "path::rest" or "path:rest" reference's file part, resolved from repo ROOT."""
+    file_part = ref.split("::")[0].split(":")[0]
+    return ROOT / file_part
+
+
+def load_enforcement_map(methodology_dir: Path = METHODOLOGY_DIR) -> dict[str, PrincipleEnforcement]:
+    """Fails closed on: malformed JSON, missing/duplicate/unknown principle_id, unknown status/
+    classification/scope/owner_component, or a mismatch against methodology/principles.json's
+    classification (classification is reused from M7-A, never re-derived here)."""
+    definition = load_methodology()  # principles.json is the classification source of truth
+    data = _read_json(methodology_dir / "enforcement.json")
+    _require(isinstance(data, dict) and isinstance(data.get("principles"), list), "enforcement.json must contain a 'principles' array")
+
+    records: dict[str, PrincipleEnforcement] = {}
+    for entry in data["principles"]:
+        _require(isinstance(entry, dict), "enforcement.json: each principle entry must be an object")
+        for key in (
+            "principle_id", "classification", "status", "scope", "owner_component",
+            "mechanism", "evidence_kind", "implemented_by", "tests", "future_milestone", "notes",
+        ):
+            _require(key in entry, f"enforcement.json: entry missing required field {key!r}")
+        principle_id = entry["principle_id"]
+        _require(principle_id in definition.principles, f"enforcement.json: unknown principle_id {principle_id!r}")
+        _require(principle_id not in records, f"enforcement.json: duplicate principle_id {principle_id!r}")
+        _require(
+            entry["classification"] == definition.get_principle(principle_id).cls,
+            f"enforcement.json: {principle_id} classification {entry['classification']!r} does not match "
+            f"principles.json's {definition.get_principle(principle_id).cls!r} - classification is reused, not re-derived",
+        )
+        _require(entry["status"] in ENFORCEMENT_STATUSES, f"enforcement.json: {principle_id} has unknown status {entry['status']!r}")
+        _require(entry["scope"] in ENFORCEMENT_SCOPES, f"enforcement.json: {principle_id} has unknown scope {entry['scope']!r}")
+        _require(
+            entry["owner_component"] in OWNER_COMPONENTS,
+            f"enforcement.json: {principle_id} has unregistered owner_component {entry['owner_component']!r}",
+        )
+        records[principle_id] = PrincipleEnforcement(
+            principle_id=principle_id, classification=entry["classification"], status=entry["status"],
+            scope=entry["scope"], owner_component=entry["owner_component"], mechanism=entry["mechanism"],
+            evidence_kind=entry["evidence_kind"], implemented_by=list(entry["implemented_by"]),
+            tests=list(entry["tests"]), future_milestone=entry["future_milestone"], notes=entry["notes"],
+        )
+
+    _require(
+        set(records) == set(definition.principles),
+        f"enforcement.json does not cover exactly the 20 canonical principles: "
+        f"missing={sorted(set(definition.principles) - set(records))}, extra={sorted(set(records) - set(definition.principles))}",
+    )
+    return records
+
+
+def get_principle_enforcement(principle_id: str) -> PrincipleEnforcement:
+    records = load_enforcement_map()
+    if principle_id not in records:
+        raise MethodologyValidationError(f"unknown principle: {principle_id}")
+    return records[principle_id]
+
+
+def list_principle_enforcement() -> list[PrincipleEnforcement]:
+    records = load_enforcement_map()
+    return [records[pid] for pid in sorted(records, key=lambda p: int(p.split("-")[1]))]
+
+
+def methodology_compliance_summary() -> dict[str, Any]:
+    """Enforcement CAPABILITY summary - global, not tied to any project's actual compliance.
+    ADVISORY and DEFERRED principles never contribute to the enforced count; only status=ENFORCED
+    does. Distinguishing capability from a specific project's compliance is deliberate: this
+    milestone is about what NoGapCode CAN enforce, not what any one project currently satisfies."""
+    records = list_principle_enforcement()
+    counts = {status: 0 for status in ENFORCEMENT_STATUSES}
+    for record in records:
+        counts[record.status] += 1
+    return {
+        "total": len(records),
+        "counts": counts,
+        "enforced": counts["ENFORCED"],
+        "partial": counts["PARTIAL"],
+        "declared": counts["DECLARED"],
+        "advisory": counts["ADVISORY"],
+        "deferred": counts["DEFERRED"],
+    }
+
+
+def resolvable_references(record: PrincipleEnforcement) -> dict[str, list[str]]:
+    """For CLI/inspection use: which of a record's implemented_by/tests references actually
+    resolve to a file on disk right now, and which don't (a documentation-drift signal)."""
+    return {
+        "implemented_by_missing": [ref for ref in record.implemented_by if not _resolve_reference(ref).is_file()],
+        "tests_missing": [ref for ref in record.tests if not _resolve_reference(ref).is_file()],
+    }
+
+
 def main() -> None:
     import argparse
 

@@ -1346,12 +1346,24 @@ def cmd_methodology(args: argparse.Namespace) -> None:
         escalate_phase,
         evaluate_phase_status,
         init_project,
+        methodology_compliance_summary,
     )
+    from nogap_methodology import list_principle_enforcement
     from nogap_methodology import status as methodology_status
     from nogap_methodology import transition as do_transition
 
     project = Path(args.path)
     try:
+        if args.action == "principles":
+            # Read-only, and deliberately project-independent: this reports enforcement
+            # CAPABILITY (what NoGapCode can enforce today), never a specific project's
+            # compliance - `path` is accepted for CLI consistency but unused here.
+            summary = methodology_compliance_summary()
+            print(f"{summary['total']} principles: enforced={summary['enforced']} partial={summary['partial']} "
+                  f"declared={summary['declared']} advisory={summary['advisory']} deferred={summary['deferred']}")
+            for record in list_principle_enforcement():
+                print(f"  {record.principle_id} [{record.classification}] {record.status:9} owner={record.owner_component} - {record.mechanism}")
+            return
         if args.action == "init":
             if not (args.intent and args.risk and args.claim_strength):
                 raise SystemExit("FAIL: methodology init requires --intent, --risk, and --claim-strength")
@@ -1542,7 +1554,7 @@ def main() -> None:
     dashboard.set_defaults(func=cmd_dashboard)
 
     methodology = sub.add_parser("methodology")
-    methodology.add_argument("action", choices=["init", "status", "can-transition", "transition", "escalate", "downgrade"])
+    methodology.add_argument("action", choices=["init", "status", "principles", "can-transition", "transition", "escalate", "downgrade"])
     methodology.add_argument("path", nargs="?", default=".")
     methodology.add_argument("--intent", choices=["research", "production", "experimental"])
     methodology.add_argument("--risk", choices=["low", "medium", "high"])
