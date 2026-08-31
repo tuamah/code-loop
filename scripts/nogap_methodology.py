@@ -1,22 +1,29 @@
 #!/usr/bin/env python3
-"""M7-A: loads and validates the methodology contracts under methodology/.
+"""Methodology contracts (M7-A) + project intent / adaptive depth (M7-B).
 
-This module only represents and validates the methodology - it does not run it.
-No project state, no phase transitions, no CLI wiring into nogap.py: that is
-M7-B (Project Intent + Adaptive Depth) and M7-C (the P0-P23 state machine).
-Keeping this module standalone (not imported by nogap.py) is deliberate:
-"Methodology logic MUST NOT be embedded throughout nogap.py."
+M7-A loads and validates the static methodology contracts under methodology/.
+M7-B adds per-project state: ProjectIntent, RiskLevel, ClaimStrength, and a
+deterministic ProcessDepth (profile) derivation, plus explicit phase-level
+escalation and attributed, logged, project-level downgrade. Both stay
+standalone: nogap.py only gets a thin `methodology` subcommand that calls into
+this module - "Methodology logic MUST NOT be embedded throughout nogap.py."
 
-Fails closed: any malformed contract, any reference to an unknown phase, macro
-phase, loop, or principle, or any cross-reference mismatch between
-methodology.json and the files on disk raises MethodologyValidationError. There
-is no silent-partial-load path.
+There is still no P0-P23 transition engine here (that is M7-C): a freshly
+initialized project's current_phase is always "P0" with no transition logic
+behind it - that is a starting value, not a state machine.
+
+Fails closed throughout: any malformed contract or state file, any reference
+to an unknown phase/macro_phase/loop/principle/profile/intent/risk/claim
+strength, or a downgrade attempted without an explicit actor and reason,
+raises MethodologyValidationError. There is no silent-partial-load path and
+no silent downgrade path.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -235,6 +242,224 @@ def load_methodology(methodology_dir: Path = METHODOLOGY_DIR) -> MethodologyDefi
         principles=principles,
         profiles=profiles,
     )
+
+
+# ---------------------------------------------------------------------------
+# M7-B: Project Intent + Adaptive Depth
+# ---------------------------------------------------------------------------
+
+INTENTS = {"research", "production", "experimental"}
+RISK_LEVELS = {"low", "medium", "high"}
+CLAIM_STRENGTHS = {"low", "medium", "high"}
+PROFILE_ORDER = {"LIGHT": 0, "STANDARD": 1, "STRICT": 2}
+
+# Deterministic, disclosed derivation: raw_score = max(risk, claim_strength, intent floor).
+# production always floors at STANDARD regardless of risk/claim, because production work
+# affects real users even when a specific task looks low-risk. research/experimental have
+# no such floor - their depth comes entirely from the stated risk and claim strength.
+_RISK_SCORE = {"low": 0, "medium": 1, "high": 2}
+_CLAIM_SCORE = {"low": 0, "medium": 1, "high": 2}
+_INTENT_FLOOR = {"experimental": 0, "research": 0, "production": 1}
+_SCORE_TO_PROFILE = {0: "LIGHT", 1: "STANDARD", 2: "STRICT"}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+@dataclass
+class ProfileDerivation:
+    """The disclosed *why* behind a derived profile - never hidden from the caller."""
+
+    intent: str
+    risk: str
+    claim_strength: str
+    risk_score: int
+    claim_score: int
+    intent_floor: int
+    raw_score: int
+    profile: str
+    reason: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "intent": self.intent, "risk": self.risk, "claim_strength": self.claim_strength,
+            "risk_score": self.risk_score, "claim_score": self.claim_score, "intent_floor": self.intent_floor,
+            "raw_score": self.raw_score, "profile": self.profile, "reason": self.reason,
+        }
+
+
+def derive_profile(intent: str, risk: str, claim_strength: str) -> ProfileDerivation:
+    _require(intent in INTENTS, f"unknown intent: {intent!r}; must be one of {sorted(INTENTS)}")
+    _require(risk in RISK_LEVELS, f"unknown risk level: {risk!r}; must be one of {sorted(RISK_LEVELS)}")
+    _require(claim_strength in CLAIM_STRENGTHS, f"unknown claim strength: {claim_strength!r}; must be one of {sorted(CLAIM_STRENGTHS)}")
+    risk_score = _RISK_SCORE[risk]
+    claim_score = _CLAIM_SCORE[claim_strength]
+    intent_floor = _INTENT_FLOOR[intent]
+    raw_score = max(risk_score, claim_score, intent_floor)
+    profile = _SCORE_TO_PROFILE[raw_score]
+    drivers = []
+    if risk_score == raw_score:
+        drivers.append(f"risk={risk}")
+    if claim_score == raw_score:
+        drivers.append(f"claim_strength={claim_strength}")
+    if intent_floor == raw_score and intent_floor > 0:
+        drivers.append(f"intent={intent} floor")
+    reason = f"{profile} driven by " + " and ".join(drivers) if drivers else f"{profile} (all factors at minimum)"
+    return ProfileDerivation(intent, risk, claim_strength, risk_score, claim_score, intent_floor, raw_score, profile, reason)
+
+
+def methodology_state_dir(project: Path) -> Path:
+    return project.resolve() / ".code-loop" / "methodology"
+
+
+def methodology_state_path(project: Path) -> Path:
+    return methodology_state_dir(project) / "state.json"
+
+
+def _validate_state_shape(data: Any, source: Path) -> None:
+    _require(isinstance(data, dict), f"{source}: state must be a JSON object")
+    for key in (
+        "methodology_id", "methodology_version", "intent", "risk", "claim_strength",
+        "derived_profile", "derivation", "effective_profile", "phase_profile_overrides",
+        "downgrade_log", "current_phase", "created_by", "created_at", "updated_at",
+    ):
+        _require(key in data, f"{source}: missing required field {key!r}")
+    _require(data["intent"] in INTENTS, f"{source}: unknown intent {data['intent']!r}")
+    _require(data["risk"] in RISK_LEVELS, f"{source}: unknown risk {data['risk']!r}")
+    _require(data["claim_strength"] in CLAIM_STRENGTHS, f"{source}: unknown claim_strength {data['claim_strength']!r}")
+    _require(data["derived_profile"] in PROFILE_ORDER, f"{source}: unknown derived_profile {data['derived_profile']!r}")
+    _require(data["effective_profile"] in PROFILE_ORDER, f"{source}: unknown effective_profile {data['effective_profile']!r}")
+    overrides = data["phase_profile_overrides"]
+    _require(isinstance(overrides, dict), f"{source}: phase_profile_overrides must be an object")
+    for key, value in overrides.items():
+        _require(value in PROFILE_ORDER, f"{source}: phase_profile_overrides[{key!r}] has unknown profile {value!r}")
+    downgrade_log = data["downgrade_log"]
+    _require(isinstance(downgrade_log, list), f"{source}: downgrade_log must be an array")
+    for entry in downgrade_log:
+        for key in ("from_profile", "to_profile", "actor_id", "reason", "authorized_at"):
+            _require(key in entry, f"{source}: downgrade_log entry missing {key!r}")
+
+
+def load_state(project: Path) -> dict[str, Any] | None:
+    """Returns None if uninitialized (a truthful, non-error 'nothing here yet' state),
+    or the validated state dict. Raises MethodologyValidationError for anything malformed."""
+    path = methodology_state_path(project)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise MethodologyValidationError(f"{path} is invalid JSON: {exc}") from exc
+    _validate_state_shape(data, path)
+    return data
+
+
+def _write_state(project: Path, state: dict[str, Any]) -> None:
+    path = methodology_state_path(project)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def init_project(
+    project: Path,
+    intent: str,
+    risk: str,
+    claim_strength: str,
+    actor: str,
+    *,
+    force: bool = False,
+) -> dict[str, Any]:
+    path = methodology_state_path(project)
+    if path.is_file() and not force:
+        raise MethodologyValidationError(f"{path} already exists; use --force to reinitialize")
+    definition = load_methodology()
+    derivation = derive_profile(intent, risk, claim_strength)
+    timestamp = _now()
+    state = {
+        "methodology_id": definition.methodology_id,
+        "methodology_version": definition.version,
+        "intent": intent,
+        "risk": risk,
+        "claim_strength": claim_strength,
+        "derived_profile": derivation.profile,
+        "derivation": derivation.as_dict(),
+        "effective_profile": derivation.profile,
+        "phase_profile_overrides": {},
+        "downgrade_log": [],
+        "current_phase": "P0",
+        "created_by": actor,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    _write_state(project, state)
+    return state
+
+
+def escalate_phase(project: Path, phase_or_macro: str, profile: str, actor: str) -> dict[str, Any]:
+    """Phase-level escalation only ever raises rigor above the project's effective profile.
+
+    It is never a downgrade path: a lower value here is rejected, pointing the caller at
+    downgrade_profile() instead, which requires the explicit attribution this does not.
+    """
+    state = load_state(project)
+    if state is None:
+        raise MethodologyValidationError(f"no methodology state at {project}; run 'nogap methodology init' first")
+    _require(profile in PROFILE_ORDER, f"unknown profile: {profile!r}")
+    definition = load_methodology()
+    _require(
+        phase_or_macro in MACRO_PHASES or phase_or_macro in definition.phases,
+        f"unknown phase or macro phase: {phase_or_macro!r}",
+    )
+    effective = state["effective_profile"]
+    _require(
+        PROFILE_ORDER[profile] >= PROFILE_ORDER[effective],
+        f"phase escalation must be >= the current effective profile ({effective}); "
+        f"a lower value is a downgrade and must go through downgrade_profile with an explicit reason",
+    )
+    state["phase_profile_overrides"][phase_or_macro] = profile
+    state["updated_at"] = _now()
+    _write_state(project, state)
+    return state
+
+
+def downgrade_profile(project: Path, to_profile: str, actor: str, reason: str) -> dict[str, Any]:
+    """The only path that can lower effective_profile - and it can never be silent.
+
+    Requires a non-empty actor and reason, and always appends to downgrade_log: an
+    attributable, auditable record, never a quiet overwrite.
+    """
+    state = load_state(project)
+    if state is None:
+        raise MethodologyValidationError(f"no methodology state at {project}; run 'nogap methodology init' first")
+    _require(to_profile in PROFILE_ORDER, f"unknown profile: {to_profile!r}")
+    _require(bool(actor and actor.strip()), "downgrade requires a non-empty actor_id")
+    _require(bool(reason and reason.strip()), "downgrade requires an explicit, non-empty reason")
+    current = state["effective_profile"]
+    _require(
+        PROFILE_ORDER[to_profile] < PROFILE_ORDER[current],
+        f"{to_profile} is not lower than the current effective profile {current}; "
+        f"use escalate_phase to raise a specific phase instead",
+    )
+    state["downgrade_log"].append({
+        "from_profile": current,
+        "to_profile": to_profile,
+        "actor_id": actor.strip(),
+        "reason": reason.strip(),
+        "authorized_at": _now(),
+    })
+    state["effective_profile"] = to_profile
+    state["updated_at"] = _now()
+    _write_state(project, state)
+    return state
+
+
+def status(project: Path) -> dict[str, Any]:
+    """Always truthful about missing/uninitialized state - never fabricates a default."""
+    state = load_state(project)
+    if state is None:
+        return {"initialized": False, "path": str(methodology_state_path(project))}
+    return {"initialized": True, "path": str(methodology_state_path(project)), **state}
 
 
 def main() -> None:

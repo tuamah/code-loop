@@ -103,6 +103,16 @@ class RealMethodologyContractTests(unittest.TestCase):
         principle = self.definition.get_principle("GP-8")
         self.assertEqual(principle.cls, "A")
 
+    def test_light_profile_never_skips_deterministic_verification(self) -> None:
+        """LIGHT may skip deep reproducibility (P17) and full independent review (P18), but
+        must still preserve 'Local PASS != Verified PASS': P15/P16 (deterministic verification,
+        independent of the executor) stay mandatory at every profile."""
+        light = self.definition.get_profile("LIGHT")
+        self.assertNotIn("P15", light.skippable_phases)
+        self.assertNotIn("P16", light.skippable_phases)
+        self.assertEqual(self.definition.get_phase("P15").minimum_profile, "LIGHT")
+        self.assertEqual(self.definition.get_phase("P16").minimum_profile, "LIGHT")
+
 
 class FailClosedTests(unittest.TestCase):
     """Malformed contracts and unknown references must never silently partial-load."""

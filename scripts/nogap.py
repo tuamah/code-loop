@@ -1336,6 +1336,55 @@ def cmd_dashboard(args: argparse.Namespace) -> None:
     serve(Path(args.path), args.host, args.port)
 
 
+def cmd_methodology(args: argparse.Namespace) -> None:
+    """Thin CLI dispatcher only: all methodology logic lives in nogap_methodology.py."""
+    from nogap_methodology import (
+        MethodologyValidationError,
+        downgrade_profile,
+        escalate_phase,
+        init_project,
+    )
+    from nogap_methodology import status as methodology_status
+
+    project = Path(args.path)
+    try:
+        if args.action == "init":
+            if not (args.intent and args.risk and args.claim_strength):
+                raise SystemExit("FAIL: methodology init requires --intent, --risk, and --claim-strength")
+            state = init_project(project, args.intent, args.risk, args.claim_strength, args.actor, force=args.force)
+            print(f"methodology initialized: derived_profile={state['derived_profile']} effective_profile={state['effective_profile']}")
+            print(f"derivation: {state['derivation']['reason']}")
+            return
+        if args.action == "status":
+            result = methodology_status(project)
+            if not result["initialized"]:
+                print(f"NOT INITIALIZED: {result['path']}")
+                return
+            print(f"methodology: {result['methodology_id']} v{result['methodology_version']}")
+            print(f"intent={result['intent']} risk={result['risk']} claim_strength={result['claim_strength']}")
+            print(f"derived_profile={result['derived_profile']} effective_profile={result['effective_profile']}")
+            if result["phase_profile_overrides"]:
+                print(f"phase overrides: {result['phase_profile_overrides']}")
+            if result["downgrade_log"]:
+                print(f"downgrade history: {len(result['downgrade_log'])} entry(ies) - most recent: {result['downgrade_log'][-1]}")
+            print(f"current_phase={result['current_phase']}")
+            return
+        if args.action == "escalate":
+            if not (args.phase and args.profile):
+                raise SystemExit("FAIL: methodology escalate requires --phase and --profile")
+            escalate_phase(project, args.phase, args.profile, args.actor)
+            print(f"escalated {args.phase} to {args.profile}")
+            return
+        if args.action == "downgrade":
+            if not (args.profile and args.reason):
+                raise SystemExit("FAIL: methodology downgrade requires --profile and --reason")
+            downgrade_profile(project, args.profile, args.actor, args.reason)
+            print(f"downgraded effective profile to {args.profile} (recorded: actor={args.actor}, reason={args.reason!r})")
+            return
+    except MethodologyValidationError as exc:
+        raise SystemExit(f"FAIL: {exc}") from exc
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1458,6 +1507,19 @@ def main() -> None:
     dashboard.add_argument("--host", default="127.0.0.1")
     dashboard.add_argument("--port", type=int, default=8765)
     dashboard.set_defaults(func=cmd_dashboard)
+
+    methodology = sub.add_parser("methodology")
+    methodology.add_argument("action", choices=["init", "status", "escalate", "downgrade"])
+    methodology.add_argument("path", nargs="?", default=".")
+    methodology.add_argument("--intent", choices=["research", "production", "experimental"])
+    methodology.add_argument("--risk", choices=["low", "medium", "high"])
+    methodology.add_argument("--claim-strength", dest="claim_strength", choices=["low", "medium", "high"])
+    methodology.add_argument("--force", action="store_true")
+    methodology.add_argument("--phase", help="P-id (e.g. P15) or macro phase (e.g. VERIFY) to escalate")
+    methodology.add_argument("--profile", choices=["LIGHT", "STANDARD", "STRICT"])
+    methodology.add_argument("--reason", help="required for downgrade")
+    methodology.add_argument("--actor", default="nogap methodology")
+    methodology.set_defaults(func=cmd_methodology)
 
     argv = sys.argv[1:]
     worktree_command: list[str] = []
