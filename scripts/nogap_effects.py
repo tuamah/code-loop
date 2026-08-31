@@ -28,6 +28,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from nogap_execution import ExecutionResult
 
 _DIFF_HEADER_RE = re.compile(r"^diff --git a/(.+?) b/(.+)$", re.MULTILINE)
 
@@ -87,6 +91,21 @@ def verify_effect(patch: str, expected: ExpectedEffect) -> EffectVerdict:
             return EffectVerdict("unsatisfied", f"expected content {needle!r} not found for {path}", observed)
 
     return EffectVerdict("satisfied", "all required paths and content matched", observed)
+
+
+def classify_generic_execution(result: "ExecutionResult") -> tuple[str, str, str]:
+    """Maps raw process facts to a status for `nogap execute`'s arbitrary-command case.
+
+    Unlike AgentRuntime dispatch, an arbitrary command's returncode (a test runner, a
+    linter) really is the authoritative signal here - that is what exit codes are for.
+    """
+    if result.cancelled:
+        return "blocked", "CANCELLED", "execution was cancelled before completion"
+    if result.timed_out:
+        return "inconclusive", "TIMED_OUT", "execution exceeded its timeout"
+    if result.returncode == 0:
+        return "passed", "PROCESS_EXIT_OK", "process exited with code 0"
+    return "failed", "PROCESS_EXIT_ERROR", f"process exited with code {result.returncode}"
 
 
 def classify_agent_execution(

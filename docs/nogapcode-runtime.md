@@ -268,6 +268,25 @@ message, rather than fabricating a route to something that is not actually ready
 dispatch, patch collection, independent verification, and the bounded repair loop remain
 NOT_IMPLEMENTED until the runtime carries those stages end to end.
 
+## Independent Verification Pipeline (`nogap verify`)
+
+`nogap verify <project>` verifies a dispatch's execution evidence independently of
+whatever worktree originally produced it. It applies the patch to a *fresh* isolated
+worktree and runs two layers, each writing its own `authority: verification` evidence
+(never `authority: acceptance` - a verifier only ever reports passed/failed/
+inconclusive; `nogap decide` alone accepts):
+
+- **Deterministic layer** (always runs): re-checks the patch against the frozen
+  gate's `rules.forbidden_paths` (an effect/scope check), then runs every command in
+  `rules.required_commands` against the patched worktree. This is the strongest
+  evidence - reproducible, no agent judgment involved.
+- **Independent review layer** (`--review`): dispatches a *different* ready
+  AgentRuntime than the one that executed (mirroring the identity-separation rule
+  already enforced for ACCEPT) to review the diff. The reviewer is asked to write a
+  structured verdict file rather than narrate a judgment in prose, and that file is
+  read back from the resulting patch (observed world state), not parsed out of
+  stdout. A missing or unparsable verdict is `inconclusive`, never trusted as a pass.
+
 ## Failure-First Research Loop
 
 When a nontrivial attempt fails, repair should first inspect prior local evidence, previous lessons,

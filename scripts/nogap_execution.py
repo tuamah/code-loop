@@ -27,8 +27,12 @@ from typing import Any, Callable
 
 
 def _git(args: list[str], cwd: Path, timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    # core.autocrlf=true (common on Windows) rewrites line endings on checkout/apply,
+    # which silently corrupts content (e.g. injects a stray \r after a no-trailing-
+    # newline file). Verification needs a byte-exact reproduction of the patch, so
+    # autocrlf is forced off for every git call this backend makes.
     return subprocess.run(
-        ["git", *args],
+        ["git", "-c", "core.autocrlf=false", *args],
         cwd=cwd,
         check=False,
         text=True,
@@ -108,7 +112,15 @@ class GitWorktreeExecutionBackend:
         *,
         timeout: int = 300,
         handle: ExecutionHandle | None = None,
+        apply_patch: str | None = None,
     ) -> ExecutionResult:
+        """Runs `command` in a fresh isolated worktree.
+
+        apply_patch, if given, is applied to the worktree (via `git apply`) before the
+        command runs. This is how verification re-examines a previously produced patch:
+        materialize it in a fresh worktree, then run tests/lint/an independent reviewer
+        against it, without ever touching the worktree that originally produced it.
+        """
         if not callable(command) and not command:
             raise ValueError("command must be a non-empty argv list or a (worktree) -> argv builder")
 
@@ -130,6 +142,20 @@ class GitWorktreeExecutionBackend:
         resolved_command: list[str] = []
         started = time.monotonic()
         try:
+            if apply_patch:
+                # subprocess.run(text=True, input=...) translates \n -> \r\n when *writing*
+                # to the child's stdin on Windows, corrupting the patch before git even sees
+                # it (e.g. injecting a stray \r after a no-trailing-newline file). Feed raw
+                # bytes instead so the patch reaches `git apply` byte-exact.
+                applied = subprocess.run(
+                    ["git", "-c", "core.autocrlf=false", "apply", "--whitespace=nowarn", "-"],
+                    cwd=worktree_path,
+                    input=apply_patch.encode("utf-8"),
+                    capture_output=True,
+                    timeout=60,
+                )
+                if applied.returncode != 0:
+                    raise RuntimeError(f"failed to apply patch for verification: {applied.stderr.decode('utf-8', errors='replace').strip()}")
             resolved_command = command(worktree_path) if callable(command) else command
             if not resolved_command:
                 raise ValueError("command builder returned an empty argv list")
