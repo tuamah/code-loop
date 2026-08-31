@@ -1,0 +1,31 @@
+{
+  "id": "P20",
+  "macro_phase": "RELEASE",
+  "name": "Release Readiness & Deployment",
+  "required_inputs": [
+    "RELEASE_CANDIDATE"
+  ],
+  "required_artifacts": [
+    "RELEASE_READINESS_CHECKLIST"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "human_owner"
+  ],
+  "exit_gate": {
+    "description": "Security, documentation, backup, rollback, and recovery are all addressed before the deployment decision.",
+    "checks": [
+      "security_reviewed",
+      "rollback_plan_exists",
+      "deployment_decision_recorded"
+    ]
+  },
+  "allowed_next": [
+    "P21"
+  ],
+  "allowed_back_transitions": [
+    "P19"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "STANDARD"
+}

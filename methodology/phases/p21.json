@@ -1,0 +1,32 @@
+{
+  "id": "P21",
+  "macro_phase": "OPERATE",
+  "name": "Production Observation & Incident Handling",
+  "required_inputs": [
+    "RELEASE_READINESS_CHECKLIST"
+  ],
+  "required_artifacts": [
+    "OPERATIONAL_OBSERVATIONS"
+  ],
+  "required_evidence": [
+    "operational_evidence"
+  ],
+  "required_roles": [
+    "operator"
+  ],
+  "exit_gate": {
+    "description": "Health, errors, performance, cost, and drift are observed continuously; an incident is contained and its evidence preserved before any repair begins.",
+    "checks": [
+      "observation_stream_active",
+      "incidents_preserve_evidence_before_repair"
+    ]
+  },
+  "allowed_next": [
+    "P22"
+  ],
+  "allowed_back_transitions": [
+    "P20"
+  ],
+  "failure_transition": "REPAIR_LOOP",
+  "minimum_profile": "LIGHT"
+}

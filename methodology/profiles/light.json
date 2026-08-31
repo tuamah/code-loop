@@ -1,0 +1,6 @@
+{
+  "id": "LIGHT",
+  "name": "Light",
+  "description": "For low-risk prototypes and experimental work. All 24 phases still apply in minimal form; deep reproducibility and independent-review verification is optional rather than required, since claim strength and risk are expected to be low.",
+  "skippable_phases": ["P17", "P18"]
+}

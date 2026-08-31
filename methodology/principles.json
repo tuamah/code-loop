@@ -1,0 +1,24 @@
+{
+  "principles": [
+    { "id": "GP-1", "name": "Intent Before Implementation", "statement": "A project's intent, risk, and claim strength are classified before any implementation work begins.", "class": "B" },
+    { "id": "GP-2", "name": "Research Before Building", "statement": "Prior art and build/buy/adopt/fork/integrate alternatives are considered before designing a new solution.", "class": "B" },
+    { "id": "GP-3", "name": "Research Before Repair", "statement": "A failure is characterized and researched (prior evidence, prior art) before a repair is attempted.", "class": "B" },
+    { "id": "GP-4", "name": "Requirements Before Code", "statement": "Stable, traceable requirements exist before implementation starts.", "class": "B" },
+    { "id": "GP-5", "name": "Tests Before Claims", "statement": "A test plan and golden gates exist before a claim of correctness can be made.", "class": "B" },
+    { "id": "GP-6", "name": "Evidence Before Acceptance", "statement": "ACCEPT requires admissible, independent, authoritative evidence; it is never issued on confidence alone.", "class": "A" },
+    { "id": "GP-7", "name": "Capability != Authority", "statement": "That an adapter can execute does not mean it is authorized to accept its own work.", "class": "A" },
+    { "id": "GP-8", "name": "Execution Authority != Acceptance Authority", "statement": "The identity that executed a change can never be the identity that accepts it.", "class": "A" },
+    { "id": "GP-9", "name": "Project Memory > Agent Memory", "statement": "Durable project state lives in the event/evidence ledger, not in an agent's own conversational memory.", "class": "B" },
+    { "id": "GP-10", "name": "Local PASS != Verified PASS", "statement": "A process exiting 0, or an agent claiming success, is not proof a task succeeded; only observed, independently checked effect is.", "class": "A" },
+    { "id": "GP-11", "name": "Failure Is Evidence", "statement": "A failure's evidence is preserved, never discarded, before any repair attempt begins.", "class": "B" },
+    { "id": "GP-12", "name": "Negative Results Are Valid Results", "statement": "A refuted hypothesis or a documented non-viable approach is a legitimate, recorded outcome, not a discarded failure.", "class": "C" },
+    { "id": "GP-13", "name": "Cost Is Part of Architecture", "statement": "Money, tokens, compute, time, complexity, maintenance, risk, and vendor lock-in are architectural considerations, not afterthoughts.", "class": "C" },
+    { "id": "GP-14", "name": "Risk Determines Process Depth", "statement": "Higher-risk work requires deeper process (more research, stricter verification), not the same process applied uniformly.", "class": "B" },
+    { "id": "GP-15", "name": "Claim Strength Determines Evidence Depth", "statement": "A stronger claim requires stronger, more independent evidence before it can be trusted.", "class": "B" },
+    { "id": "GP-16", "name": "Use Strong Models Where Reasoning Value Justifies Cost", "statement": "Model/provider selection weighs the reasoning value of the task against its cost, not just price.", "class": "C" },
+    { "id": "GP-17", "name": "Never Change the Gate Merely to Make a Result Pass", "statement": "A frozen gate is immutable for its run; it cannot be edited to convert a failure into a pass.", "class": "A" },
+    { "id": "GP-18", "name": "Prefer the Shortest Verified Implementation", "statement": "Given equally verified results, the simpler implementation is preferred.", "class": "C" },
+    { "id": "GP-19", "name": "Newer Technology != Better Technology", "statement": "A technology choice is justified by evidence of fit, not by recency.", "class": "C" },
+    { "id": "GP-20", "name": "Every Important Decision Must Be Traceable", "statement": "A significant decision records its reason, actor, authority, and evidence references.", "class": "A" }
+  ]
+}

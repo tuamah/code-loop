@@ -1,0 +1,33 @@
+{
+  "id": "P11",
+  "macro_phase": "PREPARE",
+  "name": "Golden Gates & Test Plan",
+  "required_inputs": [
+    "REQUIREMENTS",
+    "METRICS"
+  ],
+  "required_artifacts": [
+    "GOLDEN_GATES",
+    "TEST_PLAN"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "architect"
+  ],
+  "exit_gate": {
+    "description": "A frozen gate and test plan exist with explicit stop conditions. BUILD is blocked until this gate passes for the active profile.",
+    "checks": [
+      "frozen_gate_exists",
+      "test_plan_covers_critical_requirements",
+      "stop_conditions_defined"
+    ]
+  },
+  "allowed_next": [
+    "P12"
+  ],
+  "allowed_back_transitions": [
+    "P10"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

@@ -1,0 +1,33 @@
+{
+  "id": "P10",
+  "macro_phase": "PREPARE",
+  "name": "Baseline / Benchmark / Metrics",
+  "required_inputs": [
+    "GOVERNANCE"
+  ],
+  "required_artifacts": [
+    "BASELINE",
+    "BENCHMARK_PROTOCOL",
+    "METRICS"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "architect",
+    "researcher"
+  ],
+  "exit_gate": {
+    "description": "A baseline and a benchmark protocol with primary/secondary metrics exist before any gate is frozen.",
+    "checks": [
+      "baseline_recorded",
+      "at_least_one_primary_metric_defined"
+    ]
+  },
+  "allowed_next": [
+    "P11"
+  ],
+  "allowed_back_transitions": [
+    "P9"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

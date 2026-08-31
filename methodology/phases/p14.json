@@ -1,0 +1,33 @@
+{
+  "id": "P14",
+  "macro_phase": "BUILD",
+  "name": "Implementer Self-Check & Evidence Capture",
+  "loop": "build_loop",
+  "required_inputs": [
+    "PATCH"
+  ],
+  "required_artifacts": [
+    "EXECUTION_EVIDENCE"
+  ],
+  "required_evidence": [
+    "execution_evidence"
+  ],
+  "required_roles": [
+    "implementer"
+  ],
+  "exit_gate": {
+    "description": "Execution evidence is captured with authority=execution. This evidence alone can never satisfy ACCEPT.",
+    "checks": [
+      "execution_evidence_authority_is_execution",
+      "execution_evidence_never_self_marked_authoritative"
+    ]
+  },
+  "allowed_next": [
+    "P15"
+  ],
+  "allowed_back_transitions": [
+    "P13"
+  ],
+  "failure_transition": "P13",
+  "minimum_profile": "LIGHT"
+}

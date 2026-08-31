@@ -1,0 +1,30 @@
+{
+  "id": "P7",
+  "macro_phase": "DESIGN",
+  "name": "Architecture & Trust Boundaries",
+  "required_inputs": [
+    "REQUIREMENTS"
+  ],
+  "required_artifacts": [
+    "ARCHITECTURE",
+    "TRUST_BOUNDARIES"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "architect"
+  ],
+  "exit_gate": {
+    "description": "Architecture, trust boundaries, execution authority, and acceptance authority are explicit and execution authority is distinct from acceptance authority.",
+    "checks": [
+      "execution_authority_and_acceptance_authority_are_distinct_identities_or_roles"
+    ]
+  },
+  "allowed_next": [
+    "P8"
+  ],
+  "allowed_back_transitions": [
+    "P6"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Project Methodology State",
+  "description": "Per-project runtime state tracking progress through the methodology. Schema defined in M7-A; not yet written by working code - the engine that produces/consumes this is M7-B/M7-C.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["methodology_id", "methodology_version", "profile", "current_phase", "created_at", "updated_at"],
+  "properties": {
+    "methodology_id": { "type": "string", "minLength": 1 },
+    "methodology_version": { "type": "string", "minLength": 1 },
+    "profile": { "enum": ["LIGHT", "STANDARD", "STRICT"] },
+    "phase_profile_overrides": {
+      "type": "object",
+      "additionalProperties": { "enum": ["LIGHT", "STANDARD", "STRICT"] }
+    },
+    "current_phase": { "type": "string", "pattern": "^P([0-9]|1[0-9]|2[0-3])$" },
+    "intent": { "enum": ["research", "production", "experimental"] },
+    "risk": { "enum": ["low", "medium", "high"] },
+    "claim_strength": { "enum": ["low", "medium", "high"] },
+    "created_at": { "type": "string", "format": "date-time" },
+    "updated_at": { "type": "string", "format": "date-time" }
+  }
+}

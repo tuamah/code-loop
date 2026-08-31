@@ -1,0 +1,36 @@
+{
+  "id": "P22",
+  "macro_phase": "EVOLVE",
+  "name": "Evidence-Driven Improvement",
+  "loop": "improvement_loop",
+  "required_inputs": [
+    "OPERATIONAL_OBSERVATIONS"
+  ],
+  "required_artifacts": [
+    "IMPROVEMENT_PROPOSAL"
+  ],
+  "required_evidence": [
+    "operational_evidence"
+  ],
+  "required_roles": [
+    "human_owner",
+    "architect"
+  ],
+  "exit_gate": {
+    "description": "An improvement proposal is grounded in observed operational or research evidence, not speculation.",
+    "checks": [
+      "improvement_proposal_cites_evidence"
+    ]
+  },
+  "allowed_next": [
+    "P23"
+  ],
+  "allowed_back_transitions": [
+    "P1",
+    "P6",
+    "P7",
+    "P21"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

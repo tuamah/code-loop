@@ -1,0 +1,32 @@
+{
+  "id": "P8",
+  "macro_phase": "DESIGN",
+  "name": "Architecture Decision & Cost Model",
+  "required_inputs": [
+    "ARCHITECTURE"
+  ],
+  "required_artifacts": [
+    "ADR",
+    "COST_MODEL"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "architect",
+    "human_owner"
+  ],
+  "exit_gate": {
+    "description": "The architecture decision is traceable and its cost (money, tokens, compute, time, complexity, maintenance, risk, lock-in) is estimated.",
+    "checks": [
+      "adr_records_reason",
+      "cost_model_covers_at_least_one_dimension"
+    ]
+  },
+  "allowed_next": [
+    "P9"
+  ],
+  "allowed_back_transitions": [
+    "P7"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

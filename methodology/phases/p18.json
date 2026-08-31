@@ -1,0 +1,38 @@
+{
+  "id": "P18",
+  "macro_phase": "VERIFY",
+  "name": "Independent Review & Verdict",
+  "loop": "verify_loop",
+  "required_inputs": [
+    "REPRODUCIBILITY_EVIDENCE"
+  ],
+  "required_artifacts": [
+    "REVIEW_VERDICT"
+  ],
+  "required_evidence": [
+    "verification_evidence"
+  ],
+  "required_roles": [
+    "verifier",
+    "independent_reviewer"
+  ],
+  "exit_gate": {
+    "description": "An AgentRuntime or authority independent from the executor reviews the change and produces a structured passed/failed/inconclusive verdict. The verifier never issues ACCEPT.",
+    "checks": [
+      "reviewer_identity_distinct_from_executor_identity",
+      "verdict_is_structured_not_narrative",
+      "verifier_did_not_write_a_decision"
+    ]
+  },
+  "allowed_next": [
+    "P19"
+  ],
+  "allowed_back_transitions": [
+    "P13",
+    "P6",
+    "P7",
+    "P8"
+  ],
+  "failure_transition": "P13",
+  "minimum_profile": "STANDARD"
+}

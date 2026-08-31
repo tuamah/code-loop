@@ -1,0 +1,30 @@
+{
+  "id": "P6",
+  "macro_phase": "DESIGN",
+  "name": "Requirements Engineering",
+  "required_inputs": [
+    "BUILD_VS_BUY_DECISION"
+  ],
+  "required_artifacts": [
+    "REQUIREMENTS"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "architect"
+  ],
+  "exit_gate": {
+    "description": "Requirements exist with stable IDs and each critical one links a reason, acceptance criterion, and planned test.",
+    "checks": [
+      "requirements_have_stable_ids_req_prefix",
+      "critical_requirements_link_acceptance_criterion_and_planned_test"
+    ]
+  },
+  "allowed_next": [
+    "P7"
+  ],
+  "allowed_back_transitions": [
+    "P5"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}
