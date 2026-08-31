@@ -1,0 +1,32 @@
+{
+  "id": "P5",
+  "macro_phase": "RESEARCH",
+  "name": "Build / Buy / Adopt / Fork / Integrate Decision",
+  "loop": "research_loop",
+  "required_inputs": [
+    "GAP_ANALYSIS"
+  ],
+  "required_artifacts": [
+    "BUILD_VS_BUY_DECISION"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "human_owner",
+    "architect"
+  ],
+  "exit_gate": {
+    "description": "A build/buy/adopt/fork/integrate decision is recorded with a reason, not defaulted to build.",
+    "checks": [
+      "decision_value_is_one_of_build_buy_adopt_fork_integrate",
+      "decision_has_reason"
+    ]
+  },
+  "allowed_next": [
+    "P6"
+  ],
+  "allowed_back_transitions": [
+    "P4"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

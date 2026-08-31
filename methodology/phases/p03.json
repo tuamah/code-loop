@@ -1,0 +1,33 @@
+{
+  "id": "P3",
+  "macro_phase": "RESEARCH",
+  "name": "Prior Art Discovery",
+  "loop": "research_loop",
+  "required_inputs": [
+    "SUCCESS_CRITERIA",
+    "SCOPE"
+  ],
+  "required_artifacts": [
+    "PRIOR_ART_MAP"
+  ],
+  "required_evidence": [
+    "source_references"
+  ],
+  "required_roles": [
+    "researcher"
+  ],
+  "exit_gate": {
+    "description": "Prior art has actually been searched, not assumed absent.",
+    "checks": [
+      "prior_art_map_has_at_least_one_source_or_explicit_none_found_justification"
+    ]
+  },
+  "allowed_next": [
+    "P4"
+  ],
+  "allowed_back_transitions": [
+    "P2"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

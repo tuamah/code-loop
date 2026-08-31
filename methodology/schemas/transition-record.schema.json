@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Methodology Transition Record",
+  "description": "One recorded phase transition for a project. Schema defined in M7-A; not yet written by working code - the engine that produces this is M7-C.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "from_phase", "to_phase", "reason", "actor_id", "authority_class", "created_at", "methodology_version"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "from_phase": { "type": "string", "pattern": "^P([0-9]|1[0-9]|2[0-3])$" },
+    "to_phase": { "type": "string", "pattern": "^(P([0-9]|1[0-9]|2[0-3])|REPAIR_LOOP)$" },
+    "reason": { "type": "string", "minLength": 1 },
+    "actor_id": { "type": "string", "minLength": 1 },
+    "authority_class": { "enum": ["execution", "verification", "acceptance", "human", "tool"] },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "created_at": { "type": "string", "format": "date-time" },
+    "methodology_version": { "type": "string", "minLength": 1 }
+  }
+}
