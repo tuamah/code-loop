@@ -346,6 +346,8 @@ def claude_connection() -> dict[str, Any]:
     if path is not None:
         probes.append(Probe("authentication", "WARN", "Claude Code auth is verified inside the official CLI session"))
     status = "limited" if path and profile_present else provider_status(probes)
+    if path is None and profile_present:
+        status = "install_required"
     return {
         "id": "claude",
         "label": "Claude Code",
@@ -357,6 +359,7 @@ def claude_connection() -> dict[str, Any]:
         "last_health_check": "",
         "probes": [probe.as_dict() for probe in probes],
         "trust_status": "READY" if status == "connected" else "NOT_READY",
+        "action_required": "Set CLAUDE_CODE_PATH to the Claude Code executable or add claude to PATH. The .claude folder is a profile, not the CLI executable." if path is None else "",
     }
 
 
@@ -540,9 +543,9 @@ def connect_cli(provider: str) -> dict[str, Any]:
             payload["status"] = "auth_pending" if launched else payload["status"]
             payload["browser_opened"] = launched
         else:
-            opened = webbrowser.open(CLAUDE_CODE_URL, new=2)
-            payload["auth_url"] = CLAUDE_CODE_URL
-            payload["browser_opened"] = opened
-        payload["action_required"] = "Use the official Claude Code login. NoGapCode will not request or copy session tokens."
+            payload["status"] = "install_required"
+            payload["install_url"] = CLAUDE_CODE_URL
+            payload["browser_opened"] = False
+        payload["action_required"] = "Use the official Claude Code CLI login. NoGapCode cannot complete Claude auth from the product web page and will not copy session tokens."
         return payload
     raise ValueError(f"unknown CLI provider: {provider}")

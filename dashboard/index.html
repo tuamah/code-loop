@@ -1068,7 +1068,7 @@
   <script>
     const statusClass = (status) => {
       const normalized = String(status || "").toLowerCase();
-      if (normalized.includes("fail") || normalized.includes("reject") || normalized.includes("disconnect") || normalized.includes("not_ready")) return "fail";
+      if (normalized.includes("fail") || normalized.includes("reject") || normalized.includes("disconnect") || normalized.includes("not_ready") || normalized.includes("install")) return "fail";
       if (normalized.includes("pending") || normalized.includes("abstain") || normalized.includes("repair") || normalized.includes("limited") || normalized.includes("auth")) return "pending";
       return "pass";
     };
@@ -1201,6 +1201,8 @@
       if (provider.credential_hint) pieces.push(`key: ${provider.credential_hint}`);
       if (provider.model_count) pieces.push(`models: ${provider.model_count}`);
       pieces.push(`trust: ${provider.trust_status || "NOT_READY"}`);
+      if (provider.action_required) pieces.push(provider.action_required);
+      if (provider.install_url) pieces.push(`install: ${provider.install_url}`);
       meta.textContent = pieces.join(" / ");
       const probes = card.querySelector("[data-field='probes']");
       probes.innerHTML = (provider.probes || []).map((probe) => `

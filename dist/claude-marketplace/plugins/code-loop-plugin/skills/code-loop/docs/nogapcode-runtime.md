@@ -208,6 +208,10 @@ If a local CLI is installed outside the server process `PATH`, set `CODEX_CLI_PA
 `CLAUDE_CODE_PATH` to the executable path. A local profile without an executable is reported as
 detected but not ready.
 
+Claude's product web page is not treated as an OAuth callback. NoGapCode can open it as
+install/sign-in guidance, but Claude connection readiness requires a local `claude` executable that
+runs the official Claude Code login flow.
+
 Connection status is capability based. For Codex, the current probe checks executable presence,
 version, login status, runtime health, provider reachability, and WebSocket streaming through
 redacted `codex doctor --json` output. For OpenRouter, the probe checks secure-store presence,

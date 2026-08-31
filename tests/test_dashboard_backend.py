@@ -155,6 +155,15 @@ class DashboardBackendTests(unittest.TestCase):
         self.assertIn("runtime_executable", raw)
         self.assertNotIn("api_key", raw)
 
+    def test_claude_missing_executable_is_not_treated_as_oauth(self) -> None:
+        payload = nogap_connections.connect_cli("claude")
+        if payload.get("executable"):
+            self.assertIn(payload["status"], {"auth_pending", "limited", "connected"})
+        else:
+            self.assertEqual(payload["status"], "install_required")
+            self.assertIn("install_url", payload)
+            self.assertNotIn("auth_url", payload)
+
 
 if __name__ == "__main__":
     unittest.main()
