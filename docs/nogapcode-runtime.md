@@ -206,11 +206,12 @@ probes them but does not ask for, copy, or persist their account tokens.
 
 If a local CLI is installed outside the server process `PATH`, set `CODEX_CLI_PATH` or
 `CLAUDE_CODE_PATH` to the executable path. A local profile without an executable is reported as
-detected but not ready.
+detected but not ready. On Windows, `~/.local/bin/claude.exe` is checked automatically.
 
 Claude's product web page is not treated as an OAuth callback. NoGapCode can open it as
 install/sign-in guidance, but Claude connection readiness requires a local `claude` executable that
-runs the official Claude Code login flow.
+runs the official Claude Code login flow. Claude becomes ready only when `claude auth status`
+reports a signed-in account.
 
 Connection status is capability based. For Codex, the current probe checks executable presence,
 version, login status, runtime health, provider reachability, and WebSocket streaming through

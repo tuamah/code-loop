@@ -156,13 +156,15 @@ class DashboardBackendTests(unittest.TestCase):
         self.assertNotIn("api_key", raw)
 
     def test_claude_missing_executable_is_not_treated_as_oauth(self) -> None:
-        payload = nogap_connections.connect_cli("claude")
-        if payload.get("executable"):
-            self.assertIn(payload["status"], {"auth_pending", "limited", "connected"})
-        else:
+        original = nogap_connections.configured_executable
+        nogap_connections.configured_executable = lambda *args, **kwargs: None
+        try:
+            payload = nogap_connections.connect_cli("claude")
             self.assertEqual(payload["status"], "install_required")
             self.assertIn("install_url", payload)
             self.assertNotIn("auth_url", payload)
+        finally:
+            nogap_connections.configured_executable = original
 
 
 if __name__ == "__main__":

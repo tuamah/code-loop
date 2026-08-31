@@ -331,6 +331,7 @@ def cli_connection(provider_id: str, label: str, command: str) -> dict[str, Any]
 def claude_connection() -> dict[str, Any]:
     home = os.path.expanduser("~")
     candidates = [
+        r"%USERPROFILE%\.local\bin\claude.exe",
         r"%APPDATA%\npm\claude.cmd",
         r"%APPDATA%\npm\claude.ps1",
         r"%LOCALAPPDATA%\Programs\Claude\claude.exe",
@@ -344,8 +345,30 @@ def claude_connection() -> dict[str, Any]:
     profile_present = any(os.path.exists(item) for item in profile_paths)
     probes.append(Probe("local_profile", "PASS" if profile_present else "WARN", "Claude local profile detected" if profile_present else "no Claude profile found"))
     if path is not None:
-        probes.append(Probe("authentication", "WARN", "Claude Code auth is verified inside the official CLI session"))
-    status = "limited" if path and profile_present else provider_status(probes)
+        auth = run_command([path, "auth", "status"])
+        auth_text = ((auth.stdout if auth else "") or (auth.stderr if auth else "")).strip()
+        logged_in = False
+        auth_method = "unknown"
+        if auth_text:
+            try:
+                auth_payload = json.loads(auth_text)
+                logged_in = auth_payload.get("loggedIn") is True
+                auth_method = str(auth_payload.get("authMethod", "unknown"))
+            except json.JSONDecodeError:
+                logged_in = "logged in" in auth_text.lower()
+        probes.append(Probe(
+            "authentication",
+            "PASS" if logged_in else "FAIL",
+            f"authMethod={auth_method}" if logged_in else "not signed in",
+        ))
+        doctor = run_command([path, "doctor"])
+        doctor_text = ((doctor.stdout if doctor else "") or (doctor.stderr if doctor else "")).strip()
+        probes.append(Probe(
+            "runtime_health",
+            "PASS" if doctor and doctor.returncode == 0 else "WARN",
+            doctor_text.splitlines()[0][:120] if doctor_text else "doctor unavailable",
+        ))
+    status = required_probe_status(probes, {"runtime_executable", "version_probe", "authentication"}) if path else provider_status(probes)
     if path is None and profile_present:
         status = "install_required"
     return {
@@ -533,13 +556,14 @@ def connect_cli(provider: str) -> dict[str, Any]:
     if provider == "claude":
         payload = claude_connection()
         path = configured_executable("claude", "CLAUDE_CODE_PATH", [
+            r"%USERPROFILE%\.local\bin\claude.exe",
             r"%APPDATA%\npm\claude.cmd",
             r"%APPDATA%\npm\claude.ps1",
             r"%LOCALAPPDATA%\Programs\Claude\claude.exe",
             r"%LOCALAPPDATA%\Programs\Claude Code\claude.exe",
         ])
         if path:
-            launched = launch_interactive([path])
+            launched = launch_interactive([path, "auth", "login"])
             payload["status"] = "auth_pending" if launched else payload["status"]
             payload["browser_opened"] = launched
         else:

@@ -225,6 +225,7 @@ The Dashboard also exposes a backend-backed `Settings / Connections` view:
   If Codex is installed outside `PATH`, set `CODEX_CLI_PATH`.
   The Claude product web page is install/sign-in guidance only; it is not an OAuth callback that can
   authenticate NoGapCode.
+  On Windows, the native Claude Code path `~/.local/bin/claude.exe` is detected automatically.
 
 Provider, model, and AgentRuntime are separate concepts. The current build routing is: Terra plans,
 5.4 executes, and Sol judges. That is a construction-time policy, not acceptance authority.
