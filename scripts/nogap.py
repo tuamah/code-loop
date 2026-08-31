@@ -663,6 +663,20 @@ def cmd_run(args: argparse.Namespace) -> None:
     if not status["runtime_exists"]:
         raise SystemExit(f"FAIL: no runtime at {root}; run 'nogap init' first")
 
+    # M7-F: methodology preflight is computed up front and printed unconditionally, even
+    # for a planning-only run (no --execute) - "planning may inspect/report methodology
+    # blockers" - but it only actually GATES anything once --execute is requested, below.
+    project_root = Path(args.path)
+    from nogap_build import preflight_build
+
+    preflight = preflight_build(project_root)
+    phase_note = f" phase={preflight['current_phase']}" if preflight["current_phase"] else ""
+    profile_note = f" profile={preflight['profile']}" if preflight["profile"] else ""
+    print(f"methodology: status={preflight['status']}{profile_note}{phase_note}")
+    if preflight["status"] == "METHODOLOGY_BLOCKED":
+        for item in preflight["reasons"]:
+            print(f"  - {item}")
+
     run = read_json(root / "run.json")
     run_id = require_string(run, "id", root / "run.json")
     objective = run.get("objective", "")
@@ -704,6 +718,8 @@ def cmd_run(args: argparse.Namespace) -> None:
         names = ", ".join(item["provider"] for item in considered) or "none configured"
         print(f"plan {plan_id} proposed; no ready implementer AgentRuntime (checked: {names})")
         print("dispatch not created: connect Codex or Claude Code in the dashboard, then re-run.")
+        if args.execute:
+            print("build_status=DISPATCH_FAILED")
         return
 
     route_id = f"route-{stable_hash({'run_id': run_id, 'plan_id': plan_id, 'selected': selected})[:12]}"
@@ -756,12 +772,70 @@ def cmd_run(args: argparse.Namespace) -> None:
         print("execution dispatch is not implemented by default; pass --execute to run the selected AgentRuntime.")
         return
 
+    # M7-F PREBUILD BARRIER: this is the one place real implementation execution can
+    # begin, so it is the one place the gate is enforced - before any worktree or
+    # process is created. A project with methodology initialized cannot bypass this via
+    # any CLI flag; a project that never initialized methodology at all keeps its
+    # pre-M7 behavior (see preflight_build()'s METHODOLOGY_NOT_INITIALIZED policy).
+    methodology_tracked = preflight["status"] != "METHODOLOGY_NOT_INITIALIZED"
+    if methodology_tracked and not preflight["permitted"]:
+        print(f"execution BLOCKED by methodology: {preflight['status']}")
+        for item in preflight["reasons"]:
+            print(f"  - {item}")
+        append_event(root, {
+            "id": f"event-methodology-blocked-{plan_id}",
+            "run_id": run_id,
+            "type": "METHODOLOGY_BLOCKED",
+            "created_at": now(),
+            "actor": actor,
+            "payload": {"plan_id": plan_id, "status": preflight["status"], "reasons": preflight["reasons"]},
+        })
+        return
+
+    # getattr, not args.task_id: a Namespace built by hand (as some existing tests do,
+    # bypassing argparse entirely) may not carry every argparse default.
+    requested_task_id = getattr(args, "task_id", None)
+    task_contract = None
+    if methodology_tracked:
+        # "Do not use free-form agent prompt as the canonical task contract": once a
+        # project is methodology-tracked and BUILD is permitted, --execute requires a
+        # real P12 task contract to bind the run to - not just the run's free-text
+        # objective.
+        if not requested_task_id:
+            raise SystemExit(
+                "FAIL: this project is methodology-tracked; --execute requires --task-id "
+                "naming a P12_TASK_CONTRACT (create one with "
+                "'nogap methodology artifact-create --type P12_TASK_CONTRACT ...')"
+            )
+        from nogap_build import (
+            enter_build_phase,
+            enter_execution_phase,
+            load_task_contract,
+            record_plan_evidence,
+        )
+        from nogap_methodology import MethodologyValidationError as _MethodologyValidationError
+
+        try:
+            task_contract = load_task_contract(project_root, requested_task_id)
+            if preflight["current_phase"] == "P11":
+                enter_build_phase(project_root, actor, "prebuild readiness satisfied; entering BUILD")
+            plan_evidence_id = record_plan_evidence(project_root, run_id, task_contract, actor)
+            enter_execution_phase(
+                project_root, actor, "task contract recorded; entering minimal controlled implementation",
+                task_contract, plan_evidence_id,
+            )
+        except _MethodologyValidationError as exc:
+            raise SystemExit(f"FAIL: {exc}") from exc
+    elif requested_task_id:
+        print(f"note: --task-id {requested_task_id!r} ignored - this project has no methodology state to bind it to")
+
     from nogap_adapters import ADAPTERS, ExecutorNotReady
     from nogap_execution import GitWorktreeExecutionBackend
 
     adapter = ADAPTERS.get(selected["provider"])
     if adapter is None or not hasattr(adapter, "build_exec_command"):
         print(f"execution not available: no execution-capable adapter registered for {selected['provider']!r}.")
+        print("build_status=DISPATCH_FAILED")
         return
 
     prompt = plan["steps"][0]["summary"]
@@ -773,9 +847,11 @@ def cmd_run(args: argparse.Namespace) -> None:
         )
     except ExecutorNotReady as exc:
         print(f"execution aborted: {exc}")
+        print("build_status=DISPATCH_FAILED")
         return
 
-    from nogap_effects import ExpectedEffect, classify_agent_execution, verify_effect
+    from nogap_build import build_status_label, patch_hash as compute_patch_hash
+    from nogap_effects import ExpectedEffect, classify_agent_execution, touched_paths, verify_effect
 
     # M6-C default: we only know the agent should produce *some* change addressing the
     # objective, not which files. change_type=ANY still refuses to call an empty patch a
@@ -789,15 +865,46 @@ def cmd_run(args: argparse.Namespace) -> None:
     exec_status, execution_status, reason = classify_agent_execution(
         result.process_outcome, result.returncode, effect, allowed_exit_codes,
     )
+    requirement_refs = task_contract["fields"].get("requirement_refs", []) if task_contract else None
+    task_id = task_contract["fields"]["task_id"] if task_contract else None
+    methodology_version = task_contract["methodology_version"] if task_contract else None
     evidence_id, artifact_path = write_isolated_run_evidence(
         root, run_id, result, actor, exec_status, execution_status, reason,
         dispatch_id=dispatch_id, provider=selected["provider"], runtime_id=selected["runtime"],
+        task_id=task_id, requirement_refs=requirement_refs, methodology_version=methodology_version,
     )
     print(
         f"execute {result.execution_id}: {exec_status} ({execution_status}: {reason}) "
         f"evidence={evidence_id} patch={artifact_path}"
     )
     print("execution evidence is not authoritative on its own: independent verification is still required for ACCEPT.")
+
+    build_status = build_status_label(exec_status, execution_status)
+    if task_contract is not None:
+        from nogap_build import create_self_check, enter_self_check_phase, record_build_failure
+        from nogap_methodology import MethodologyValidationError as _MethodologyValidationError
+
+        try:
+            if exec_status == "passed":
+                enter_self_check_phase(
+                    project_root, actor, "execution succeeded; entering self-check", evidence_id, str(artifact_path),
+                )
+                create_self_check(
+                    project_root, task_contract, evidence_id,
+                    changed_files=sorted(touched_paths(result.patch)),
+                    patch_hash=compute_patch_hash(result.patch),
+                    process_outcome=result.process_outcome,
+                    expected_effect_result=f"{effect.outcome}: {effect.reason}",
+                    actor=actor,
+                )
+            else:
+                record_build_failure(
+                    project_root, actor, f"execution did not pass: {execution_status}: {reason}", evidence_id, str(artifact_path),
+                )
+        except _MethodologyValidationError as exc:
+            build_status = "SELF_CHECK_FAILED"
+            print(f"self-check recording FAILED: {exc}")
+    print(f"build_status={build_status}")
 
 
 def write_isolated_run_evidence(
@@ -816,6 +923,9 @@ def write_isolated_run_evidence(
     dispatch_id: str | None = None,
     provider: str | None = None,
     runtime_id: str | None = None,
+    task_id: str | None = None,
+    requirement_refs: list[str] | None = None,
+    methodology_version: str | None = None,
 ) -> tuple[str, Path]:
     """Records an isolated-worktree run (execution or verification) as evidence.
 
@@ -870,6 +980,12 @@ def write_isolated_run_evidence(
         provenance["provider"] = provider
     if runtime_id:
         provenance["runtime"] = runtime_id
+    if task_id:
+        provenance["task_id"] = task_id
+    if requirement_refs:
+        provenance["requirement_refs"] = list(requirement_refs)
+    if methodology_version:
+        provenance["methodology_version"] = methodology_version
     evidence = {
         "id": evidence_id,
         "run_id": run_id,
@@ -1490,6 +1606,26 @@ def _cmd_methodology_artifacts(args: argparse.Namespace) -> None:
                 print("Missing:")
                 for reason in result["missing"]:
                     print(f"  - {reason}")
+            # M7-F: minimal BUILD visibility - active task contract(s), the requirements
+            # they link to, and whether a self-checked candidate is awaiting verification.
+            if result["current_phase"] in {"P12", "P13", "P14"}:
+                contracts = [
+                    r for r in list_artifacts(project, artifact_type="P12_TASK_CONTRACT")
+                    if r.get("status") == "ACTIVE"
+                ]
+                print(f"Active task contracts: {len(contracts)}")
+                for contract in contracts:
+                    print(
+                        f"  {contract['fields']['task_id']} "
+                        f"requirement_refs={contract['fields'].get('requirement_refs', [])}"
+                    )
+                self_checks = list_artifacts(project, artifact_type="P14_SELF_CHECK")
+                if result["current_phase"] == "P14" and self_checks:
+                    latest = self_checks[-1]
+                    print(
+                        f"BUILD_COMPLETE_AWAITING_VERIFICATION: task_id={latest['fields']['task_id']} "
+                        f"execution_evidence_ids={latest['fields']['execution_evidence_ids']}"
+                    )
             return
     except MethodologyValidationError as exc:
         raise SystemExit(f"FAIL: {exc}") from exc
@@ -1530,6 +1666,11 @@ def main() -> None:
         help="After an intended dispatch, actually run the selected AgentRuntime inside an isolated worktree",
     )
     run_cmd.add_argument("--execute-timeout", type=int, default=600)
+    run_cmd.add_argument(
+        "--task-id",
+        help="P12_TASK_CONTRACT task_id to bind this execution to; required for --execute "
+        "once methodology is initialized and BUILD is permitted",
+    )
     run_cmd.set_defaults(func=cmd_run)
 
     verify = sub.add_parser("verify")
