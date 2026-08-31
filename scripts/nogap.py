@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 import shutil
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -753,6 +754,75 @@ def cmd_run(args: argparse.Namespace) -> None:
     print("execution dispatch is not implemented in this runtime milestone; the AgentRuntime was not invoked.")
 
 
+def cmd_execute(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    status = compute_status(root)
+    if not status["runtime_exists"]:
+        raise SystemExit(f"FAIL: no runtime at {root}; run 'nogap init' first")
+    command = args.worktree_command
+    if not command:
+        raise SystemExit("FAIL: execute requires a command, e.g. 'nogap execute . -- python -m pytest'")
+
+    run = read_json(root / "run.json")
+    run_id = require_string(run, "id", root / "run.json")
+
+    from nogap_execution import GitWorktreeExecutionBackend
+
+    project_root = Path(args.path).resolve()
+    backend = GitWorktreeExecutionBackend(project_root)
+    result = backend.run(command, timeout=args.timeout)
+
+    gates = load_objects(root / "gates")
+    frozen_hashes = [
+        gate_hash(gate)
+        for gate in gates.values()
+        if gate.get("status") == "frozen" and gate.get("hash") == gate_hash(gate)
+    ]
+
+    artifact_path = root / "artifacts" / f"{result.execution_id}.patch"
+    artifact_path.parent.mkdir(parents=True, exist_ok=True)
+    artifact_path.write_text(result.patch, encoding="utf-8")
+
+    evidence_id = f"evidence-{result.execution_id}"
+    provenance: dict[str, Any] = {
+        "created_by": args.actor,
+        "created_at": now(),
+        "actor_id": args.actor,
+        "authority": "execution",
+        "role": "implementer",
+        "commit": result.base_commit,
+        "command": " ".join(result.command),
+        "artifact_path": str(artifact_path),
+    }
+    if frozen_hashes:
+        provenance["gate_hash"] = frozen_hashes[0]
+    evidence = {
+        "id": evidence_id,
+        "run_id": run_id,
+        "kind": "execution",
+        "status": result.status,
+        "provenance": provenance,
+        "summary": (
+            f"isolated worktree run: returncode={result.returncode} "
+            f"timed_out={result.timed_out} cancelled={result.cancelled}"
+        ),
+    }
+    write_json(root / "evidence" / f"{evidence_id}.json", evidence)
+    append_event(root, {
+        "id": f"event-{evidence_id}",
+        "run_id": run_id,
+        "type": "EXECUTION_COMPLETED",
+        "created_at": now(),
+        "actor": args.actor,
+        "payload": {"execution_id": result.execution_id, "status": result.status, "evidence_id": evidence_id},
+    })
+    print(
+        f"execution {result.execution_id}: {result.status} (returncode={result.returncode}) "
+        f"evidence={evidence_id} patch={artifact_path}"
+    )
+    print("execution evidence is not authoritative on its own: independent verification is still required for ACCEPT.")
+
+
 def cmd_decide(args: argparse.Namespace) -> None:
     root = runtime_root(Path(args.path))
     run_id = read_json(root / "run.json")["id"]
@@ -1112,6 +1182,16 @@ def main() -> None:
     run_cmd.add_argument("--actor", default="nogap orchestrator")
     run_cmd.set_defaults(func=cmd_run)
 
+    execute = sub.add_parser(
+        "execute",
+        description="Run one command inside an isolated git worktree. "
+        "Pass the command after a literal '--', e.g. 'nogap execute . -- python -m pytest'.",
+    )
+    execute.add_argument("path", nargs="?", default=".")
+    execute.add_argument("--timeout", type=int, default=300)
+    execute.add_argument("--actor", default="nogap execute")
+    execute.set_defaults(func=cmd_execute, worktree_command=[])
+
     decide = sub.add_parser("decide")
     decide.add_argument("path", nargs="?", default=".")
     decide.add_argument("--actor", default="nogap decide")
@@ -1179,7 +1259,19 @@ def main() -> None:
     dashboard.add_argument("--port", type=int, default=8765)
     dashboard.set_defaults(func=cmd_dashboard)
 
-    args = parser.parse_args()
+    argv = sys.argv[1:]
+    worktree_command: list[str] = []
+    if argv and argv[0] == "execute" and "--" in argv:
+        # argparse.REMAINDER is ambiguous when mixed with named options like --timeout, and its
+        # dest would collide with the subparsers' own dest="command". Split the passthrough
+        # command out by hand instead of asking argparse to parse it at all.
+        separator = argv.index("--")
+        worktree_command = argv[separator + 1:]
+        argv = argv[:separator]
+
+    args = parser.parse_args(argv)
+    if args.command == "execute":
+        args.worktree_command = worktree_command
     if args.command == "goal" and args.action == "set" and not args.objective:
         raise SystemExit("FAIL: goal set requires --objective")
     args.func(args)
