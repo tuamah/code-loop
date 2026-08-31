@@ -197,6 +197,11 @@ never stores secrets. The local server exposes a small control-plane API:
 - `POST /api/connections/claude/connect`
 - `POST /api/connections/claude/test`
 
+Dashboard controls are not allowed to be decorative. A visible control must either call a real local
+API, navigate to runtime-backed records, or be visibly unavailable until the matching runtime
+capability exists. Project selection is backed by `.nogap/projects.json`, and runtime validation is
+available through `POST /api/runtime/validate`.
+
 OpenRouter supports local OAuth PKCE login. NoGapCode starts that login from the Dashboard, receives
 the localhost callback, exchanges the authorization code for a user-controlled API key, and stores
 that key through the OS credential store on Windows under a credential reference. Manual API-key

@@ -230,6 +230,18 @@ The Dashboard also exposes a backend-backed `Settings / Connections` view:
 Provider, model, and AgentRuntime are separate concepts. The current build routing is: Terra plans,
 5.4 executes, and Sol judges. That is a construction-time policy, not acceptance authority.
 
+Dashboard controls must be truthful. Navigation opens runtime-backed record panels, connection
+buttons call local APIs, and unavailable product areas are shown as empty or not implemented instead
+of fake sample screens. Project selection is backed by `.nogap/projects.json`:
+
+- `GET /api/projects`
+- `POST /api/projects`
+- `POST /api/projects/select`
+- `POST /api/projects/open`
+
+Runtime validation is exposed through `POST /api/runtime/validate`, which delegates to the CLI on
+the server side with a fixed argv command.
+
 The runtime is intentionally local-first and server-ready. A frozen gate is hash-locked for the run;
 evidence that claims to prove work must reference the frozen gate hash. Authoritative evidence
 records producer identity, authority class, role, and provenance. Lessons are scoped, tagged, and

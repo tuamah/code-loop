@@ -6,6 +6,9 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
+import subprocess
+import sys
 from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_DIR = ROOT / "dashboard"
 RUNTIME_DIRS = ("gates", "claims", "evidence", "events", "decisions", "lessons", "literature")
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+REGISTRY_PATH = ROOT / ".nogap" / "projects.json"
 
 
 def utc_now() -> datetime:
@@ -57,6 +61,85 @@ def read_json(path: Path) -> dict[str, Any] | None:
     except (OSError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def project_id(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:12]
+
+
+def project_entry(path: Path, name: str | None = None) -> dict[str, str]:
+    resolved = path.resolve()
+    return {"id": project_id(resolved), "name": name or resolved.name, "path": str(resolved)}
+
+
+def load_project_registry(default_project: Path) -> list[dict[str, str]]:
+    data = read_json(REGISTRY_PATH) or {}
+    projects = data.get("projects", [])
+    valid: list[dict[str, str]] = []
+    if isinstance(projects, list):
+        for item in projects:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            name = item.get("name")
+            if isinstance(path, str) and path:
+                valid.append(project_entry(Path(path), str(name) if name else None))
+    default = project_entry(default_project)
+    if not any(item["id"] == default["id"] for item in valid):
+        valid.insert(0, default)
+    return valid
+
+
+def save_project_registry(projects: list[dict[str, str]]) -> None:
+    REGISTRY_PATH.parent.mkdir(parents=True, exist_ok=True)
+    REGISTRY_PATH.write_text(json.dumps({"projects": projects}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def projects_payload(selected: Path) -> dict[str, Any]:
+    projects = load_project_registry(selected)
+    selected_id = project_id(selected)
+    return {"selected_id": selected_id, "projects": projects}
+
+
+def add_project(path_value: str, selected: Path, name: str | None = None) -> dict[str, Any]:
+    if not isinstance(path_value, str) or not path_value.strip():
+        raise ValueError("project path is required")
+    if len(path_value) > 500:
+        raise ValueError("project path is too long")
+    path = Path(os.path.expanduser(path_value.strip())).resolve()
+    if not path.is_dir():
+        raise ValueError("project path must be an existing directory")
+    projects = load_project_registry(selected)
+    entry = project_entry(path, name)
+    projects = [item for item in projects if item["id"] != entry["id"]]
+    projects.append(entry)
+    save_project_registry(projects)
+    DashboardHandler.project = path
+    return projects_payload(path)
+
+
+def select_project(project_id_value: str, selected: Path) -> dict[str, Any]:
+    projects = load_project_registry(selected)
+    for item in projects:
+        if item["id"] == project_id_value:
+            path = Path(item["path"])
+            if not path.is_dir():
+                raise ValueError("selected project path no longer exists")
+            DashboardHandler.project = path.resolve()
+            return projects_payload(DashboardHandler.project)
+    raise ValueError("unknown project id")
+
+
+def open_project_folder(project: Path) -> dict[str, Any]:
+    path = project.resolve()
+    if not path.is_dir():
+        raise ValueError("project path does not exist")
+    if sys.platform == "win32":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+        return {"status": "opened", "path": str(path)}
+    return {"status": "unsupported", "path": str(path)}
 
 
 def read_json_dir(directory: Path) -> list[dict[str, Any]]:
@@ -163,6 +246,19 @@ def recent_activity(events: list[dict[str, Any]], evidence: list[dict[str, Any]]
     return activity[:5]
 
 
+def record_items(items: list[dict[str, Any]], title_key: str, status_key: str = "status") -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for item in items:
+        provenance = item.get("provenance", {})
+        rows.append({
+            "title": str(item.get(title_key) or item.get("id") or "record")[:120],
+            "detail": str(item.get("id", "")),
+            "status": str(item.get(status_key, "record")).upper(),
+            "actor": str(provenance.get("actor_id") or provenance.get("created_by") or item.get("actor_id") or ""),
+        })
+    return rows
+
+
 def build_payload(project: Path) -> dict[str, Any]:
     root = runtime_root(project)
     run = read_json(root / "run.json") or {}
@@ -209,6 +305,18 @@ def build_payload(project: Path) -> dict[str, Any]:
         "gates": gate_rows(gates, evidence),
         "decisions": recent_decisions(decisions),
         "activity": recent_activity(events, evidence, decisions),
+        "records": {
+            "claims": record_items(claims, "text"),
+            "evidence": record_items(evidence, "kind"),
+            "lessons": record_items(lessons, "text"),
+            "literature": record_items(literature, "claim", "decision"),
+            "events": [{
+                "title": str(item.get("type", "event")).replace("_", " ").title(),
+                "detail": str(item.get("id", "")),
+                "status": "EVENT",
+                "actor": str(item.get("actor", "")),
+            } for item in events],
+        },
         "system": {
             "runtime": "online" if runtime_exists else "no-runtime",
             "model_router": "gpt-5.6-terra plans",
@@ -216,6 +324,31 @@ def build_payload(project: Path) -> dict[str, Any]:
             "arbiter": "5.6-sol judges",
             "trust_score": trust_score,
         },
+    }
+
+
+def validate_runtime(project: Path) -> dict[str, Any]:
+    command = [sys.executable, str(ROOT / "scripts" / "nogap.py"), "validate", str(project.resolve())]
+    try:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "status": "failed",
+            "command": "python scripts/nogap.py validate <project>",
+            "detail": type(exc).__name__,
+        }
+    output = (result.stdout or result.stderr).strip()
+    return {
+        "status": "passed" if result.returncode == 0 else "failed",
+        "command": "python scripts/nogap.py validate <project>",
+        "detail": output[:2000],
     }
 
 
@@ -282,6 +415,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/connections":
             self.send_json(HTTPStatus.OK, build_connections_payload())
+            return
+        if parsed.path == "/api/projects":
+            self.send_json(HTTPStatus.OK, projects_payload(self.project))
             return
         if parsed.path == "/api/connections/openrouter/callback":
             params = parse_qs(parsed.query)
@@ -351,6 +487,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 return
             if parsed.path == "/api/connections/claude/test":
                 self.send_json(HTTPStatus.OK, build_connections_payload())
+                return
+            if parsed.path == "/api/runtime/validate":
+                self.send_json(HTTPStatus.OK, validate_runtime(self.project))
+                return
+            if parsed.path == "/api/projects":
+                payload = self.read_json_body()
+                self.send_json(HTTPStatus.OK, add_project(
+                    str(payload.get("path", "")),
+                    self.project,
+                    str(payload.get("name", "")) if payload.get("name") else None,
+                ))
+                return
+            if parsed.path == "/api/projects/select":
+                payload = self.read_json_body()
+                self.send_json(HTTPStatus.OK, select_project(str(payload.get("id", "")), self.project))
+                return
+            if parsed.path == "/api/projects/open":
+                self.send_json(HTTPStatus.OK, open_project_folder(self.project))
                 return
         except ValueError as exc:
             self.send_json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})

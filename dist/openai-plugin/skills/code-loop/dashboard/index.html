@@ -43,6 +43,18 @@
       color: var(--text);
     }
 
+    body.sidebar-collapsed {
+      --nav: 76px;
+    }
+
+    body.sidebar-collapsed .brand h1,
+    body.sidebar-collapsed .brand p,
+    body.sidebar-collapsed .nav-title,
+    body.sidebar-collapsed .nav-item span,
+    body.sidebar-collapsed .version {
+      display: none;
+    }
+
     button, select {
       font: inherit;
     }
@@ -120,6 +132,20 @@
       padding: 0 10px;
       text-align: left;
       cursor: default;
+    }
+
+    .nav-item[data-view],
+    .nav-item[data-record],
+    .view-link,
+    .action-button,
+    .icon-button:not(:disabled) {
+      cursor: pointer;
+    }
+
+    button:disabled,
+    select:disabled {
+      opacity: 0.48;
+      cursor: not-allowed;
     }
 
     .nav-item.active {
@@ -802,6 +828,55 @@
       font-size: 12px;
     }
 
+    .control-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+
+    .records-card {
+      min-height: 620px;
+    }
+
+    .records-list {
+      display: grid;
+    }
+
+    .record-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 140px;
+      gap: 16px;
+      align-items: center;
+      min-height: 62px;
+      padding: 12px 16px;
+      border-top: 1px solid var(--line);
+    }
+
+    .record-row strong,
+    .record-row span {
+      display: block;
+    }
+
+    .record-row span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+      margin-top: 4px;
+    }
+
+    .toast {
+      min-height: 36px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #0a111c;
+      color: var(--muted);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 12px;
+    }
+
     svg {
       stroke: currentColor;
       fill: none;
@@ -844,6 +919,7 @@
       .decision-status,
       .time { grid-column: 2; justify-items: start; margin-top: 0; }
       .model-row { grid-template-columns: 1fr; padding: 12px 16px; }
+      .record-row { grid-template-columns: 1fr; }
       .secret-row { grid-template-columns: 1fr; }
       .status-bar { grid-template-columns: 1fr; }
       .status-item { border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 0; }
@@ -869,31 +945,31 @@
         </div>
         <div class="nav-section">
           <p class="nav-title">Execution</p>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h1"></path><path d="M3 12h1"></path><path d="M3 18h1"></path></svg><span>Work Items</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="m10 13 2 2 4-4"></path></svg><span>Executions</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6z"></path><path d="M9 8h6"></path><path d="M9 12h6"></path><path d="M9 16h4"></path></svg><span>Evidence</span></button>
+          <button class="nav-item" data-record="work_items"><svg viewBox="0 0 24 24"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h1"></path><path d="M3 12h1"></path><path d="M3 18h1"></path></svg><span>Work Items</span></button>
+          <button class="nav-item" data-record="executions"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="m10 13 2 2 4-4"></path></svg><span>Executions</span></button>
+          <button class="nav-item" data-record="evidence"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6z"></path><path d="M9 8h6"></path><path d="M9 12h6"></path><path d="M9 16h4"></path></svg><span>Evidence</span></button>
         </div>
         <div class="nav-section">
           <p class="nav-title">Verification</p>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg><span>Verifications</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Gates</span></button>
+          <button class="nav-item" data-record="verifications"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg><span>Verifications</span></button>
+          <button class="nav-item" data-record="gates"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Gates</span></button>
         </div>
         <div class="nav-section">
           <p class="nav-title">Decisions</p>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 22 4 18V6l8-4 8 4v12Z"></path><path d="m9 12 2 2 4-5"></path></svg><span>Decisions</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="M8 12h8"></path><path d="M12 8v8"></path></svg><span>Appeals</span></button>
+          <button class="nav-item" data-record="decisions"><svg viewBox="0 0 24 24"><path d="M12 22 4 18V6l8-4 8 4v12Z"></path><path d="m9 12 2 2 4-5"></path></svg><span>Decisions</span></button>
+          <button class="nav-item" data-record="appeals"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="M8 12h8"></path><path d="M12 8v8"></path></svg><span>Appeals</span></button>
         </div>
         <div class="nav-section">
           <p class="nav-title">Learning</p>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5Z"></path></svg><span>Literature</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="M8 9l4 2 4-2"></path><path d="M8 15l4 2 4-2"></path></svg><span>Knowledge Base</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg><span>Hypotheses</span></button>
+          <button class="nav-item" data-record="literature"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5Z"></path></svg><span>Literature</span></button>
+          <button class="nav-item" data-record="knowledge"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="M8 9l4 2 4-2"></path><path d="M8 15l4 2 4-2"></path></svg><span>Knowledge Base</span></button>
+          <button class="nav-item" data-record="hypotheses"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg><span>Hypotheses</span></button>
         </div>
         <div class="nav-section">
           <p class="nav-title">System</p>
           <button class="nav-item" data-view="connections"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="m4 7 8 4 8-4"></path><path d="M12 11v10"></path></svg><span>Models</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-8 0v2"></path><circle cx="12" cy="7" r="4"></circle><path d="M20 8v6"></path><path d="M23 11h-6"></path></svg><span>Agents</span></button>
-          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="m14.7 6.3 3 3"></path><path d="m7 17 7.7-7.7"></path><path d="m5 19 2-2"></path><path d="M17 3l4 4-3 3-4-4Z"></path></svg><span>Tools</span></button>
+          <button class="nav-item" data-record="agents"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-8 0v2"></path><circle cx="12" cy="7" r="4"></circle><path d="M20 8v6"></path><path d="M23 11h-6"></path></svg><span>Agents</span></button>
+          <button class="nav-item" data-record="tools"><svg viewBox="0 0 24 24"><path d="m14.7 6.3 3 3"></path><path d="m7 17 7.7-7.7"></path><path d="m5 19 2-2"></path><path d="M17 3l4 4-3 3-4-4Z"></path></svg><span>Tools</span></button>
           <button class="nav-item" data-view="connections"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2 3-.2-.1a1.8 1.8 0 0 0-2 .2 1.7 1.7 0 0 0-.8 1.6V22h-4v-.3a1.7 1.7 0 0 0-.8-1.6 1.8 1.8 0 0 0-2-.2l-.2.1-2-3 .1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.4-1H3v-4h.2a1.7 1.7 0 0 0 1.4-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2-3 .2.1a1.8 1.8 0 0 0 2-.2A1.7 1.7 0 0 0 10.8 2H11h4v.3a1.7 1.7 0 0 0 .8 1.6 1.8 1.8 0 0 0 2 .2l.2-.1 2 3-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.4 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"></path></svg><span>Settings</span></button>
         </div>
       </nav>
@@ -903,16 +979,15 @@
 
     <main class="main">
       <header class="topbar">
-        <button class="menu-button" aria-label="Toggle navigation"><svg viewBox="0 0 24 24"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path></svg></button>
+        <button class="menu-button" aria-label="Toggle navigation" data-toggle-sidebar><svg viewBox="0 0 24 24"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path></svg></button>
         <select class="project-select" aria-label="Select project">
-          <option>Select Project</option>
-          <option>Auth Service</option>
-          <option>Core Service</option>
+          <option>Loading projects</option>
         </select>
         <div class="top-actions">
+          <button class="action-button primary" data-add-project><svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>Add Project</button>
           <span class="runtime-pill">Runtime Online</span>
-          <button class="icon-button" aria-label="Open repository"><svg viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-6.5 0-1.3-.5-2.5-1.3-3.4.1-.4.5-1.9-.1-3.3 0 0-1.1-.4-3.6 1.3a12.4 12.4 0 0 0-6 0C6.4.9 5.4 1.3 5.4 1.3c-.6 1.4-.2 2.9-.1 3.3A5 5 0 0 0 4 8c0 4.5 3 6.5 6 6.5-.4.4-.7 1-.8 1.8-1 .5-3.6 1.2-5.2-1.5 0 0-1-.1-2 1.1 0 0 1.4 3.9 7 2.7V22"></path></svg></button>
-          <button class="icon-button" aria-label="Notifications"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path><path d="M13.7 21a2 2 0 0 1-3.4 0"></path></svg><span class="badge">3</span></button>
+          <button class="icon-button" aria-label="Open project folder" data-open-project><svg viewBox="0 0 24 24"><path d="M3 7h5l2 2h11v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"></path><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2h5"></path></svg></button>
+          <button class="icon-button" aria-label="Notifications" data-record="activity"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path><path d="M13.7 21a2 2 0 0 1-3.4 0"></path></svg><span class="badge" data-activity-count>0</span></button>
           <div class="user" aria-label="Signed in user">
             <div class="avatar">T</div>
             <div><strong>tuamah</strong><span>Council Member</span></div>
@@ -934,6 +1009,11 @@
             <div class="summary-stat">Decisions (30d)<strong data-summary="decisions_30d">23</strong></div>
             <div class="date-filter">May 17 - Jun 16, 2025 <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M3 10h18"></path><rect x="3" y="4" width="18" height="18" rx="2"></rect></svg></div>
           </div>
+        </div>
+        <div class="control-strip">
+          <button class="action-button primary" data-validate-runtime><svg viewBox="0 0 24 24" width="16" height="16"><path d="m8 12 3 3 5-6"></path></svg>Validate Runtime</button>
+          <button class="action-button" data-refresh-dashboard><svg viewBox="0 0 24 24" width="16" height="16"><path d="M21 12a9 9 0 1 1-2.6-6.4"></path><path d="M21 3v7h-7"></path></svg>Refresh</button>
+          <span class="toast" data-toast>Ready</span>
         </div>
 
         <div class="metrics">
@@ -957,7 +1037,7 @@
 
         <div class="dashboard-grid">
           <section class="wide-card">
-            <header class="card-header"><h3>Gate Status</h3><button class="view-link">View all gates →</button></header>
+            <header class="card-header"><h3>Gate Status</h3><button class="view-link" data-record="gates">View all gates</button></header>
             <div class="gate-head"><span></span><span></span><span>Passed</span><span>Failed</span></div>
             <div class="gate-row"><div class="gate-name tone-green"><span class="gate-bar"></span><div><div class="gate-title">Format &amp; Style Gate</div><div class="gate-sub">Code style, formatting, linting</div></div></div><span class="pill pass">PASSED</span><span class="count">18</span><span class="count">2</span></div>
             <div class="gate-row"><div class="gate-name tone-green"><span class="gate-bar"></span><div><div class="gate-title">Unit Tests Gate</div><div class="gate-sub">All unit tests must pass</div></div></div><span class="pill pass">PASSED</span><span class="count">17</span><span class="count">3</span></div>
@@ -968,7 +1048,7 @@
           </section>
 
           <section class="wide-card">
-            <header class="card-header"><h3>Recent Decisions</h3><button class="view-link">View all →</button></header>
+            <header class="card-header"><h3>Recent Decisions</h3><button class="view-link" data-record="decisions">View all</button></header>
             <div class="decision-list">
               <div class="decision-row"><span class="decision-icon green"><svg viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"></path></svg></span><div class="decision-main"><strong>Add user authentication module</strong><span>Project: Auth Service</span><span>by Verifier: council-2</span></div><div class="decision-status"><span class="pill pass">ACCEPTED</span><span>2h ago</span></div></div>
               <div class="decision-row"><span class="decision-icon green"><svg viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"></path></svg></span><div class="decision-main"><strong>Refactor payment processing</strong><span>Project: Payment Service</span><span>by Verifier: council-1</span></div><div class="decision-status"><span class="pill pass">ACCEPTED</span><span>5h ago</span></div></div>
@@ -976,11 +1056,11 @@
               <div class="decision-row"><span class="decision-icon amber"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg></span><div class="decision-main"><strong>Optimize database queries</strong><span>Project: Analytics Service</span><span>by Verifier: council-2</span></div><div class="decision-status"><span class="pill pending">PENDING</span><span>1d ago</span></div></div>
               <div class="decision-row"><span class="decision-icon green"><svg viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"></path></svg></span><div class="decision-main"><strong>Fix memory leak in worker</strong><span>Project: Worker Service</span><span>by Verifier: council-1</span></div><div class="decision-status"><span class="pill pass">ACCEPTED</span><span>2d ago</span></div></div>
             </div>
-            <footer class="card-footer"><button class="view-link">View all decisions →</button></footer>
+            <footer class="card-footer"><button class="view-link" data-record="decisions">View all decisions</button></footer>
           </section>
 
           <section class="wide-card">
-            <header class="card-header"><h3>Recent Activity</h3><button class="view-link">View all →</button></header>
+            <header class="card-header"><h3>Recent Activity</h3><button class="view-link" data-record="activity">View all</button></header>
             <div class="activity-list">
               <div class="activity-row"><span class="activity-icon blue"><svg viewBox="0 0 24 24"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg></span><div class="activity-main"><strong>Execution started</strong><span>Implement user login endpoint</span><span>by executor-1</span></div><span class="time">10m ago</span></div>
               <div class="activity-row"><span class="activity-icon green"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg></span><div class="activity-main"><strong>Verification completed</strong><span>Unit Tests Gate</span><span>by verifier-2</span></div><span class="time">25m ago</span></div>
@@ -988,7 +1068,7 @@
               <div class="activity-row"><span class="activity-icon amber"><svg viewBox="0 0 24 24"><path class="book-fill" d="M5 4c3.3 0 5 .8 7 2v14c-2-1.2-3.7-2-7-2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm14 0a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2c-3.3 0-5 .8-7 2V6c2-1.2 3.7-2 7-2Z"></path></svg></span><div class="activity-main"><strong>New knowledge added</strong><span>Rate limiting best practices</span><span>by autolearn</span></div><span class="time">2h ago</span></div>
               <div class="activity-row"><span class="activity-icon blue"><svg viewBox="0 0 24 24"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg></span><div class="activity-main"><strong>Execution completed</strong><span>Fix validation logic</span><span>by executor-2</span></div><span class="time">3h ago</span></div>
             </div>
-            <footer class="card-footer"><button class="view-link">View all activity →</button></footer>
+            <footer class="card-footer"><button class="view-link" data-record="activity">View all activity</button></footer>
           </section>
         </div>
 
@@ -1001,6 +1081,22 @@
           <div class="status-item"><strong>Evidence Store</strong><span><i class="status-dot"></i>Operational</span></div>
           <div class="trust"><svg viewBox="0 0 24 24" width="32" height="32" class="green"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg><div><small>Sol judges</small><br><strong>92</strong><span> / 100</span></div></div>
         </footer>
+      </section>
+
+      <section class="content view-panel" data-panel="records" hidden>
+        <div class="overview">
+          <div>
+            <h2 data-record-title>Records</h2>
+            <p data-record-subtitle>Runtime-backed records from the selected project.</p>
+          </div>
+          <div class="control-strip">
+            <button class="action-button" data-refresh-dashboard><svg viewBox="0 0 24 24" width="16" height="16"><path d="M21 12a9 9 0 1 1-2.6-6.4"></path><path d="M21 3v7h-7"></path></svg>Refresh</button>
+          </div>
+        </div>
+        <section class="wide-card records-card">
+          <header class="card-header"><h3 data-record-heading>Runtime Records</h3><button class="view-link" data-view="overview">Back to overview</button></header>
+          <div class="records-list" data-records-list></div>
+        </section>
       </section>
 
       <section class="content view-panel" data-panel="connections" hidden>
@@ -1091,6 +1187,7 @@
 
     const checkIcon = '<svg viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"></path></svg>';
     const codeIcon = '<svg viewBox="0 0 24 24"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg>';
+    let dashboardData = null;
 
     function setText(selector, value) {
       const node = document.querySelector(selector);
@@ -1164,6 +1261,57 @@
           <span class="time">${escapeHtml(String(item.created_at || "").slice(0, 16) || "now")}</span>
         </div>
       `).join("");
+    }
+
+    const recordLabels = {
+      work_items: ["Work Items", "Runtime run objective and open claims."],
+      executions: ["Executions", "Execution events recorded by the selected runtime."],
+      evidence: ["Evidence", "Evidence files recorded under the selected runtime."],
+      verifications: ["Verifications", "Verification evidence from independent authorities."],
+      gates: ["Gates", "Frozen and draft gate records."],
+      decisions: ["Decisions", "Decision records issued by the runtime."],
+      appeals: ["Appeals", "Appeals are not implemented in this runtime milestone."],
+      activity: ["Activity", "Runtime events, evidence, and decisions."],
+      literature: ["Literature", "External literature claims tracked by the runtime."],
+      knowledge: ["Knowledge Base", "Accepted lessons available for recall."],
+      hypotheses: ["Hypotheses", "Hypothesis tracking is not implemented in this runtime milestone."],
+      agents: ["Agents", "Connected AgentRuntime providers."],
+      tools: ["Tools", "Tool provider inventory is not implemented in this runtime milestone."]
+    };
+
+    function normalizeRecords(name) {
+      if (!dashboardData) return [];
+      if (name === "gates") return (dashboardData.gates || []).map((item) => ({ title: item.name, detail: item.detail, status: item.status }));
+      if (name === "decisions") return dashboardData.decisions || [];
+      if (name === "activity" || name === "executions") return dashboardData.activity || [];
+      if (name === "work_items") return [{ title: dashboardData.project?.objective || "No active objective", detail: dashboardData.project?.path || "", status: dashboardData.project?.runtime_exists ? "ACTIVE" : "NO_RUNTIME" }];
+      if (name === "evidence" || name === "verifications") return dashboardData.records?.evidence || [];
+      if (name === "literature") return dashboardData.records?.literature || [];
+      if (name === "knowledge") return dashboardData.records?.lessons || [];
+      if (name === "agents") return Array.from(document.querySelectorAll("[data-provider-card]")).map((card) => ({ title: card.querySelector("strong")?.textContent || "Provider", detail: card.querySelector("[data-field='meta']")?.textContent || "", status: card.querySelector("[data-field='status']")?.textContent || "UNKNOWN" }));
+      return [];
+    }
+
+    function showRecords(name) {
+      const [title, subtitle] = recordLabels[name] || ["Records", "Runtime-backed records from the selected project."];
+      setText("[data-record-title]", title);
+      setText("[data-record-subtitle]", subtitle);
+      setText("[data-record-heading]", title);
+      const list = document.querySelector("[data-records-list]");
+      const records = normalizeRecords(name);
+      if (!list) return;
+      list.innerHTML = records.length ? records.map((item) => `
+        <div class="record-row">
+          <div><strong>${escapeHtml(item.title || item.type || "Record")}</strong><span>${escapeHtml(item.detail || item.project || item.actor || "")}</span></div>
+          <span class="pill ${statusClass(item.status || item.type)}">${escapeHtml(String(item.status || item.type || "RECORD").toUpperCase())}</span>
+        </div>
+      `).join("") : `
+        <div class="record-row">
+          <div><strong>No backend records yet</strong><span>${escapeHtml(subtitle)}</span></div>
+          <span class="pill pending">EMPTY</span>
+        </div>
+      `;
+      setView("records");
     }
 
     function setView(name) {
@@ -1251,9 +1399,72 @@
       return data;
     }
 
+    function toast(message) {
+      setText("[data-toast]", message);
+    }
+
+    async function loadProjects() {
+      const response = await fetch("/api/projects", { cache: "no-store" });
+      if (!response.ok) throw new Error(`Projects API returned ${response.status}`);
+      const data = await response.json();
+      const select = document.querySelector(".project-select");
+      if (!select) return;
+      select.innerHTML = (data.projects || []).map((project) => `
+        <option value="${escapeHtml(project.id)}"${project.id === data.selected_id ? " selected" : ""}>${escapeHtml(project.name)}</option>
+      `).join("");
+    }
+
+    async function addProject() {
+      const path = window.prompt("Project folder path");
+      if (!path) return;
+      await postConnection("/api/projects", { path });
+      await loadProjects();
+      await loadDashboard();
+      toast("Project added and selected");
+    }
+
+    async function selectProject(id) {
+      if (!id) return;
+      await postConnection("/api/projects/select", { id });
+      await loadDashboard();
+      toast("Project selected");
+    }
+
+    async function openProject() {
+      const result = await postConnection("/api/projects/open");
+      toast(result.status === "opened" ? "Project folder opened" : "Opening project folder is unsupported here");
+    }
+
+    async function validateRuntime() {
+      toast("Validating runtime...");
+      const result = await postConnection("/api/runtime/validate");
+      toast(`${String(result.status || "unknown").toUpperCase()}: ${result.detail || result.command}`);
+    }
+
     function setupConnectionActions() {
       document.querySelectorAll("[data-view]").forEach((button) => {
         button.addEventListener("click", () => setView(button.dataset.view));
+      });
+      document.querySelectorAll("[data-record]").forEach((button) => {
+        button.addEventListener("click", () => showRecords(button.dataset.record));
+      });
+      document.querySelector("[data-toggle-sidebar]")?.addEventListener("click", () => {
+        document.body.classList.toggle("sidebar-collapsed");
+      });
+      document.querySelector("[data-add-project]")?.addEventListener("click", () => {
+        addProject().catch((error) => toast(error.message));
+      });
+      document.querySelector(".project-select")?.addEventListener("change", (event) => {
+        selectProject(event.target.value).catch((error) => toast(error.message));
+      });
+      document.querySelector("[data-open-project]")?.addEventListener("click", () => {
+        openProject().catch((error) => toast(error.message));
+      });
+      document.querySelectorAll("[data-refresh-dashboard]").forEach((button) => {
+        button.addEventListener("click", () => loadDashboard().then(() => toast("Dashboard refreshed")).catch((error) => toast(error.message)));
+      });
+      document.querySelector("[data-validate-runtime]")?.addEventListener("click", () => {
+        validateRuntime().catch((error) => toast(error.message));
       });
       document.querySelectorAll("[data-connect]").forEach((button) => {
         button.addEventListener("click", async () => {
@@ -1307,6 +1518,7 @@
         const response = await fetch("/api/dashboard", { cache: "no-store" });
         if (!response.ok) throw new Error(`Dashboard API returned ${response.status}`);
         const data = await response.json();
+        dashboardData = data;
         document.querySelector(".runtime-pill").textContent = data.project.runtime_exists ? "Runtime Online" : "No Runtime";
         document.querySelector(".runtime-pill").style.color = data.project.runtime_exists ? "var(--green)" : "var(--amber)";
         setText("[data-summary='projects']", data.summary.projects);
@@ -1318,6 +1530,7 @@
         renderGates(data.gates || []);
         renderDecisions(data.decisions || []);
         renderActivity(data.activity || []);
+        setText("[data-activity-count]", (data.activity || []).length);
         setStatus(".status-item:nth-child(2) span", data.system.model_router);
         setStatus(".status-item:nth-child(3) span", data.system.agent_runtime);
         setText(".trust small", data.system.arbiter);
@@ -1330,6 +1543,7 @@
     }
 
     setupConnectionActions();
+    loadProjects().catch((error) => toast(error.message));
     loadDashboard();
     loadConnections();
     setView(new URLSearchParams(window.location.search).get("view") === "connections" ? "connections" : "overview");

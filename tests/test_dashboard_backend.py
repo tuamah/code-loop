@@ -166,6 +166,50 @@ class DashboardBackendTests(unittest.TestCase):
         finally:
             nogap_connections.configured_executable = original
 
+    def test_project_registry_add_and_select_uses_existing_directories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "projects.json"
+            project_a = Path(tmp) / "a"
+            project_b = Path(tmp) / "b"
+            project_a.mkdir()
+            project_b.mkdir()
+            original_registry = nogap_dashboard.REGISTRY_PATH
+            original_project = nogap_dashboard.DashboardHandler.project
+            nogap_dashboard.REGISTRY_PATH = registry
+            nogap_dashboard.DashboardHandler.project = project_a
+            try:
+                added = nogap_dashboard.add_project(str(project_b), project_a, "Project B")
+                self.assertEqual(added["selected_id"], nogap_dashboard.project_id(project_b))
+                selected = nogap_dashboard.select_project(nogap_dashboard.project_id(project_a), project_b)
+                self.assertEqual(selected["selected_id"], nogap_dashboard.project_id(project_a))
+            finally:
+                nogap_dashboard.REGISTRY_PATH = original_registry
+                nogap_dashboard.DashboardHandler.project = original_project
+
+    def test_project_registry_rejects_missing_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "projects.json"
+            original_registry = nogap_dashboard.REGISTRY_PATH
+            nogap_dashboard.REGISTRY_PATH = registry
+            try:
+                with self.assertRaises(ValueError):
+                    nogap_dashboard.add_project(str(Path(tmp) / "missing"), Path(tmp))
+            finally:
+                nogap_dashboard.REGISTRY_PATH = original_registry
+
+    def test_validate_runtime_returns_sanitized_command(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result = nogap_dashboard.validate_runtime(Path(tmp))
+            self.assertEqual(result["command"], "python scripts/nogap.py validate <project>")
+            self.assertIn(result["status"], {"passed", "failed"})
+
+    def test_dashboard_payload_exposes_record_groups(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            payload = nogap_dashboard.build_payload(Path(tmp))
+            self.assertIn("records", payload)
+            for name in ("claims", "evidence", "lessons", "literature", "events"):
+                self.assertIn(name, payload["records"])
+
 
 if __name__ == "__main__":
     unittest.main()
