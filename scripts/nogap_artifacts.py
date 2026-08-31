@@ -159,16 +159,58 @@ ARTIFACT_TYPES: dict[str, dict[str, Any]] = {
         "profile_required_fields": {},
         "reference_fields": {},
     },
+    # M7-G: VERIFY phases. task_id/verification_plan_id are scalar references (not lists),
+    # so - like P14_SELF_CHECK's task_id - they get a dedicated validate_record special
+    # case instead of living in reference_fields (which always expects a list).
+    "P15_VERIFICATION_PLAN": {
+        # requirement_refs and required_commands are deliberately NOT required, mirroring
+        # P12_TASK_CONTRACT's "where applicable" precedent: a task with zero requirement
+        # refs or a gate with zero required_commands must still be verifiable, but any
+        # requirement_refs given must resolve.
+        "phase_id": "P15",
+        "required_fields": [
+            "verification_plan_id", "task_id", "profile", "risk", "claim_strength",
+            "required_levels", "required_validation_levels", "required_evidence_kinds",
+            "independent_review_required", "reproducibility_required", "external_validation_required",
+        ],
+        "profile_required_fields": {},
+        "reference_fields": {"requirement_refs": "P6_REQUIREMENT_ID"},
+    },
+    "P18_VERIFICATION_RESULT": {
+        # `status` (VERIFICATION_PENDING/IN_PROGRESS/FAILED/INCONCLUSIVE/COMPLETE_AWAITING_
+        # DECISION) lives on the common envelope's `status` field, not in `fields` - the same
+        # convention P6_REQUIREMENT uses for its own lifecycle status.
+        # levels_passed is deliberately NOT required-non-empty: a failed deterministic
+        # layer legitimately passes zero levels, and that must be representable, not
+        # rejected as "missing".
+        "phase_id": "P18",
+        "required_fields": [
+            "verification_run_id", "verification_plan_id", "task_id", "candidate_hash", "patch_hash",
+            "gate_hash", "methodology_version_at_verification", "profile_at_verification", "task_snapshot_hash",
+            "executor_actor_id", "levels_attempted",
+            "deterministic_result", "reproducibility_result", "independent_review_result",
+        ],
+        "profile_required_fields": {},
+        "reference_fields": {"requirement_refs": "P6_REQUIREMENT_ID"},
+    },
 }
 
 PHASE_TO_ARTIFACT_TYPE = {info["phase_id"]: name for name, info in ARTIFACT_TYPES.items()}
 PREBUILD_PHASES = [f"P{n}" for n in range(12)]  # P0..P11
 
+VERIFICATION_RESULT_STATUSES = {
+    "VERIFICATION_PENDING", "VERIFICATION_IN_PROGRESS", "VERIFICATION_FAILED",
+    "VERIFICATION_INCONCLUSIVE", "VERIFICATION_COMPLETE_AWAITING_DECISION",
+}
+
 # Stable, monotonically-increasing ID namespaces distinct from the generic artifact_id -
 # never reused, checked for uniqueness whether auto-generated or explicitly supplied.
-_STABLE_ID_FIELDS = {
-    "P6_REQUIREMENT": "requirement_id",
-    "P12_TASK_CONTRACT": "task_id",
+# Maps artifact_type -> (field_name, id_prefix).
+_STABLE_ID_FIELDS: dict[str, tuple[str, str]] = {
+    "P6_REQUIREMENT": ("requirement_id", "REQ"),
+    "P12_TASK_CONTRACT": ("task_id", "TASK"),
+    "P15_VERIFICATION_PLAN": ("verification_plan_id", "VPLAN"),
+    "P18_VERIFICATION_RESULT": ("verification_run_id", "VRUN"),
 }
 
 
@@ -243,11 +285,19 @@ def _next_stable_id(project: Path, artifact_type: str, id_field: str, prefix: st
 
 
 def next_requirement_id(project: Path) -> str:
-    return _next_stable_id(project, "P6_REQUIREMENT", "requirement_id", "REQ")
+    return _next_stable_id(project, "P6_REQUIREMENT", *_STABLE_ID_FIELDS["P6_REQUIREMENT"])
 
 
 def next_task_id(project: Path) -> str:
-    return _next_stable_id(project, "P12_TASK_CONTRACT", "task_id", "TASK")
+    return _next_stable_id(project, "P12_TASK_CONTRACT", *_STABLE_ID_FIELDS["P12_TASK_CONTRACT"])
+
+
+def next_verification_plan_id(project: Path) -> str:
+    return _next_stable_id(project, "P15_VERIFICATION_PLAN", *_STABLE_ID_FIELDS["P15_VERIFICATION_PLAN"])
+
+
+def next_verification_run_id(project: Path) -> str:
+    return _next_stable_id(project, "P18_VERIFICATION_RESULT", *_STABLE_ID_FIELDS["P18_VERIFICATION_RESULT"])
 
 
 def _resolve_reference(project: Path, ref: str, target: str) -> bool:
@@ -344,7 +394,7 @@ def validate_record(project: Path, record: dict[str, Any]) -> list[str]:
                         f"set allow_non_active_requirement_refs=true to reference it explicitly"
                     )
 
-    if artifact_type == "P14_SELF_CHECK":
+    if artifact_type in {"P14_SELF_CHECK", "P15_VERIFICATION_PLAN", "P18_VERIFICATION_RESULT"}:
         task_id = fields.get("task_id")
         if task_id is not None:
             known = any(
@@ -353,6 +403,19 @@ def validate_record(project: Path, record: dict[str, Any]) -> list[str]:
             )
             if not known:
                 problems.append(f"task_id references unknown P12_TASK_CONTRACT: {task_id!r}")
+
+    if artifact_type == "P18_VERIFICATION_RESULT":
+        plan_id = fields.get("verification_plan_id")
+        if plan_id is not None:
+            known = any(
+                r.get("fields", {}).get("verification_plan_id") == plan_id
+                for r in list_artifacts(project, artifact_type="P15_VERIFICATION_PLAN")
+            )
+            if not known:
+                problems.append(f"verification_plan_id references unknown P15_VERIFICATION_PLAN: {plan_id!r}")
+        result_status = record.get("status")
+        if result_status is not None and result_status not in VERIFICATION_RESULT_STATUSES:
+            problems.append(f"status must be one of {sorted(VERIFICATION_RESULT_STATUSES)}, got {result_status!r}")
 
     return problems
 
@@ -381,9 +444,8 @@ def create_artifact(
         raise MethodologyValidationError(f"duplicate artifact_id: {artifact_id}")
 
     if artifact_type in _STABLE_ID_FIELDS:
-        id_field = _STABLE_ID_FIELDS[artifact_type]
-        id_generator = next_requirement_id if artifact_type == "P6_REQUIREMENT" else next_task_id
-        stable_id = fields.get(id_field) or id_generator(project)
+        id_field, id_prefix = _STABLE_ID_FIELDS[artifact_type]
+        stable_id = fields.get(id_field) or _next_stable_id(project, artifact_type, id_field, id_prefix)
         duplicate = any(
             r.get("fields", {}).get(id_field) == stable_id
             for r in list_artifacts(project, artifact_type=artifact_type)
@@ -446,6 +508,44 @@ def update_requirement_status(project: Path, requirement_id: str, new_status: st
     record["status"] = new_status
     record.setdefault("status_history", []).append({"status": new_status, "actor_id": actor.strip(), "reason": reason.strip(), "changed_at": _now()})
     record["updated_at"] = _now()
+    path = artifacts_dir(project) / f"{record['artifact_id']}.json"
+    path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return record
+
+
+def update_verification_result(
+    project: Path,
+    verification_run_id: str,
+    actor: str,
+    reason: str,
+    *,
+    status: str | None = None,
+    field_updates: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A P18_VERIFICATION_RESULT is one evolving record across P16/P17/P18, never a new
+    artifact per phase - updated in place with an append-only status_history, mirroring
+    update_requirement_status. Re-validates after the update so a caller cannot silently
+    write the record into an invalid state (e.g. an unknown status)."""
+    _require(bool(actor and actor.strip()), "verification result update requires a non-empty actor_id")
+    _require(bool(reason and reason.strip()), "verification result update requires a non-empty reason")
+    matches = [
+        r for r in list_artifacts(project, artifact_type="P18_VERIFICATION_RESULT")
+        if r.get("fields", {}).get("verification_run_id") == verification_run_id
+    ]
+    _require(bool(matches), f"unknown verification_run_id: {verification_run_id}")
+    record = matches[0]
+    if status is not None:
+        _require(status in VERIFICATION_RESULT_STATUSES, f"unknown verification status: {status!r}")
+        record["status"] = status
+    if field_updates:
+        record["fields"] = {**record["fields"], **field_updates}
+    record.setdefault("status_history", []).append({
+        "status": record["status"], "actor_id": actor.strip(), "reason": reason.strip(), "changed_at": _now(),
+    })
+    record["updated_at"] = _now()
+    problems = validate_record(project, record)
+    if problems:
+        raise MethodologyValidationError(f"verification result update rejected: " + "; ".join(problems))
     path = artifacts_dir(project) / f"{record['artifact_id']}.json"
     path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return record
