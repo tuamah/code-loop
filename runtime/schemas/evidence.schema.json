@@ -8,7 +8,7 @@
     "id": { "type": "string", "minLength": 1 },
     "run_id": { "type": "string", "minLength": 1 },
     "kind": {
-      "enum": ["test", "lint", "typecheck", "build", "trace", "benchmark", "screenshot", "review", "source-reference"]
+      "enum": ["test", "lint", "typecheck", "build", "trace", "benchmark", "screenshot", "review", "source-reference", "execution"]
     },
     "status": { "enum": ["passed", "failed", "blocked", "inconclusive"] },
     "claim_ids": {
