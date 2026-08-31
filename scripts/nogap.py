@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
+ROUTER_POLICY_PATH = Path(__file__).resolve().parents[1] / "runtime" / "config" / "model-router.policy.json"
 RUNTIME_DIRS = [
     "gates", "claims", "evidence", "events", "decisions", "lessons", "artifacts", "literature",
     "plans", "routes", "dispatches",
@@ -79,6 +80,14 @@ def gate_hash(gate: dict[str, Any]) -> str:
 def append_event(root: Path, event: dict[str, Any]) -> None:
     with (root / "events" / f"{event['run_id']}.jsonl").open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(event, sort_keys=True) + "\n")
+
+
+def load_router_policy() -> dict[str, Any]:
+    try:
+        data = json.loads(ROUTER_POLICY_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def ensure_runtime(root: Path) -> None:
@@ -620,6 +629,130 @@ def cmd_status(args: argparse.Namespace) -> None:
         print("  last_decision: none")
 
 
+def route_implementer() -> tuple[dict[str, str] | None, list[dict[str, Any]]]:
+    """Pick a ready AgentRuntime for `role` from real adapter health, not policy config alone.
+
+    The router policy file states an intended preference, but selection must reflect what is
+    actually connected right now. An adapter that is not truly ready is never selected, even if
+    the policy prefers it: this orchestrator never fabricates a working route.
+    """
+    from nogap_adapters import ADAPTERS
+
+    considered: list[dict[str, Any]] = []
+    selected: dict[str, str] | None = None
+    for adapter in ADAPTERS.values():
+        if adapter.kind != "AgentRuntime":
+            continue
+        health = adapter.health()
+        ready = health.get("status") == "connected"
+        considered.append({
+            "provider": adapter.id,
+            "runtime": adapter.id,
+            "available": ready,
+            "reason": str(health.get("trust_status", "NOT_READY")),
+        })
+        if ready and selected is None:
+            selected = {"provider": adapter.id, "runtime": adapter.id}
+    return selected, considered
+
+
+def cmd_run(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    status = compute_status(root)
+    if not status["runtime_exists"]:
+        raise SystemExit(f"FAIL: no runtime at {root}; run 'nogap init' first")
+
+    run = read_json(root / "run.json")
+    run_id = require_string(run, "id", root / "run.json")
+    objective = run.get("objective", "")
+    actor = args.actor
+    policy = load_router_policy()
+
+    plan_id = f"plan-{stable_hash({'run_id': run_id, 'objective': objective, 'created_at': now()})[:12]}"
+    plan = {
+        "id": plan_id,
+        "run_id": run_id,
+        "created_at": now(),
+        "actor_id": actor,
+        "role": "planner",
+        "status": "proposed",
+        "objective": objective,
+        "steps": [{"summary": objective, "role": "implementer"}],
+        "reason": "orchestrator forwarded the run objective as a single implementer step",
+    }
+    write_json(root / "plans" / f"{plan_id}.json", plan)
+    append_event(root, {
+        "id": f"event-{plan_id}",
+        "run_id": run_id,
+        "type": "PLAN_PROPOSED",
+        "created_at": plan["created_at"],
+        "actor": actor,
+        "payload": {"plan_id": plan_id},
+    })
+
+    selected, considered = route_implementer()
+    if selected is None:
+        append_event(root, {
+            "id": f"event-route-unavailable-{plan_id}",
+            "run_id": run_id,
+            "type": "ROUTE_UNAVAILABLE",
+            "created_at": now(),
+            "actor": actor,
+            "payload": {"plan_id": plan_id, "considered": considered},
+        })
+        names = ", ".join(item["provider"] for item in considered) or "none configured"
+        print(f"plan {plan_id} proposed; no ready implementer AgentRuntime (checked: {names})")
+        print("dispatch not created: connect Codex or Claude Code in the dashboard, then re-run.")
+        return
+
+    route_id = f"route-{stable_hash({'run_id': run_id, 'plan_id': plan_id, 'selected': selected})[:12]}"
+    route = {
+        "id": route_id,
+        "run_id": run_id,
+        "role": "implementer",
+        "selected": selected,
+        "considered": considered,
+        "reason": f"{selected['provider']} reported a connected AgentRuntime health probe",
+        "policy_version": str(policy.get("policy_version", "unversioned")),
+        "created_at": now(),
+    }
+    write_json(root / "routes" / f"{route_id}.json", route)
+    append_event(root, {
+        "id": f"event-{route_id}",
+        "run_id": run_id,
+        "type": "ROUTE_SELECTED",
+        "created_at": route["created_at"],
+        "actor": actor,
+        "payload": {"route_id": route_id, "selected": selected},
+    })
+
+    dispatch_id = f"dispatch-{stable_hash({'run_id': run_id, 'route_id': route_id})[:12]}"
+    dispatch = {
+        "id": dispatch_id,
+        "run_id": run_id,
+        "created_at": now(),
+        "actor_id": actor,
+        "role": "implementer",
+        "provider": selected["provider"],
+        "runtime": selected["runtime"],
+        "plan_id": plan_id,
+        "route_id": route_id,
+        "status": "intended",
+        "reason": "orchestration-only milestone: execution dispatch is not implemented yet",
+    }
+    write_json(root / "dispatches" / f"{dispatch_id}.json", dispatch)
+    append_event(root, {
+        "id": f"event-{dispatch_id}",
+        "run_id": run_id,
+        "type": "DISPATCH_INTENDED",
+        "created_at": dispatch["created_at"],
+        "actor": actor,
+        "payload": {"dispatch_id": dispatch_id, "provider": selected["provider"]},
+    })
+    print(f"plan {plan_id} -> route {route_id} ({selected['provider']}) -> dispatch {dispatch_id} [intended]")
+    print("execution dispatch is not implemented in this runtime milestone; the AgentRuntime was not invoked.")
+
+
 def cmd_decide(args: argparse.Namespace) -> None:
     root = runtime_root(Path(args.path))
     run_id = read_json(root / "run.json")["id"]
@@ -973,6 +1106,11 @@ def main() -> None:
     status.add_argument("path", nargs="?", default=".")
     status.add_argument("--json", action="store_true")
     status.set_defaults(func=cmd_status)
+
+    run_cmd = sub.add_parser("run")
+    run_cmd.add_argument("path", nargs="?", default=".")
+    run_cmd.add_argument("--actor", default="nogap orchestrator")
+    run_cmd.set_defaults(func=cmd_run)
 
     decide = sub.add_parser("decide")
     decide.add_argument("path", nargs="?", default=".")

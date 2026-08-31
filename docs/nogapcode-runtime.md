@@ -255,6 +255,19 @@ Goal-directed autolearning is a bounded loop over available literature claims, n
 belief engine. It should run locally or in GitHub Actions, learn only claims that match the active
 goal and pass the existing gates, and submit repository changes through a pull request.
 
+## Orchestrator (`nogap run`)
+
+`nogap run <project>` is orchestration-only in this milestone. It proposes a plan record
+(`plans/`), selects a route for the implementer role from real, live adapter health in
+`scripts/nogap_adapters.py` (never from static policy config alone), and records a dispatch
+*intent* (`dispatches/`, `status: intended`). If no `AgentRuntime` adapter reports a connected
+health probe, no route or dispatch is written — the run stops after the plan with a clear
+message, rather than fabricating a route to something that is not actually ready.
+
+`nogap run` does not invoke Codex, Claude Code, or any AgentRuntime to make changes. Execution
+dispatch, patch collection, independent verification, and the bounded repair loop remain
+NOT_IMPLEMENTED until the runtime carries those stages end to end.
+
 ## Failure-First Research Loop
 
 When a nontrivial attempt fails, repair should first inspect prior local evidence, previous lessons,
