@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from nogap import compute_status
 from nogap_connections import (
     build_connections_payload,
     complete_openrouter_login,
@@ -28,7 +29,10 @@ from nogap_connections import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD_DIR = ROOT / "dashboard"
-RUNTIME_DIRS = ("gates", "claims", "evidence", "events", "decisions", "lessons", "literature")
+RUNTIME_DIRS = (
+    "gates", "claims", "evidence", "events", "decisions", "lessons", "literature",
+    "plans", "routes", "dispatches",
+)
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 REGISTRY_PATH = ROOT / ".nogap" / "projects.json"
 
@@ -215,7 +219,12 @@ def recent_decisions(decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     } for item in ordered[:5]]
 
 
-def recent_activity(events: list[dict[str, Any]], evidence: list[dict[str, Any]], decisions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def recent_activity(
+    events: list[dict[str, Any]],
+    evidence: list[dict[str, Any]],
+    decisions: list[dict[str, Any]],
+    limit: int = 5,
+) -> list[dict[str, Any]]:
     activity: list[dict[str, Any]] = []
     for event in events:
         activity.append({
@@ -243,7 +252,7 @@ def recent_activity(events: list[dict[str, Any]], evidence: list[dict[str, Any]]
             "created_at": str(item.get("created_at", "")),
         })
     activity.sort(key=lambda item: item.get("created_at", ""), reverse=True)
-    return activity[:5]
+    return activity[:limit]
 
 
 def record_items(items: list[dict[str, Any]], title_key: str, status_key: str = "status") -> list[dict[str, str]]:
@@ -316,6 +325,7 @@ def build_payload(project: Path) -> dict[str, Any]:
                 "status": "EVENT",
                 "actor": str(item.get("actor", "")),
             } for item in events],
+            "activity": recent_activity(events, evidence, decisions, limit=200),
         },
         "system": {
             "runtime": "online" if runtime_exists else "no-runtime",
@@ -418,6 +428,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/api/projects":
             self.send_json(HTTPStatus.OK, projects_payload(self.project))
+            return
+        if parsed.path == "/api/runtime/status":
+            self.send_json(HTTPStatus.OK, compute_status(runtime_root(self.project)))
             return
         if parsed.path == "/api/connections/openrouter/callback":
             params = parse_qs(parsed.query)

@@ -13,10 +13,15 @@ from pathlib import Path
 from typing import Any
 
 
-RUNTIME_DIRS = ["gates", "claims", "evidence", "events", "decisions", "lessons", "artifacts", "literature"]
+RUNTIME_DIRS = [
+    "gates", "claims", "evidence", "events", "decisions", "lessons", "artifacts", "literature",
+    "plans", "routes", "dispatches",
+]
 EVIDENCE_STATUS = {"passed", "failed", "blocked", "inconclusive"}
 CLAIM_STATUS = {"unverified", "supported", "contradicted", "superseded"}
 DECISIONS = {"accept", "repair", "rerun", "ask-human", "reject", "abstain"}
+PLAN_STATUS = {"draft", "proposed", "superseded"}
+DISPATCH_STATUS = {"intended", "cancelled", "superseded"}
 AUTHORITY_CLASSES = {"execution", "verification", "acceptance", "human", "tool"}
 AUTHORITATIVE_EVIDENCE_AUTHORITIES = {"verification", "human"}
 ACCEPTANCE_AUTHORITIES = {"acceptance", "human"}
@@ -394,6 +399,9 @@ def cmd_validate(args: argparse.Namespace) -> None:
     decisions = load_objects(root / "decisions")
     lessons = load_objects(root / "lessons")
     literature = load_objects(root / "literature")
+    plans = load_objects(root / "plans")
+    routes = load_objects(root / "routes")
+    dispatches = load_objects(root / "dispatches")
 
     frozen_hashes: set[str] = set()
     for gate_id, gate in gates.items():
@@ -476,6 +484,34 @@ def cmd_validate(args: argparse.Namespace) -> None:
         if item.get("decision") == "learn" and not item.get("acceptance_evidence"):
             raise SystemExit(f"FAIL: literature claim {item_id} cannot be learned without acceptance_evidence")
 
+    for plan_id, plan in plans.items():
+        if plan.get("run_id") != run_id:
+            raise SystemExit(f"FAIL: plan {plan_id} references a different run_id")
+        require_string(plan, "actor_id", root / "plans" / f"{plan_id}.json")
+        if plan.get("status") not in PLAN_STATUS:
+            raise SystemExit(f"FAIL: plan {plan_id} has invalid status")
+
+    for route_id, route in routes.items():
+        if route.get("run_id") != run_id:
+            raise SystemExit(f"FAIL: route {route_id} references a different run_id")
+        selected = route.get("selected")
+        if not isinstance(selected, dict) or not selected.get("provider") or not selected.get("runtime"):
+            raise SystemExit(f"FAIL: route {route_id} missing selected.provider/runtime")
+        require_string(route, "reason", root / "routes" / f"{route_id}.json")
+
+    for dispatch_id, dispatch in dispatches.items():
+        if dispatch.get("run_id") != run_id:
+            raise SystemExit(f"FAIL: dispatch {dispatch_id} references a different run_id")
+        require_string(dispatch, "actor_id", root / "dispatches" / f"{dispatch_id}.json")
+        if dispatch.get("status") not in DISPATCH_STATUS:
+            raise SystemExit(f"FAIL: dispatch {dispatch_id} has invalid status")
+        plan_ref = dispatch.get("plan_id")
+        if plan_ref and plan_ref not in plans:
+            raise SystemExit(f"FAIL: dispatch {dispatch_id} references missing plan {plan_ref}")
+        route_ref = dispatch.get("route_id")
+        if route_ref and route_ref not in routes:
+            raise SystemExit(f"FAIL: dispatch {dispatch_id} references missing route {route_ref}")
+
     for path in sorted((root / "events").glob("*.jsonl")):
         for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
             if not line.strip():
@@ -491,6 +527,97 @@ def cmd_validate(args: argparse.Namespace) -> None:
             require_string(event, "created_at", path)
 
     print(f"OK: runtime workspace valid: {root}")
+
+
+def compute_status(root: Path) -> dict[str, Any]:
+    missing_dirs = [name for name in RUNTIME_DIRS if not (root / name).is_dir()]
+    runtime_exists = root.is_dir() and not missing_dirs
+    if not runtime_exists:
+        return {
+            "runtime_path": str(root),
+            "runtime_exists": False,
+            "missing_dirs": missing_dirs if root.is_dir() else list(RUNTIME_DIRS),
+            "run_id": None,
+            "objective": None,
+            "gate_count": 0,
+            "frozen_gate_count": 0,
+            "claim_count": 0,
+            "evidence_count": 0,
+            "authoritative_pass_count": 0,
+            "authoritative_fail_count": 0,
+            "decision_count": 0,
+            "last_decision": None,
+        }
+
+    run = read_json(root / "run.json")
+    gates = load_objects(root / "gates")
+    claims = load_objects(root / "claims")
+    evidence = load_objects(root / "evidence")
+    decisions = load_objects(root / "decisions")
+
+    frozen_hashes = {
+        gate_hash(gate)
+        for gate in gates.values()
+        if gate.get("status") == "frozen" and gate.get("hash") == gate_hash(gate)
+    }
+    authoritative_pass_count = sum(
+        1 for item in evidence.values() if is_authoritative_evidence(item, frozen_hashes)
+    )
+    authoritative_fail_count = sum(
+        1 for item in evidence.values()
+        if evidence_authority(item) in AUTHORITATIVE_EVIDENCE_AUTHORITIES
+        and item.get("status") in {"failed", "blocked", "inconclusive"}
+    )
+    ordered_decisions = sorted(decisions.values(), key=lambda item: str(item.get("created_at", "")))
+    last = ordered_decisions[-1] if ordered_decisions else None
+
+    return {
+        "runtime_path": str(root),
+        "runtime_exists": True,
+        "missing_dirs": [],
+        "run_id": run.get("id", ""),
+        "objective": run.get("objective", ""),
+        "gate_count": len(gates),
+        "frozen_gate_count": sum(1 for gate in gates.values() if gate.get("status") == "frozen"),
+        "claim_count": len(claims),
+        "evidence_count": len(evidence),
+        "authoritative_pass_count": authoritative_pass_count,
+        "authoritative_fail_count": authoritative_fail_count,
+        "decision_count": len(decisions),
+        "last_decision": {
+            "id": last.get("id", ""),
+            "decision": last.get("decision", ""),
+            "reason": last.get("reason", ""),
+            "created_at": last.get("created_at", ""),
+        } if last else None,
+    }
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    root = runtime_root(Path(args.path))
+    status = compute_status(root)
+    if args.json:
+        print(json.dumps(status, indent=2, sort_keys=True))
+        return
+    if not status["runtime_exists"]:
+        print(f"NO-RUNTIME: {status['runtime_path']}")
+        print(f"  missing: {', '.join(status['missing_dirs']) or 'unknown'}")
+        return
+    print(f"RUNTIME: {status['runtime_path']}")
+    print(f"  run_id: {status['run_id']}")
+    print(f"  objective: {status['objective']}")
+    print(f"  gates: {status['gate_count']} ({status['frozen_gate_count']} frozen)")
+    print(f"  claims: {status['claim_count']}")
+    print(
+        f"  evidence: {status['evidence_count']} "
+        f"(authoritative pass={status['authoritative_pass_count']} fail={status['authoritative_fail_count']})"
+    )
+    print(f"  decisions: {status['decision_count']}")
+    if status["last_decision"]:
+        last = status["last_decision"]
+        print(f"  last_decision: {last['decision']} ({last['id']}) - {last['reason']}")
+    else:
+        print("  last_decision: none")
 
 
 def cmd_decide(args: argparse.Namespace) -> None:
@@ -841,6 +968,11 @@ def main() -> None:
     validate = sub.add_parser("validate")
     validate.add_argument("path", nargs="?", default=".")
     validate.set_defaults(func=cmd_validate)
+
+    status = sub.add_parser("status")
+    status.add_argument("path", nargs="?", default=".")
+    status.add_argument("--json", action="store_true")
+    status.set_defaults(func=cmd_status)
 
     decide = sub.add_parser("decide")
     decide.add_argument("path", nargs="?", default=".")
