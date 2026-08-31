@@ -54,7 +54,8 @@ class ExecutionBackendUnitTests(unittest.TestCase):
             init_git_repo(project)
             backend = GitWorktreeExecutionBackend(project)
             result = backend.run([sys.executable, "-c", "open('new_file.txt','w').write('hi')"])
-            self.assertEqual(result.status, "passed")
+            self.assertEqual(result.process_outcome, "exited")
+            self.assertEqual(result.returncode, 0)
             self.assertIn("new_file.txt", result.patch)
             self.assertIn("+hi", result.patch)
 
@@ -83,21 +84,21 @@ class ExecutionBackendUnitTests(unittest.TestCase):
             init_git_repo(project)
             backend = GitWorktreeExecutionBackend(project)
             result = backend.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
-            self.assertEqual(result.status, "inconclusive")
+            self.assertEqual(result.process_outcome, "timed_out")
             self.assertTrue(result.timed_out)
             listing = git(["worktree", "list"], project).stdout
             self.assertEqual(listing.count("\n"), 1)
 
-    def test_failing_command_reports_failed_status(self) -> None:
+    def test_failing_command_exits_nonzero_without_backend_judging_it(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_git_repo(project)
             backend = GitWorktreeExecutionBackend(project)
             result = backend.run([sys.executable, "-c", "import sys; sys.exit(1)"])
-            self.assertEqual(result.status, "failed")
+            self.assertEqual(result.process_outcome, "exited")
             self.assertEqual(result.returncode, 1)
 
-    def test_cancel_from_another_thread_reports_blocked_status(self) -> None:
+    def test_cancel_from_another_thread_reports_cancelled_process_outcome(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_git_repo(project)
@@ -111,7 +112,7 @@ class ExecutionBackendUnitTests(unittest.TestCase):
 
             threading.Thread(target=cancel_soon, daemon=True).start()
             result = backend.run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=60, handle=handle)
-            self.assertEqual(result.status, "blocked")
+            self.assertEqual(result.process_outcome, "cancelled")
             self.assertTrue(result.cancelled)
             listing = git(["worktree", "list"], project).stdout
             self.assertEqual(listing.count("\n"), 1)

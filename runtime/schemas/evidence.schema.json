@@ -32,7 +32,9 @@
         "commit": { "type": "string" },
         "gate_hash": { "type": "string" },
         "command": { "type": "string" },
-        "artifact_path": { "type": "string" }
+        "artifact_path": { "type": "string" },
+        "log_path": { "type": "string" },
+        "dispatch_id": { "type": "string" }
       }
     },
     "summary": { "type": "string" }
