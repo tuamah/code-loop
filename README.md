@@ -221,6 +221,8 @@ The Dashboard also exposes a backend-backed `Settings / Connections` view:
 - `POST /api/connections/openrouter/test` performs a real authenticated model-discovery probe.
 - `POST /api/connections/codex/test` probes the official local Codex CLI login and doctor output.
 - `POST /api/connections/claude/test` reports the Claude Code CLI status without copying tokens.
+  If Claude Code is installed outside `PATH`, set `CLAUDE_CODE_PATH` to the local executable.
+  If Codex is installed outside `PATH`, set `CODEX_CLI_PATH`.
 
 Provider, model, and AgentRuntime are separate concepts. The current build routing is: Terra plans,
 5.4 executes, and Sol judges. That is a construction-time policy, not acceptance authority.

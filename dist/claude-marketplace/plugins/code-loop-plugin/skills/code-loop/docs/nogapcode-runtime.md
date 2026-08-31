@@ -204,6 +204,10 @@ entry remains a fallback. The API returns only `credential_present`, `credential
 hint. Codex and Claude Code use their official local CLI authentication flows; NoGapCode detects and
 probes them but does not ask for, copy, or persist their account tokens.
 
+If a local CLI is installed outside the server process `PATH`, set `CODEX_CLI_PATH` or
+`CLAUDE_CODE_PATH` to the executable path. A local profile without an executable is reported as
+detected but not ready.
+
 Connection status is capability based. For Codex, the current probe checks executable presence,
 version, login status, runtime health, provider reachability, and WebSocket streaming through
 redacted `codex doctor --json` output. For OpenRouter, the probe checks secure-store presence,

@@ -25,6 +25,7 @@ OPENROUTER_TARGET = "nogap/openrouter/default"
 OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 OPENROUTER_AUTH_URL = "https://openrouter.ai/auth"
 OPENROUTER_KEYS_URL = "https://openrouter.ai/api/v1/auth/keys"
+CLAUDE_CODE_URL = "https://claude.com/product/claude-code"
 PROBE_TIMEOUT_SECONDS = 12
 OPENROUTER_PENDING_AUTH: dict[str, str] = {}
 
@@ -206,10 +207,33 @@ def run_command(argv: list[str], timeout: int = PROBE_TIMEOUT_SECONDS) -> subpro
         return None
 
 
-def executable_probe(name: str, command: str) -> tuple[str | None, list[Probe]]:
+def configured_executable(command: str, env_var: str | None = None, candidates: list[str] | None = None) -> str | None:
+    if env_var:
+        configured = os.environ.get(env_var)
+        if configured and os.path.isfile(configured):
+            return configured
     path = shutil.which(command)
+    if path:
+        return path
+    for candidate in candidates or []:
+        expanded = os.path.expandvars(os.path.expanduser(candidate))
+        if os.path.isfile(expanded):
+            return expanded
+    return None
+
+
+def executable_probe(
+    name: str,
+    command: str,
+    env_var: str | None = None,
+    candidates: list[str] | None = None,
+) -> tuple[str | None, list[Probe]]:
+    path = configured_executable(command, env_var, candidates)
     if path is None:
-        return None, [Probe("runtime_executable", "FAIL", f"{command} not found on PATH")]
+        detail = f"{command} not found on PATH"
+        if env_var:
+            detail += f" or {env_var}"
+        return None, [Probe("runtime_executable", "FAIL", detail)]
     probes = [Probe("runtime_executable", "PASS", path)]
     result = run_command([path, "--version"])
     if result is None:
@@ -221,8 +245,21 @@ def executable_probe(name: str, command: str) -> tuple[str | None, list[Probe]]:
     return path, probes
 
 
+def launch_interactive(argv: list[str]) -> bool:
+    if not argv:
+        return False
+    try:
+        if sys.platform == "win32":
+            subprocess.Popen(argv, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        else:
+            subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except OSError:
+        return False
+
+
 def codex_connection() -> dict[str, Any]:
-    path, probes = executable_probe("OpenAI Codex", "codex")
+    path, probes = executable_probe("OpenAI Codex", "codex", "CODEX_CLI_PATH")
     if path is not None:
         login = run_command([path, "login", "status"])
         login_text = ((login.stdout if login else "") or (login.stderr if login else "")).strip()
@@ -291,6 +328,38 @@ def cli_connection(provider_id: str, label: str, command: str) -> dict[str, Any]
     }
 
 
+def claude_connection() -> dict[str, Any]:
+    home = os.path.expanduser("~")
+    candidates = [
+        r"%APPDATA%\npm\claude.cmd",
+        r"%APPDATA%\npm\claude.ps1",
+        r"%LOCALAPPDATA%\Programs\Claude\claude.exe",
+        r"%LOCALAPPDATA%\Programs\Claude Code\claude.exe",
+    ]
+    path, probes = executable_probe("Claude Code", "claude", "CLAUDE_CODE_PATH", candidates)
+    profile_paths = [
+        os.path.join(home, ".claude"),
+        os.path.join(home, ".claude.json"),
+    ]
+    profile_present = any(os.path.exists(item) for item in profile_paths)
+    probes.append(Probe("local_profile", "PASS" if profile_present else "WARN", "Claude local profile detected" if profile_present else "no Claude profile found"))
+    if path is not None:
+        probes.append(Probe("authentication", "WARN", "Claude Code auth is verified inside the official CLI session"))
+    status = "limited" if path and profile_present else provider_status(probes)
+    return {
+        "id": "claude",
+        "label": "Claude Code",
+        "kind": "AgentRuntime",
+        "status": status,
+        "credential_present": profile_present,
+        "auth_mode": "official-cli",
+        "executable": path or "",
+        "last_health_check": "",
+        "probes": [probe.as_dict() for probe in probes],
+        "trust_status": "READY" if status == "connected" else "NOT_READY",
+    }
+
+
 def openrouter_secret(store: SecretStore) -> str | None:
     return store.get(OPENROUTER_TARGET) or os.environ.get("OPENROUTER_API_KEY")
 
@@ -342,7 +411,7 @@ def build_connections_payload(store: SecretStore | None = None, test_provider: s
     active_store = store or default_secret_store()
     providers = [
         codex_connection(),
-        cli_connection("claude", "Claude Code", "claude"),
+        claude_connection(),
         openrouter_connection(active_store, test=test_provider == "openrouter"),
     ]
     return {
@@ -450,19 +519,30 @@ def delete_openrouter_key(store: SecretStore | None = None) -> dict[str, Any]:
 
 def connect_cli(provider: str) -> dict[str, Any]:
     if provider == "codex":
-        payload = cli_connection("codex", "OpenAI Codex", "codex")
-        path = shutil.which("codex")
+        payload = codex_connection()
+        path = configured_executable("codex", "CODEX_CLI_PATH")
         if path and not payload["credential_present"]:
-            subprocess.Popen([path, "login"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            payload["status"] = "auth_pending"
+            launched = launch_interactive([path, "login", "--device-auth"])
+            payload["status"] = "auth_pending" if launched else "disconnected"
+            payload["browser_opened"] = launched
         payload["action_required"] = "Use the official Codex CLI/app sign-in. NoGapCode will not request or copy session tokens."
         return payload
     if provider == "claude":
-        payload = cli_connection("claude", "Claude Code", "claude")
-        path = shutil.which("claude")
+        payload = claude_connection()
+        path = configured_executable("claude", "CLAUDE_CODE_PATH", [
+            r"%APPDATA%\npm\claude.cmd",
+            r"%APPDATA%\npm\claude.ps1",
+            r"%LOCALAPPDATA%\Programs\Claude\claude.exe",
+            r"%LOCALAPPDATA%\Programs\Claude Code\claude.exe",
+        ])
         if path:
-            subprocess.Popen([path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            payload["status"] = "auth_pending"
+            launched = launch_interactive([path])
+            payload["status"] = "auth_pending" if launched else payload["status"]
+            payload["browser_opened"] = launched
+        else:
+            opened = webbrowser.open(CLAUDE_CODE_URL, new=2)
+            payload["auth_url"] = CLAUDE_CODE_URL
+            payload["browser_opened"] = opened
         payload["action_required"] = "Use the official Claude Code login. NoGapCode will not request or copy session tokens."
         return payload
     raise ValueError(f"unknown CLI provider: {provider}")
