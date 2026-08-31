@@ -1,6 +1,7 @@
 # Code Loop Council
 
-Code Loop Council is the v5 coordination layer for multi-model software work.
+Code Loop Council is the v5 coordination layer for multi-model software work. It is above or beside
+the NoGapCode Trust Runtime; it is not the acceptance root of trust.
 
 It is vendor-neutral: Codex, Claude Code, Gemini, Cursor, local models, and humans can participate
 because the repository stores task state, reports, evidence, and decisions.
@@ -13,7 +14,8 @@ Project repo       -> shared source of truth
 .code-loop/        -> task state, handoffs, evidence, decisions
 MCP                -> tools and project context
 A2A                -> optional agent-to-agent transport
-Code Loop Council  -> roles, gates, and decision protocol
+NoGapCode runtime  -> immutable gates, evidence provenance, acceptance policy
+Code Loop Council  -> roles, routing, and coordination policy
 ```
 
 ## Levels
@@ -40,6 +42,9 @@ v5 is built for Level 1 now and keeps the file formats stable for Level 2 and Le
 
 Each role is detailed in `council/roles/`.
 
+Role names do not prove independence. Acceptance depends on recorded authority identity:
+`execution`, `verification`, `acceptance`, or `human`.
+
 ## Source of truth
 
 Copy `.code-loop-template/` into a project as `.code-loop/`.
@@ -55,11 +60,14 @@ elif scope was violated:
   repair
 elif high risk and rollback/human approval is missing:
   pause
-elif verifier passes and reviewer has no blocking finding:
-  accept
+elif independent authoritative verification passes and acceptor is not execution identity:
+  recommend accept
 else:
   ask Arbiter to choose repair, rerun, or human decision
 ```
+
+The runtime rejects ACCEPT when the same authority identity implemented and accepted the work, when
+the only passing evidence came from execution authority, or when authoritative evidence conflicts.
 
 ## Adapter policy
 

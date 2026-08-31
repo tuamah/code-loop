@@ -1,13 +1,13 @@
 # NoGapCode Runtime Architecture
 
-NoGapCode is the product direction for Code Loop: a vendor-neutral verified engineering runtime.
-The current `code-loop` package remains the lightweight protocol, skill, and compatibility layer
-until the repository and distribution names are intentionally migrated.
+NoGapCode is the product direction for Code Loop: a provider-neutral Trust Runtime. The current
+`code-loop` package remains the lightweight protocol, skill, and compatibility layer until the
+repository and distribution names are intentionally migrated.
 
 ## Positioning
 
-NoGapCode is not another coding agent. It runs coding agents under shared gates, evidence, policy,
-and decisions.
+NoGapCode is not another coding agent. It runs coding agents, humans, tools, and model providers
+under shared gates, evidence provenance, policy, and deterministic decisions.
 
 ```text
 NoGapCode = no gap between code claims and verified evidence
@@ -15,7 +15,13 @@ NoGapCode = no gap between code claims and verified evidence
 
 The core value is not multi-agent execution by itself. The core value is preventing false success:
 an agent must not pass by deleting tests, relaxing thresholds, changing baselines, hiding failures,
-or rewriting the definition of done.
+renaming its role, or issuing ACCEPT for its own work.
+
+Primary invariant:
+
+```text
+Execution Authority MUST NOT be Acceptance Authority.
+```
 
 ## Runtime Thesis
 
@@ -27,6 +33,7 @@ Implementer adapter
 Independent Verifier
 Immutable Gate
 Evidence artifact
+Authority identity
 Bounded repair loop
 Final decision
 ```
@@ -61,17 +68,23 @@ new features must reduce authority or strengthen evidence rather than merely add
 ## Planes
 
 ```text
-Control Plane
-  Council policy, gate policy, budget, escalation, final decision
+Control / Decision Plane
+  deterministic lifecycle, gate policy, risk, escalation, budget, Decision Engine
 
 Execution Plane
-  Task lifecycle, provider adapters, tool access, sandbox, retries, cancellation
+  AgentRuntime, execution lifecycle, bounded repair, cancellation, sandbox boundary
 
-Evidence Plane
-  Claims, tests, traces, reviews, artifacts, provenance, stale evidence checks
+Tool / Capability Plane
+  ToolProvider, capability metadata, permission boundary
 
-State Plane
+Verification / Evidence Plane
+  immutable gates, claims, independent verifier identity, provenance, stale evidence checks
+
+State / Event Plane
   Repository, .code-loop/, append-only events, checkpoints, decisions
+
+Observability Plane
+  structured run events, routing decisions, verification and decision summaries
 ```
 
 ## Lifecycle
@@ -85,6 +98,7 @@ task intake
 -> collect patch
 -> verify independently
 -> collect evidence
+-> check authority separation
 -> repair if bounded
 -> re-verify
 -> decide pass / repair / abstain / human-review
@@ -101,7 +115,12 @@ human approval.
 ## Evidence
 
 Every important claim should link to evidence. Evidence is stronger when it is deterministic,
-reproducible, and tied to a commit hash, run id, gate hash, and command output.
+reproducible, and tied to a producer identity, authority class, role, commit hash, run id, gate
+hash, command output, and artifact path when available.
+
+Authoritative final acceptance requires at least one passing evidence item produced by an
+independent verification or human authority for the frozen gate. Executor evidence may be useful,
+but it is not authoritative for final ACCEPT.
 
 Evidence should be modeled as edges before adopting a graph database:
 
@@ -113,6 +132,48 @@ Claim C17
 ```
 
 Start with files or SQLite. Defer graph infrastructure until queries prove it is needed.
+
+## Authority Model
+
+The current runtime uses a deliberately small authority model:
+
+- `execution`: may inspect gates, edit project code, run local checks, and submit claims.
+- `verification`: may produce authoritative verification evidence when independent from execution.
+- `acceptance`: may issue ACCEPT only when admissible independent evidence exists.
+- `human`: may act as verification or acceptance authority when recorded explicitly.
+- `tool`: may produce useful non-authoritative evidence unless a policy elevates it later.
+
+Identity is based on `actor_id` when present, falling back to producer fields such as `created_by`.
+Role strings are advisory metadata; changing `role` to `verifier` does not bypass an execution
+identity conflict.
+
+## Decision Engine
+
+The minimal acceptance policy is:
+
+- all referenced ACCEPT evidence must be passing
+- evidence must reference a known frozen gate hash
+- at least one referenced item must be authoritative independent verification or human evidence
+- the final acceptor must use acceptance or human authority
+- the final acceptor cannot be an execution identity for the same run
+- failed, blocked, or inconclusive authoritative evidence blocks ACCEPT
+
+When these checks fail, the runtime repairs, abstains, or asks for human review rather than turning
+model confidence or local checks into trust.
+
+## Provider Contracts
+
+Provider-neutrality is represented by separate contracts rather than one broad provider interface:
+
+- `ModelProvider`: model metadata and invocation capability
+- `AgentRuntime`: execution lifecycle for coding/reasoning clients
+- `ToolProvider`: tools and permission/capability metadata
+- `AuthProvider`: identity, credential, and account boundary
+- `ExecutionBackend`: local, sandboxed, remote, or accelerator-backed execution
+
+Routing decisions are serializable evidence/event metadata: selected provider/runtime/model, reason,
+cheap alternatives, cost or quota metadata when known, and policy version. Pricing and model
+rankings are adapter/config facts, not immutable gate semantics.
 
 ## Context Learning
 
@@ -135,13 +196,24 @@ retrieval needs exceed tags and explicit risk signals.
 
 For external literature, use `docs/literature-learning.md`: NoGapCode may ingest claims from trusted
 sources and high-quality GitHub projects, but every claim must pass source quality, benefit, cost,
-testability, meaning-quality, and conflict checks before becoming a lesson. Meaning-quality means
-the learned lesson remains accurate to the source, concise enough for recall, and complete enough to
+testability, meaning-quality, and conflict checks before it is even eligible. Promotion to a trusted
+lesson also requires acceptance evidence under the normal decision policy. Meaning-quality means the
+learned lesson remains accurate to the source, concise enough for recall, and complete enough to
 preserve the operational meaning.
 
 Goal-directed autolearning is a bounded loop over available literature claims, not a free-running
 belief engine. It should run locally or in GitHub Actions, learn only claims that match the active
 goal and pass the existing gates, and submit repository changes through a pull request.
+
+## Failure-First Research Loop
+
+When a nontrivial attempt fails, repair should first inspect prior local evidence, previous lessons,
+relevant literature, and similar project failures before blind repeated retries:
+
+```text
+Plan -> Retrieve prior evidence/literature -> Execute -> Independently Verify -> Gate
+-> Accept / Reject -> Repair -> Learn
+```
 
 ## Deferred
 

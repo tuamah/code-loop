@@ -114,6 +114,7 @@ def main() -> None:
         ROOT / "runtime" / "schemas" / "decision.schema.json",
         ROOT / "runtime" / "schemas" / "lesson.schema.json",
         ROOT / "runtime" / "schemas" / "literature-claim.schema.json",
+        ROOT / "runtime" / "schemas" / "routing-decision.schema.json",
     ]
     missing_required = [str(path.relative_to(ROOT)) for path in required_paths if not path.exists()]
     if missing_required:

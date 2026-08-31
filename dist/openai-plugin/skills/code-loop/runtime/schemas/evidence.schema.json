@@ -23,6 +23,12 @@
       "properties": {
         "created_by": { "type": "string", "minLength": 1 },
         "created_at": { "type": "string", "format": "date-time" },
+        "actor_id": { "type": "string", "minLength": 1 },
+        "authority": { "enum": ["execution", "verification", "acceptance", "human", "tool"] },
+        "role": { "type": "string" },
+        "provider": { "type": "string" },
+        "runtime": { "type": "string" },
+        "model": { "type": "string" },
         "commit": { "type": "string" },
         "gate_hash": { "type": "string" },
         "command": { "type": "string" },

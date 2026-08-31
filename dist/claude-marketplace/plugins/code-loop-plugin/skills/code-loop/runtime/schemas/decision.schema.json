@@ -16,6 +16,9 @@
     },
     "created_at": { "type": "string", "format": "date-time" },
     "decided_by": { "type": "string" },
+    "actor_id": { "type": "string", "minLength": 1 },
+    "authority": { "enum": ["acceptance", "human", "verification", "execution", "tool"] },
+    "policy_version": { "type": "string" },
     "required_next_role": { "type": "string" }
   }
 }

@@ -17,6 +17,10 @@ RUNTIME_DIRS = ["gates", "claims", "evidence", "events", "decisions", "lessons",
 EVIDENCE_STATUS = {"passed", "failed", "blocked", "inconclusive"}
 CLAIM_STATUS = {"unverified", "supported", "contradicted", "superseded"}
 DECISIONS = {"accept", "repair", "rerun", "ask-human", "reject", "abstain"}
+AUTHORITY_CLASSES = {"execution", "verification", "acceptance", "human", "tool"}
+AUTHORITATIVE_EVIDENCE_AUTHORITIES = {"verification", "human"}
+ACCEPTANCE_AUTHORITIES = {"acceptance", "human"}
+EXECUTION_ROLES = {"executor", "implementer", "repairer"}
 LITERATURE_SOURCE_TYPES = {
     "official-doc", "standard", "security-guide", "paper", "systematic-review", "github-project", "engineering-post"
 }
@@ -82,6 +86,99 @@ def require_string(data: dict[str, Any], key: str, path: Path) -> str:
     if not isinstance(value, str) or not value:
         raise SystemExit(f"FAIL: {path} missing non-empty string: {key}")
     return value
+
+
+def actor_id(value: dict[str, Any]) -> str:
+    for key in ("actor_id", "authority_id", "created_by", "decided_by", "agent_id"):
+        actor = value.get(key)
+        if isinstance(actor, str) and actor.strip():
+            return actor.strip()
+    return ""
+
+
+def authority_class(value: dict[str, Any]) -> str:
+    authority = value.get("authority") or value.get("authority_class")
+    if isinstance(authority, str):
+        return authority.strip().lower()
+    return ""
+
+
+def evidence_actor(item: dict[str, Any]) -> str:
+    provenance = item.get("provenance")
+    return actor_id(provenance) if isinstance(provenance, dict) else ""
+
+
+def evidence_authority(item: dict[str, Any]) -> str:
+    provenance = item.get("provenance")
+    return authority_class(provenance) if isinstance(provenance, dict) else ""
+
+
+def execution_actor_ids(evidence: dict[str, dict[str, Any]]) -> set[str]:
+    actors: set[str] = set()
+    for item in evidence.values():
+        provenance = item.get("provenance")
+        if not isinstance(provenance, dict):
+            continue
+        role = str(provenance.get("role", "")).strip().lower()
+        if evidence_authority(item) == "execution" or role in EXECUTION_ROLES:
+            actor = evidence_actor(item)
+            if actor:
+                actors.add(actor)
+    return actors
+
+
+def is_authoritative_evidence(item: dict[str, Any], frozen_hashes: set[str]) -> bool:
+    provenance = item.get("provenance")
+    if not isinstance(provenance, dict):
+        return False
+    return (
+        item.get("status") == "passed"
+        and authority_class(provenance) in AUTHORITATIVE_EVIDENCE_AUTHORITIES
+        and actor_id(provenance) != ""
+        and provenance.get("gate_hash") in frozen_hashes
+    )
+
+
+def acceptability(
+    decision: dict[str, Any],
+    evidence: dict[str, dict[str, Any]],
+    frozen_hashes: set[str],
+) -> str:
+    if decision.get("decision") != "accept":
+        return ""
+    decision_actor = actor_id(decision)
+    decision_authority = authority_class(decision)
+    if decision_authority not in ACCEPTANCE_AUTHORITIES:
+        return "ACCEPT requires acceptance or human decision authority"
+    if not decision_actor:
+        return "ACCEPT requires decision actor identity"
+    executors = execution_actor_ids(evidence)
+    if decision_actor in executors:
+        return "executor identity cannot issue ACCEPT"
+
+    referenced = decision.get("evidence", [])
+    if not isinstance(referenced, list) or not referenced:
+        return "ACCEPT requires evidence references"
+
+    authoritative_passes: list[str] = []
+    for evidence_id in referenced:
+        item = evidence.get(evidence_id)
+        if item is None:
+            return f"ACCEPT references missing evidence {evidence_id}"
+        if item.get("status") != "passed":
+            return f"ACCEPT references non-passing evidence {evidence_id}"
+        if is_authoritative_evidence(item, frozen_hashes):
+            if evidence_actor(item) in executors:
+                return f"authoritative evidence {evidence_id} uses execution identity"
+            authoritative_passes.append(evidence_id)
+
+    if not authoritative_passes:
+        return "ACCEPT requires independent authoritative verification evidence"
+
+    for evidence_id, item in evidence.items():
+        if evidence_authority(item) in AUTHORITATIVE_EVIDENCE_AUTHORITIES and item.get("status") in {"failed", "blocked", "inconclusive"}:
+            return f"contradictory authoritative evidence blocks ACCEPT: {evidence_id}"
+    return ""
 
 
 def load_objects(directory: Path) -> dict[str, dict[str, Any]]:
@@ -159,15 +256,30 @@ def learn_literature(root: Path, run_id: str, item_id: str, item: dict[str, Any]
     lesson_id = f"lesson-{stable_hash({'run_id': run_id, 'source': item_id, 'text': item['lesson']})[:12]}"
     if (root / "lessons" / f"{lesson_id}.json").exists():
         return lesson_id
+    evidence_refs = item.get("acceptance_evidence", [])
+    if not isinstance(evidence_refs, list) or not evidence_refs:
+        raise SystemExit(f"FAIL: literature claim {item_id} requires acceptance_evidence before learning")
+    gates = load_objects(root / "gates")
+    frozen_hashes = {
+        gate_hash(gate)
+        for gate in gates.values()
+        if gate.get("run_id") == run_id and gate.get("status") == "frozen" and gate.get("hash") == gate_hash(gate)
+    }
+    evidence = load_objects(root / "evidence")
     decision = {
         "id": decision_id,
         "run_id": run_id,
         "decision": "accept",
         "reason": f"literature claim {item_id}: {item.get('reason', '')}",
-        "evidence": [],
+        "evidence": evidence_refs,
         "created_at": now(),
         "decided_by": actor,
+        "actor_id": actor,
+        "authority": "acceptance",
     }
+    failure = acceptability(decision, evidence, frozen_hashes)
+    if failure:
+        raise SystemExit(f"FAIL: literature claim {item_id} lacks admissible acceptance evidence: {failure}")
     lesson = {
         "id": lesson_id,
         "run_id": run_id,
@@ -177,7 +289,7 @@ def learn_literature(root: Path, run_id: str, item_id: str, item: dict[str, Any]
             "decision": "accept",
             "reason": decision["reason"],
         },
-        "evidence": [],
+        "evidence": evidence_refs,
         "source_decision": decision_id,
         "created_at": now(),
     }
@@ -314,6 +426,11 @@ def cmd_validate(args: argparse.Namespace) -> None:
         provenance = item.get("provenance")
         if not isinstance(provenance, dict):
             raise SystemExit(f"FAIL: evidence {evidence_id} missing provenance")
+        require_string(provenance, "created_by", root / "evidence" / f"{evidence_id}.json")
+        require_string(provenance, "created_at", root / "evidence" / f"{evidence_id}.json")
+        authority = authority_class(provenance)
+        if authority and authority not in AUTHORITY_CLASSES:
+            raise SystemExit(f"FAIL: evidence {evidence_id} has invalid authority")
         gate_ref = provenance.get("gate_hash")
         if gate_ref and gate_ref not in frozen_hashes:
             raise SystemExit(f"FAIL: evidence {evidence_id} references unknown gate_hash")
@@ -322,13 +439,21 @@ def cmd_validate(args: argparse.Namespace) -> None:
                 raise SystemExit(f"FAIL: evidence {evidence_id} references missing claim {claim_id}")
 
     for decision_id, decision in decisions.items():
+        if decision.get("run_id") != run_id:
+            raise SystemExit(f"FAIL: decision {decision_id} references a different run_id")
         if decision.get("decision") not in DECISIONS:
             raise SystemExit(f"FAIL: decision {decision_id} has invalid decision")
+        authority = authority_class(decision)
+        if authority and authority not in AUTHORITY_CLASSES:
+            raise SystemExit(f"FAIL: decision {decision_id} has invalid authority")
         for evidence_id in decision.get("evidence", []):
             if evidence_id not in evidence:
                 raise SystemExit(f"FAIL: decision {decision_id} references missing evidence {evidence_id}")
             if decision["decision"] == "accept" and evidence[evidence_id].get("status") != "passed":
                 raise SystemExit(f"FAIL: decision {decision_id} accepts non-passing evidence {evidence_id}")
+        failure = acceptability(decision, evidence, frozen_hashes)
+        if failure:
+            raise SystemExit(f"FAIL: decision {decision_id} inadmissible: {failure}")
 
     for lesson_id, lesson in lessons.items():
         if lesson.get("run_id") != run_id:
@@ -348,6 +473,8 @@ def cmd_validate(args: argparse.Namespace) -> None:
         failures = literature_checks(item)
         if item.get("decision") == "learn" and failures:
             raise SystemExit(f"FAIL: literature claim {item_id} cannot be learned: {', '.join(failures)}")
+        if item.get("decision") == "learn" and not item.get("acceptance_evidence"):
+            raise SystemExit(f"FAIL: literature claim {item_id} cannot be learned without acceptance_evidence")
 
     for path in sorted((root / "events").glob("*.jsonl")):
         for index, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
@@ -369,7 +496,14 @@ def cmd_validate(args: argparse.Namespace) -> None:
 def cmd_decide(args: argparse.Namespace) -> None:
     root = runtime_root(Path(args.path))
     run_id = read_json(root / "run.json")["id"]
-    evidence = [read_json(path) for path in sorted((root / "evidence").glob("*.json"))]
+    gates = load_objects(root / "gates")
+    frozen_hashes = {
+        gate_hash(gate)
+        for gate in gates.values()
+        if gate.get("run_id") == run_id and gate.get("status") == "frozen" and gate.get("hash") == gate_hash(gate)
+    }
+    evidence_by_id = load_objects(root / "evidence")
+    evidence = list(evidence_by_id.values())
     claims = [read_json(path) for path in sorted((root / "claims").glob("*.json"))]
     passed = [item["id"] for item in evidence if item.get("status") == "passed"]
     failed = [item["id"] for item in evidence if item.get("status") == "failed"]
@@ -379,21 +513,45 @@ def cmd_decide(args: argparse.Namespace) -> None:
         and (not claim.get("evidence") or any(eid not in passed for eid in claim.get("evidence", [])))
     ]
 
+    decision_actor = args.actor_id or args.actor
+    decision_authority = args.authority
+    executors = execution_actor_ids(evidence_by_id)
+    authoritative_passed = [
+        item["id"] for item in evidence
+        if is_authoritative_evidence(item, frozen_hashes)
+        and evidence_actor(item) not in executors
+    ]
+    authoritative_conflicts = [
+        item["id"] for item in evidence
+        if evidence_authority(item) in AUTHORITATIVE_EVIDENCE_AUTHORITIES
+        and item.get("status") in {"failed", "blocked", "inconclusive"}
+    ]
+
     if failed or unsupported:
         decision, reason, event_type = "repair", "failed evidence or unsupported supported-claim references require repair", "DECISION_REPAIR"
+    elif decision_actor in executors:
+        decision, reason, event_type = "repair", "executor identity cannot issue ACCEPT", "AUTHORITY_CONFLICT"
+    elif decision_authority not in ACCEPTANCE_AUTHORITIES:
+        decision, reason, event_type = "abstain", "acceptance authority is required for final ACCEPT", "ACCEPTANCE_BLOCKED"
+    elif authoritative_conflicts:
+        decision, reason, event_type = "repair", "contradictory authoritative evidence requires repair", "DECISION_REPAIR"
+    elif not authoritative_passed:
+        decision, reason, event_type = "abstain", "independent authoritative verification evidence is required for ACCEPT", "ACCEPTANCE_BLOCKED"
     elif not passed:
         decision, reason, event_type = "abstain", "no passing evidence is available", "DECISION_ABSTAIN"
     else:
-        decision, reason, event_type = "accept", "all referenced evidence for the current decision passed", "DECISION_ACCEPTED"
+        decision, reason, event_type = "accept", "independent authoritative verification evidence passed and acceptance authority is separate from execution", "DECISION_ACCEPTED"
 
     output = {
         "id": "decision-0001",
         "run_id": run_id,
         "decision": decision,
         "reason": reason,
-        "evidence": passed,
+        "evidence": authoritative_passed if decision == "accept" else passed,
         "created_at": now(),
-        "decided_by": args.actor
+        "decided_by": args.actor,
+        "actor_id": decision_actor,
+        "authority": decision_authority
     }
     write_json(root / "decisions" / "decision-0001.json", output)
     append_event(root, {
@@ -402,7 +560,7 @@ def cmd_decide(args: argparse.Namespace) -> None:
         "type": event_type,
         "created_at": output["created_at"],
         "actor": args.actor,
-        "payload": {"decision": decision, "evidence": passed}
+        "payload": {"decision": decision, "evidence": output["evidence"], "authority": decision_authority}
     })
     print(f"{decision}: {reason}")
 
@@ -491,6 +649,7 @@ def cmd_literature(args: argparse.Namespace) -> None:
             "benefit": sorted(set(args.benefit)),
             "cost": sorted(set(args.cost)),
             "evidence_strength": args.evidence_strength,
+            "acceptance_evidence": sorted(set(args.acceptance_evidence)),
             "decision": "defer",
             "reason": "not evaluated",
             "can_be_tested_by": args.test,
@@ -516,8 +675,15 @@ def cmd_literature(args: argparse.Namespace) -> None:
     item = read_json(item_path)
     if args.action == "evaluate":
         failures = literature_checks(item)
-        item["decision"] = "reject" if failures else "learn"
-        item["reason"] = "; ".join(failures) if failures else "passed source, benefit, testability, and meaning-quality gates"
+        if failures:
+            item["decision"] = "reject"
+            item["reason"] = "; ".join(failures)
+        elif not item.get("acceptance_evidence"):
+            item["decision"] = "defer"
+            item["reason"] = "passed source, benefit, testability, and meaning-quality gates; awaiting acceptance_evidence"
+        else:
+            item["decision"] = "learn"
+            item["reason"] = "passed source, benefit, testability, meaning-quality, and acceptance-evidence gates"
         item["evaluated_at"] = now()
         write_json(item_path, item)
         append_event(root, {
@@ -561,8 +727,19 @@ def cmd_autolearn(args: argparse.Namespace) -> None:
             deferred.append(item_id)
             continue
         failures = literature_checks(item)
-        item["decision"] = "reject" if failures else "learn"
-        item["reason"] = "; ".join(failures) if failures else "auto-learned for active goal after all gates passed"
+        if failures:
+            item["decision"] = "reject"
+            item["reason"] = "; ".join(failures)
+        elif not item.get("acceptance_evidence"):
+            item["decision"] = "defer"
+            item["reason"] = "deferred: awaiting acceptance_evidence"
+            item["evaluated_at"] = now()
+            write_json(path, item)
+            deferred.append(item_id)
+            continue
+        else:
+            item["decision"] = "learn"
+            item["reason"] = "auto-learned for active goal after all gates passed"
         item["evaluated_at"] = now()
         write_json(path, item)
         if failures:
@@ -662,6 +839,8 @@ def main() -> None:
     decide = sub.add_parser("decide")
     decide.add_argument("path", nargs="?", default=".")
     decide.add_argument("--actor", default="nogap decide")
+    decide.add_argument("--actor-id")
+    decide.add_argument("--authority", choices=sorted(ACCEPTANCE_AUTHORITIES), default="acceptance")
     decide.set_defaults(func=cmd_decide)
 
     learn = sub.add_parser("learn")
@@ -704,6 +883,7 @@ def main() -> None:
     literature.add_argument("--benefit", action="append", choices=sorted(LITERATURE_BENEFITS), default=[])
     literature.add_argument("--cost", action="append", choices=sorted(LITERATURE_COSTS), default=[])
     literature.add_argument("--evidence-strength", choices=["primary", "secondary", "weak"], default="primary")
+    literature.add_argument("--acceptance-evidence", action="append", default=[])
     literature.add_argument("--test")
     literature.add_argument("--accurate", action="store_true")
     literature.add_argument("--concise", action="store_true")

@@ -3,8 +3,13 @@
 Expert-minimal discipline and coordination protocol for coding agents: best real result, least
 code, least tokens, lowest risk.
 
-**NoGapCode** is the product direction for the future runtime: no gap between code claims and
-verified evidence. The repository and package remain `code-loop` while the runtime contracts mature.
+**NoGapCode is a provider-neutral Trust Runtime, not another coding agent.** It keeps execution
+authority separate from acceptance authority so an agent cannot make its own work trusted merely by
+producing a passing result or issuing ACCEPT. The repository and package remain `code-loop` as the
+compatibility layer while the runtime contracts mature.
+
+The future product/repository name may become `nogabcode`; package and import names stay stable
+until a compatibility-preserving migration is explicit.
 
 `code-loop` has two layers:
 
@@ -142,7 +147,7 @@ dependencies, package scripts, supply chain, or CI/CD.
 - `Repairer`: fixes accepted findings only.
 - `Arbiter`: resolves conflicts by evidence, not confidence.
 
-## Decision Rule
+## Trust Runtime Rule
 
 Evidence outranks confidence:
 
@@ -150,11 +155,18 @@ Evidence outranks confidence:
 tests/build/lint > runtime traces > source docs > reviewer findings > model confidence
 ```
 
-Low risk: Orchestrator may accept after verification.
+Execution authority can inspect gates, edit code, run local checks, and submit claims/artifacts.
+Acceptance authority decides whether evidence is admissible. A final ACCEPT requires independent
+authoritative verification evidence tied to the frozen gate hash, and the acceptor cannot be the
+execution identity for the same run.
+
+Low risk: Orchestrator may recommend acceptance after admissible verification.
 
 Medium risk: accept after Verifier passes and Reviewer has no blocking finding.
 
 High risk: Arbiter recommends; human approves.
+
+Council coordinates roles and policy; it is not the acceptance root of trust.
 
 ## Install
 
@@ -186,14 +198,15 @@ python scripts/validate-council.py /path/to/project/.code-loop
 python scripts/nogap.py init /path/to/project --objective "Fix the bug without changing the gate"
 python scripts/nogap.py freeze /path/to/project
 python scripts/nogap.py validate /path/to/project
-python scripts/nogap.py decide /path/to/project
+python scripts/nogap.py decide /path/to/project --actor-id acceptor-1
 python scripts/nogap.py learn /path/to/project --tag gate --text "Freeze the gate before trusting evidence."
 python scripts/nogap.py recall /path/to/project --tag gate
 python scripts/nogap.py context /path/to/project --show
 ```
 
-The runtime is intentionally local-first. A frozen gate is hash-locked for the run; evidence that
-claims to prove work must reference the frozen gate hash. Lessons are scoped, tagged, and
+The runtime is intentionally local-first and server-ready. A frozen gate is hash-locked for the run;
+evidence that claims to prove work must reference the frozen gate hash. Authoritative evidence
+records producer identity, authority class, role, and provenance. Lessons are scoped, tagged, and
 evidence-linked. The context profile is rebuilt from gates, evidence, decisions, and lessons so the
 runtime learns from use without trusting raw memory.
 
@@ -212,11 +225,15 @@ python scripts/nogap.py literature add /path/to/project \
   --benefit accuracy \
   --benefit token-cost \
   --evidence-strength primary \
+  --acceptance-evidence evidence-literature \
   --test "python scripts/nogap.py recall PROJECT --tag context" \
   --accurate --concise --complete
 python scripts/nogap.py literature evaluate /path/to/project --id lit-context-0001
 python scripts/nogap.py literature learn /path/to/project --id lit-context-0001
 ```
+
+Literature claims can pass source/meaning checks before they are trusted, but promotion to a lesson
+requires acceptance evidence under the same decision policy.
 
 For continuous repository learning, set one active goal and let `autolearn` process only the
 available gated literature claims that match it:
@@ -309,6 +326,20 @@ Next step:
 ```
 
 Creativity is welcome. Unlabeled speculation is not.
+
+## Provider-Neutral Contracts
+
+The runtime keeps provider concepts separate: `ModelProvider`, `AgentRuntime`, `ToolProvider`,
+`AuthProvider`, and `ExecutionBackend` are distinct contracts. Routing decisions are serializable
+metadata with selected provider/runtime/model, reason, cheap alternatives, quota/cost metadata when
+known, and policy version. Commercial facts such as pricing or model rankings belong in adapters or
+config, not immutable gate meaning.
+
+## Deferred Runtime Work
+
+NoGapCode deliberately defers distributed workers, Kubernetes, graph databases, vector-memory
+platforms, mandatory A2A, automatic merge of learned lessons, and multi-cloud GPU control planes
+until tests or benchmarks prove they close a real trust gap.
 
 ## Validate
 

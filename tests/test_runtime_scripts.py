@@ -50,7 +50,10 @@ class RuntimeScriptTests(unittest.TestCase):
                 "status": "passed",
                 "claim_ids": ["claim-0001"],
                 "provenance": {
-                    "created_by": "test",
+                    "created_by": "verifier-1",
+                    "actor_id": "verifier-1",
+                    "authority": "verification",
+                    "role": "verifier",
                     "created_at": "2026-08-15T00:00:00Z",
                     "gate_hash": gate_hash,
                     "command": "python scripts/nogap.py validate"
@@ -61,7 +64,7 @@ class RuntimeScriptTests(unittest.TestCase):
             (runtime / "evidence" / "evidence-0001.json").write_text(json.dumps(evidence), encoding="utf-8")
 
             run_script("scripts/nogap.py", "validate", str(project))
-            result = run_script("scripts/nogap.py", "decide", str(project))
+            result = run_script("scripts/nogap.py", "decide", str(project), "--actor-id", "acceptor-1")
             self.assertIn("accept:", result.stdout)
             run_script("scripts/nogap.py", "validate", str(project))
             run_script(
@@ -74,6 +77,142 @@ class RuntimeScriptTests(unittest.TestCase):
             context = run_script("scripts/nogap.py", "context", str(project), "--show")
             self.assertIn("learned-context", context.stdout)
             self.assertIn("frozen-gate", context.stdout)
+
+    def test_executor_self_acceptance_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "block self accept")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            gate_hash = json.loads((runtime / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
+            self.write_claim(runtime, "evidence-exec")
+            self.write_evidence(runtime, "evidence-exec", gate_hash, "passed", "agent-a", "execution", "implementer")
+            result = run_script("scripts/nogap.py", "decide", str(project), "--actor-id", "agent-a")
+            self.assertIn("repair:", result.stdout)
+            self.assertIn("executor identity cannot issue ACCEPT", result.stdout)
+
+    def test_independent_verifier_and_acceptor_allows_accept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "accept with separation")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            gate_hash = json.loads((runtime / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
+            self.write_claim(runtime, "evidence-verifier")
+            self.write_evidence(runtime, "evidence-exec", gate_hash, "passed", "agent-a", "execution", "implementer")
+            self.write_evidence(runtime, "evidence-verifier", gate_hash, "passed", "agent-b", "verification", "verifier")
+            result = run_script("scripts/nogap.py", "decide", str(project), "--actor-id", "acceptor-1")
+            self.assertIn("accept:", result.stdout)
+            run_script("scripts/nogap.py", "validate", str(project))
+
+    def test_independent_failed_verifier_blocks_accept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "block failed verifier")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            gate_hash = json.loads((runtime / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
+            self.write_claim(runtime, "evidence-exec")
+            self.write_evidence(runtime, "evidence-exec", gate_hash, "passed", "agent-a", "execution", "implementer")
+            self.write_evidence(runtime, "evidence-verifier", gate_hash, "failed", "agent-b", "verification", "verifier")
+            result = run_script("scripts/nogap.py", "decide", str(project), "--actor-id", "acceptor-1")
+            self.assertIn("repair:", result.stdout)
+
+    def test_stale_verifier_gate_hash_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "reject stale gate")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            self.write_claim(runtime, "evidence-verifier")
+            self.write_evidence(runtime, "evidence-verifier", "stale-gate", "passed", "agent-b", "verification", "verifier")
+            result = subprocess.run(
+                [sys.executable, "scripts/nogap.py", "validate", str(project)],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("unknown gate_hash", result.stderr + result.stdout)
+
+    def test_role_renaming_does_not_bypass_authority_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "block role spoof")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            gate_hash = json.loads((runtime / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
+            self.write_claim(runtime, "evidence-verifier")
+            self.write_evidence(runtime, "evidence-exec", gate_hash, "passed", "agent-a", "execution", "implementer")
+            self.write_evidence(runtime, "evidence-verifier", gate_hash, "passed", "agent-a", "verification", "verifier")
+            result = run_script("scripts/nogap.py", "decide", str(project), "--actor-id", "acceptor-1")
+            self.assertIn("abstain:", result.stdout)
+            self.assertIn("independent authoritative verification", result.stdout)
+
+    def test_conflicting_authoritative_evidence_blocks_accept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "block conflict")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            gate_hash = json.loads((runtime / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
+            self.write_claim(runtime, "evidence-pass")
+            self.write_evidence(runtime, "evidence-pass", gate_hash, "passed", "agent-b", "verification", "verifier")
+            self.write_evidence(runtime, "evidence-fail", gate_hash, "failed", "agent-c", "verification", "verifier")
+            result = run_script("scripts/nogap.py", "decide", str(project), "--actor-id", "acceptor-1")
+            self.assertIn("repair:", result.stdout)
+
+    def test_literature_claim_needs_acceptance_evidence_to_be_trusted_lesson(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "literature trust")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            run_script(
+                "scripts/nogap.py", "literature", "add", str(project),
+                "--id", "lit-no-evidence",
+                "--title", "NoGapCode runtime docs",
+                "--url", "docs/nogapcode-runtime.md",
+                "--source-type", "official-doc",
+                "--claim", "Learning needs independent acceptance evidence.",
+                "--lesson", "Do not promote literature to trusted lessons without independent acceptance evidence.",
+                "--tag", "literature",
+                "--benefit", "reliability",
+                "--evidence-strength", "primary",
+                "--test", "python scripts/nogap.py validate PROJECT",
+                "--accurate",
+                "--concise",
+                "--complete",
+            )
+            evaluated = run_script("scripts/nogap.py", "literature", "evaluate", str(project), "--id", "lit-no-evidence")
+            self.assertIn("defer:", evaluated.stdout)
+            self.assertIn("awaiting acceptance_evidence", evaluated.stdout)
+            result = subprocess.run(
+                [sys.executable, "scripts/nogap.py", "literature", "learn", str(project), "--id", "lit-no-evidence"],
+                cwd=ROOT,
+                text=True,
+                capture_output=True,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("not approved", result.stderr + result.stdout)
+
+    def test_provider_routing_metadata_does_not_change_gate_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            run_script("scripts/nogap.py", "init", str(project), "--objective", "routing metadata")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            gate_path = project / ".code-loop" / "runtime" / "gates" / "gate-0001.json"
+            gate = json.loads(gate_path.read_text(encoding="utf-8"))
+            before = gate["hash"]
+            runtime = project / ".code-loop" / "runtime"
+            self.write_claim(runtime, "evidence-verifier")
+            self.write_evidence(runtime, "evidence-verifier", before, "passed", "agent-b", "verification", "verifier", provider="provider-a")
+            evidence_path = runtime / "evidence" / "evidence-verifier.json"
+            evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+            evidence["provenance"]["provider"] = "provider-b"
+            evidence_path.write_text(json.dumps(evidence), encoding="utf-8")
+            gate_after = json.loads(gate_path.read_text(encoding="utf-8"))
+            self.assertEqual(before, gate_after["hash"])
+            run_script("scripts/nogap.py", "validate", str(project))
 
     def test_runtime_rejects_tampered_frozen_gate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -95,10 +234,55 @@ class RuntimeScriptTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("hash mismatch", result.stderr + result.stdout)
 
+    def write_claim(self, runtime: Path, evidence_id: str) -> None:
+        claim = {
+            "id": "claim-0001",
+            "run_id": "run-0001",
+            "text": "The runtime trust boundary works.",
+            "status": "supported",
+            "evidence": [evidence_id],
+        }
+        (runtime / "claims" / "claim-0001.json").write_text(json.dumps(claim), encoding="utf-8")
+
+    def write_evidence(
+        self,
+        runtime: Path,
+        evidence_id: str,
+        gate_hash: str,
+        status: str,
+        actor: str,
+        authority: str,
+        role: str,
+        provider: str = "local",
+    ) -> None:
+        evidence = {
+            "id": evidence_id,
+            "run_id": "run-0001",
+            "kind": "test",
+            "status": status,
+            "claim_ids": ["claim-0001"],
+            "provenance": {
+                "created_by": actor,
+                "actor_id": actor,
+                "authority": authority,
+                "role": role,
+                "provider": provider,
+                "runtime": "nogap.py",
+                "created_at": "2026-08-15T00:00:00Z",
+                "gate_hash": gate_hash,
+            },
+        }
+        (runtime / "evidence" / f"{evidence_id}.json").write_text(json.dumps(evidence), encoding="utf-8")
+
     def test_literature_learning_requires_compact_complete_meaning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             run_script("scripts/nogap.py", "init", str(project), "--objective", "learn only gated context")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            gate_hash = json.loads((runtime / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
+            self.write_claim(runtime, "evidence-literature")
+            self.write_evidence(runtime, "evidence-literature", gate_hash, "passed", "agent-b", "verification", "verifier")
             run_script(
                 "scripts/nogap.py", "literature", "add", str(project),
                 "--id", "lit-context-0001",
@@ -112,6 +296,7 @@ class RuntimeScriptTests(unittest.TestCase):
                 "--benefit", "token-cost",
                 "--cost", "maintenance",
                 "--evidence-strength", "primary",
+                "--acceptance-evidence", "evidence-literature",
                 "--test", "python scripts/nogap.py recall PROJECT --tag context",
                 "--accurate",
                 "--concise",
@@ -159,6 +344,11 @@ class RuntimeScriptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             run_script("scripts/nogap.py", "init", str(project), "--objective", "continuous learning")
+            run_script("scripts/nogap.py", "freeze", str(project))
+            runtime = project / ".code-loop" / "runtime"
+            gate_hash = json.loads((runtime / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
+            self.write_claim(runtime, "evidence-literature")
+            self.write_evidence(runtime, "evidence-literature", gate_hash, "passed", "agent-b", "verification", "verifier")
             run_script(
                 "scripts/nogap.py", "goal", "set", str(project),
                 "--objective", "planning ai coding model like codex",
@@ -178,6 +368,7 @@ class RuntimeScriptTests(unittest.TestCase):
                 "--benefit", "reliability",
                 "--benefit", "accuracy",
                 "--evidence-strength", "primary",
+                "--acceptance-evidence", "evidence-literature",
                 "--test", "python scripts/nogap.py recall PROJECT --tag coding-agent",
                 "--accurate",
                 "--concise",
