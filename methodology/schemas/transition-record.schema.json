@@ -1,14 +1,21 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "NoGapCode Methodology Transition Record",
-  "description": "One recorded phase transition for a project. Schema defined in M7-A; not yet written by working code - the engine that produces this is M7-C.",
+  "description": "One recorded phase transition for a project. Written by scripts/nogap_methodology.py's transition() (M7-C). Append-only: state.transition_history never rewrites or removes an entry.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["id", "from_phase", "to_phase", "reason", "actor_id", "authority_class", "created_at", "methodology_version"],
+  "required": [
+    "transition_id", "methodology_id", "methodology_version", "from_phase", "to_phase",
+    "transition_type", "reason", "actor_id", "authority_class", "evidence_refs",
+    "artifact_refs", "timestamp", "profile_at_transition"
+  ],
   "properties": {
-    "id": { "type": "string", "minLength": 1 },
+    "transition_id": { "type": "string", "minLength": 1 },
+    "methodology_id": { "type": "string", "minLength": 1 },
+    "methodology_version": { "type": "string", "minLength": 1 },
     "from_phase": { "type": "string", "pattern": "^P([0-9]|1[0-9]|2[0-3])$" },
     "to_phase": { "type": "string", "pattern": "^(P([0-9]|1[0-9]|2[0-3])|REPAIR_LOOP)$" },
+    "transition_type": { "enum": ["FORWARD", "BACKWARD", "LOOP_ENTRY", "LOOP_RETURN", "SKIP"] },
     "reason": { "type": "string", "minLength": 1 },
     "actor_id": { "type": "string", "minLength": 1 },
     "authority_class": { "enum": ["execution", "verification", "acceptance", "human", "tool"] },
@@ -17,7 +24,20 @@
       "items": { "type": "string", "minLength": 1 },
       "uniqueItems": true
     },
-    "created_at": { "type": "string", "format": "date-time" },
-    "methodology_version": { "type": "string", "minLength": 1 }
+    "artifact_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "skipped_phases": {
+      "type": "array",
+      "description": "Present only for transition_type=SKIP: the phases bypassed, in order.",
+      "items": { "type": "string", "pattern": "^P([0-9]|1[0-9]|2[0-3])$" }
+    },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "profile_at_transition": {
+      "enum": ["LIGHT", "STANDARD", "STRICT"],
+      "description": "The effective profile for from_phase at the moment of transition (after any phase-level override)."
+    }
   }
 }

@@ -31,7 +31,9 @@
     "P13",
     "P6",
     "P7",
-    "P8"
+    "P8",
+    "P3",
+    "P4"
   ],
   "failure_transition": "P13",
   "minimum_profile": "STANDARD"

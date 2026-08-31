@@ -1340,11 +1340,15 @@ def cmd_methodology(args: argparse.Namespace) -> None:
     """Thin CLI dispatcher only: all methodology logic lives in nogap_methodology.py."""
     from nogap_methodology import (
         MethodologyValidationError,
+        active_loops,
+        can_transition,
         downgrade_profile,
         escalate_phase,
+        evaluate_phase_status,
         init_project,
     )
     from nogap_methodology import status as methodology_status
+    from nogap_methodology import transition as do_transition
 
     project = Path(args.path)
     try:
@@ -1367,7 +1371,36 @@ def cmd_methodology(args: argparse.Namespace) -> None:
                 print(f"phase overrides: {result['phase_profile_overrides']}")
             if result["downgrade_log"]:
                 print(f"downgrade history: {len(result['downgrade_log'])} entry(ies) - most recent: {result['downgrade_log'][-1]}")
-            print(f"current_phase={result['current_phase']}")
+            current = result["current_phase"]
+            print(f"current_phase={current} status={evaluate_phase_status(project)}")
+            active = active_loops(project)
+            if active:
+                print(f"active loop: {active[0]['loop_type']} (origin={active[0]['origin_phase']}, since {active[0]['entered_at']})")
+            if result["transition_history"]:
+                last = result["transition_history"][-1]
+                print(f"last transition: {last['from_phase']} -> {last['to_phase']} ({last['transition_type']}) at {last['timestamp']}")
+            return
+        if args.action == "can-transition":
+            if not args.phase:
+                raise SystemExit("FAIL: methodology can-transition requires --phase as the target")
+            result = can_transition(project, args.phase)
+            print(f"can_transition({args.phase}): allowed={result['allowed']} transition_type={result['transition_type']}")
+            for reason in result["blocked_reasons"]:
+                print(f"  blocked: {reason}")
+            return
+        if args.action == "transition":
+            if not (args.phase and args.reason):
+                raise SystemExit("FAIL: methodology transition requires --phase (target) and --reason")
+            evidence_refs = args.evidence_ref or []
+            artifact_refs = args.artifact_ref or []
+            state = do_transition(
+                project, args.phase, args.actor, args.reason,
+                evidence_refs=evidence_refs, artifact_refs=artifact_refs,
+                authority_class=args.authority or "human",
+            )
+            last = state["transition_history"][-1]
+            print(f"transitioned: {last['from_phase']} -> {last['to_phase']} ({last['transition_type']})")
+            print(f"current_phase={state['current_phase']}")
             return
         if args.action == "escalate":
             if not (args.phase and args.profile):
@@ -1509,16 +1542,19 @@ def main() -> None:
     dashboard.set_defaults(func=cmd_dashboard)
 
     methodology = sub.add_parser("methodology")
-    methodology.add_argument("action", choices=["init", "status", "escalate", "downgrade"])
+    methodology.add_argument("action", choices=["init", "status", "can-transition", "transition", "escalate", "downgrade"])
     methodology.add_argument("path", nargs="?", default=".")
     methodology.add_argument("--intent", choices=["research", "production", "experimental"])
     methodology.add_argument("--risk", choices=["low", "medium", "high"])
     methodology.add_argument("--claim-strength", dest="claim_strength", choices=["low", "medium", "high"])
     methodology.add_argument("--force", action="store_true")
-    methodology.add_argument("--phase", help="P-id (e.g. P15) or macro phase (e.g. VERIFY) to escalate")
+    methodology.add_argument("--phase", help="P-id, REPAIR_LOOP, or macro phase (e.g. VERIFY) - transition target, or phase to escalate")
     methodology.add_argument("--profile", choices=["LIGHT", "STANDARD", "STRICT"])
-    methodology.add_argument("--reason", help="required for downgrade")
+    methodology.add_argument("--reason", help="required for transition/downgrade")
     methodology.add_argument("--actor", default="nogap methodology")
+    methodology.add_argument("--evidence-ref", action="append", help="repeatable; evidence id(s) supporting a transition")
+    methodology.add_argument("--artifact-ref", action="append", help="repeatable; artifact id(s) supporting a transition")
+    methodology.add_argument("--authority", choices=["execution", "verification", "acceptance", "human", "tool"])
     methodology.set_defaults(func=cmd_methodology)
 
     argv = sys.argv[1:]

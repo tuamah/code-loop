@@ -21,6 +21,7 @@ no silent downgrade path.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -34,6 +35,7 @@ MACRO_PHASES = {"DEFINE", "RESEARCH", "DESIGN", "PREPARE", "BUILD", "VERIFY", "R
 LOOPS = {"research_loop", "build_loop", "verify_loop", "repair_loop", "improvement_loop"}
 PROFILES = {"LIGHT", "STANDARD", "STRICT"}
 PRINCIPLE_CLASSES = {"A", "B", "C"}
+LOOP_STATUSES = {"ACTIVE", "RESOLVED", "BLOCKED", "INCONCLUSIVE"}
 
 
 class MethodologyValidationError(Exception):
@@ -322,7 +324,8 @@ def _validate_state_shape(data: Any, source: Path) -> None:
     for key in (
         "methodology_id", "methodology_version", "intent", "risk", "claim_strength",
         "derived_profile", "derivation", "effective_profile", "phase_profile_overrides",
-        "downgrade_log", "current_phase", "created_by", "created_at", "updated_at",
+        "downgrade_log", "current_phase", "transition_history", "loops",
+        "created_by", "created_at", "updated_at",
     ):
         _require(key in data, f"{source}: missing required field {key!r}")
     _require(data["intent"] in INTENTS, f"{source}: unknown intent {data['intent']!r}")
@@ -339,6 +342,19 @@ def _validate_state_shape(data: Any, source: Path) -> None:
     for entry in downgrade_log:
         for key in ("from_profile", "to_profile", "actor_id", "reason", "authorized_at"):
             _require(key in entry, f"{source}: downgrade_log entry missing {key!r}")
+    _require(data["current_phase"].startswith("P"), f"{source}: current_phase must be a P-id")
+    history = data["transition_history"]
+    _require(isinstance(history, list), f"{source}: transition_history must be an array")
+    for entry in history:
+        for key in ("transition_id", "from_phase", "to_phase", "transition_type", "reason", "actor_id", "authority_class", "timestamp"):
+            _require(key in entry, f"{source}: transition_history entry missing {key!r}")
+    loops = data["loops"]
+    _require(isinstance(loops, list), f"{source}: loops must be an array")
+    for loop in loops:
+        for key in ("loop_id", "loop_type", "origin_phase", "current_phase", "reason", "status", "entered_at"):
+            _require(key in loop, f"{source}: loop entry missing {key!r}")
+        _require(loop["loop_type"] in LOOPS, f"{source}: loop {loop.get('loop_id')} has unknown loop_type {loop['loop_type']!r}")
+        _require(loop["status"] in LOOP_STATUSES, f"{source}: loop {loop.get('loop_id')} has unknown status {loop['status']!r}")
 
 
 def load_state(project: Path) -> dict[str, Any] | None:
@@ -388,6 +404,8 @@ def init_project(
         "phase_profile_overrides": {},
         "downgrade_log": [],
         "current_phase": "P0",
+        "transition_history": [],
+        "loops": [],
         "created_by": actor,
         "created_at": timestamp,
         "updated_at": timestamp,
@@ -460,6 +478,305 @@ def status(project: Path) -> dict[str, Any]:
     if state is None:
         return {"initialized": False, "path": str(methodology_state_path(project))}
     return {"initialized": True, "path": str(methodology_state_path(project)), **state}
+
+
+# ---------------------------------------------------------------------------
+# M7-C: P0-P23 Methodology State Machine
+#
+# This engine answers "what phase, what's next, what's missing, why blocked,
+# which loop" - it does not judge whether execution succeeded (that's
+# nogap_effects.py / M6-D) and it does not decide ACCEPT/REJECT (that's
+# nogap.py's cmd_decide). current_phase changes only through transition():
+# there is no other function anywhere that assigns it.
+# ---------------------------------------------------------------------------
+
+TRANSITION_AUTHORITY_CLASSES = {"execution", "verification", "acceptance", "human", "tool"}
+# Every failure_transition in the contract graph that names a real phase (not REPAIR_LOOP)
+# points at P13: repairing means redoing controlled implementation. REPAIR_LOOP itself is
+# symbolic (root cause not yet known), so resolving it lands here too, by the same convention.
+_UNIVERSAL_REPAIR_TARGET = "P13"
+
+
+def _require_state(project: Path) -> tuple[dict[str, Any], MethodologyDefinition]:
+    state = load_state(project)
+    if state is None:
+        raise MethodologyValidationError(f"no methodology state at {project}; run 'nogap methodology init' first")
+    definition = load_methodology()
+    _require(
+        state["methodology_version"] == definition.version,
+        f"methodology version mismatch: project state was created under v{state['methodology_version']} "
+        f"but the loaded methodology definition is v{definition.version}",
+    )
+    return state, definition
+
+
+def _effective_profile_for_phase(state: dict[str, Any], phase: PhaseContract) -> str:
+    overrides = state["phase_profile_overrides"]
+    if phase.id in overrides:
+        return overrides[phase.id]
+    if phase.macro_phase in overrides:
+        return overrides[phase.macro_phase]
+    return state["effective_profile"]
+
+
+def _runtime_evidence_ids(project: Path) -> set[str] | None:
+    """Ids found under <project>/.code-loop/runtime/evidence (M6's evidence ledger), or None
+    if that runtime doesn't exist at all - nothing to resolve against, so refs are accepted at
+    face value rather than fabricating a rejection for a project with no runtime yet."""
+    evidence_dir = project.resolve() / ".code-loop" / "runtime" / "evidence"
+    if not evidence_dir.is_dir():
+        return None
+    ids: set[str] = set()
+    for path in evidence_dir.glob("*.json"):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(data, dict) and isinstance(data.get("id"), str):
+            ids.add(data["id"])
+    return ids
+
+
+def _is_skippable(definition: MethodologyDefinition, state: dict[str, Any], phase: PhaseContract) -> bool:
+    effective = _effective_profile_for_phase(state, phase)
+    profile_obj = definition.get_profile(effective)
+    return phase.id in profile_obj.skippable_phases and PROFILE_ORDER[effective] < PROFILE_ORDER[phase.minimum_profile]
+
+
+def _resolve_forward_target(definition: MethodologyDefinition, state: dict[str, Any], from_phase: PhaseContract) -> tuple[str | None, list[str]]:
+    """Follows allowed_next, skipping a chain of phases the *active* profile permits skipping.
+    Returns (final_target_id_or_None, [skipped_phase_ids])."""
+    if not from_phase.allowed_next:
+        return None, []
+    target_id = from_phase.allowed_next[0]
+    skipped: list[str] = []
+    while True:
+        target = definition.get_phase(target_id)
+        if _is_skippable(definition, state, target):
+            skipped.append(target_id)
+            if not target.allowed_next:
+                return target_id, skipped
+            target_id = target.allowed_next[0]
+            continue
+        return target_id, skipped
+
+
+def _classify_edge(definition: MethodologyDefinition, current: PhaseContract, to: str) -> str | None:
+    """Structural-only classification: is `to` a plain legal edge from `current`, and what
+    transition_type applies? Returns None if there is no such edge at all."""
+    if to in current.allowed_next:
+        target = definition.get_phase(to)
+        return "LOOP_ENTRY" if (target.loop and target.loop != current.loop) else "FORWARD"
+    if to in current.allowed_back_transitions:
+        target = definition.get_phase(to)
+        return "LOOP_RETURN" if target.loop else "BACKWARD"
+    if current.failure_transition and to == current.failure_transition and to != "REPAIR_LOOP":
+        target = definition.get_phase(to)
+        return "LOOP_RETURN" if target.loop else "BACKWARD"
+    return None
+
+
+def _evaluate_transition(
+    project: Path,
+    state: dict[str, Any],
+    definition: MethodologyDefinition,
+    to: str,
+    evidence_refs: list[str],
+    artifact_refs: list[str],
+) -> dict[str, Any]:
+    reasons: list[str] = []
+    current_id = state["current_phase"]
+    current = definition.get_phase(current_id)  # fail closed if current_phase itself is corrupted
+
+    if to == "REPAIR_LOOP":
+        if current.failure_transition != "REPAIR_LOOP":
+            reasons.append(f"{current_id} does not route failures to REPAIR_LOOP")
+        if any(loop["status"] == "ACTIVE" for loop in state["loops"]):
+            reasons.append("an active loop already exists; resolve it before entering a new one")
+        return {"allowed": not reasons, "transition_type": None if reasons else "LOOP_ENTRY", "blocked_reasons": reasons, "skipped_phases": []}
+
+    _require(to in definition.phases, f"unknown target phase: {to!r}")
+
+    # An active repair_loop originating at the current phase authorizes returning to the
+    # universal repair target, even though "REPAIR_LOOP" itself (not a real phase) is what
+    # current.failure_transition names.
+    active_repair = next(
+        (loop for loop in state["loops"] if loop["status"] == "ACTIVE" and loop["loop_type"] == "repair_loop" and loop["origin_phase"] == current_id),
+        None,
+    )
+    if active_repair and to == _UNIVERSAL_REPAIR_TARGET:
+        transition_type: str | None = "LOOP_RETURN"
+        skipped: list[str] = []
+    else:
+        skip_target, skip_chain = _resolve_forward_target(definition, state, current)
+        if skip_target == to and skip_chain:
+            transition_type, skipped = "SKIP", skip_chain
+        else:
+            transition_type, skipped = _classify_edge(definition, current, to), []
+            if transition_type is None:
+                reasons.append(
+                    f"{to} is not a legal transition from {current_id} "
+                    f"(allowed_next={current.allowed_next}, allowed_back={current.allowed_back_transitions}, "
+                    f"failure_transition={current.failure_transition})"
+                )
+
+    if current.required_evidence and not evidence_refs:
+        reasons.append(f"{current_id} requires evidence ({current.required_evidence}) but none was supplied")
+    if current.required_artifacts and not artifact_refs:
+        reasons.append(f"{current_id} requires artifacts ({current.required_artifacts}) but none was supplied")
+
+    known_evidence = _runtime_evidence_ids(project)
+    if known_evidence is not None and evidence_refs:
+        unknown = [ref for ref in evidence_refs if ref not in known_evidence]
+        if unknown:
+            reasons.append(f"unknown evidence reference(s), not found in the runtime evidence ledger: {unknown}")
+
+    return {
+        "allowed": not reasons,
+        "transition_type": transition_type if not reasons else None,
+        "blocked_reasons": reasons,
+        "skipped_phases": skipped,
+    }
+
+
+def can_transition(project: Path, to: str, evidence_refs: list[str] = (), artifact_refs: list[str] = ()) -> dict[str, Any]:
+    """Read-only dry run: does not write anything."""
+    state, definition = _require_state(project)
+    return _evaluate_transition(project, state, definition, to, list(evidence_refs), list(artifact_refs))
+
+
+def _new_loop_record(loop_type: str, origin_phase: str, current_phase: str, reason: str, evidence_refs: list[str]) -> dict[str, Any]:
+    timestamp = _now()
+    digest = hashlib.sha256(f"{loop_type}{origin_phase}{timestamp}".encode("utf-8")).hexdigest()[:12]
+    return {
+        "loop_id": f"loop-{digest}",
+        "loop_type": loop_type,
+        "origin_phase": origin_phase,
+        "current_phase": current_phase,
+        "reason": reason,
+        "status": "ACTIVE",
+        "entered_at": timestamp,
+        "resolved_at": None,
+        "evidence_refs": list(evidence_refs),
+    }
+
+
+def transition(
+    project: Path,
+    to: str,
+    actor: str,
+    reason: str,
+    *,
+    evidence_refs: list[str] = (),
+    artifact_refs: list[str] = (),
+    authority_class: str = "human",
+) -> dict[str, Any]:
+    """The only function that ever assigns state["current_phase"]."""
+    _require(bool(actor and actor.strip()), "transition requires a non-empty actor_id")
+    _require(bool(reason and reason.strip()), "transition requires a non-empty reason")
+    _require(authority_class in TRANSITION_AUTHORITY_CLASSES, f"unknown authority_class: {authority_class!r}")
+    state, definition = _require_state(project)
+    evidence_refs = list(evidence_refs)
+    artifact_refs = list(artifact_refs)
+
+    evaluation = _evaluate_transition(project, state, definition, to, evidence_refs, artifact_refs)
+    if not evaluation["allowed"]:
+        raise MethodologyValidationError(
+            f"transition {state['current_phase']} -> {to} rejected: " + "; ".join(evaluation["blocked_reasons"])
+        )
+
+    current_id = state["current_phase"]
+    current = definition.get_phase(current_id)
+    transition_type = evaluation["transition_type"]
+    timestamp = _now()
+    digest = hashlib.sha256(f"{current_id}{to}{timestamp}".encode("utf-8")).hexdigest()[:12]
+
+    record: dict[str, Any] = {
+        "transition_id": f"transition-{digest}",
+        "methodology_id": state["methodology_id"],
+        "methodology_version": state["methodology_version"],
+        "from_phase": current_id,
+        "to_phase": to,
+        "transition_type": transition_type,
+        "reason": reason.strip(),
+        "actor_id": actor.strip(),
+        "authority_class": authority_class,
+        "evidence_refs": evidence_refs,
+        "artifact_refs": artifact_refs,
+        "timestamp": timestamp,
+        "profile_at_transition": _effective_profile_for_phase(state, current),
+    }
+    if transition_type == "SKIP":
+        record["skipped_phases"] = evaluation["skipped_phases"]
+    state["transition_history"].append(record)
+
+    if to == "REPAIR_LOOP":
+        state["loops"].append(_new_loop_record("repair_loop", current_id, current_id, reason.strip(), evidence_refs))
+        # current_phase intentionally unchanged: REPAIR_LOOP is not a real phase to occupy.
+    else:
+        target = definition.get_phase(to)
+        for loop in state["loops"]:
+            if loop["status"] != "ACTIVE":
+                continue
+            if loop["loop_type"] == "repair_loop" and loop["origin_phase"] == current_id and to == _UNIVERSAL_REPAIR_TARGET:
+                loop["status"], loop["resolved_at"], loop["current_phase"] = "RESOLVED", timestamp, to
+            elif loop["loop_type"] == current.loop and current.loop != (target.loop or None):
+                loop["status"], loop["resolved_at"], loop["current_phase"] = "RESOLVED", timestamp, to
+        if transition_type == "LOOP_ENTRY" and target.loop:
+            if not any(loop["status"] == "ACTIVE" and loop["loop_type"] == target.loop for loop in state["loops"]):
+                state["loops"].append(_new_loop_record(target.loop, current_id, to, reason.strip(), evidence_refs))
+        state["current_phase"] = to
+
+    state["updated_at"] = timestamp
+    _write_state(project, state)
+    return state
+
+
+def resolve_loop(project: Path, loop_id: str, status_value: str, actor: str, reason: str) -> dict[str, Any]:
+    """Explicit manual resolution for a loop transition() didn't already auto-resolve (e.g.
+    marking a stuck loop BLOCKED/INCONCLUSIVE instead of leaving it dangling ACTIVE)."""
+    _require(status_value in LOOP_STATUSES and status_value != "ACTIVE", f"unknown resolution status: {status_value!r}")
+    _require(bool(actor and actor.strip()), "loop resolution requires a non-empty actor_id")
+    _require(bool(reason and reason.strip()), "loop resolution requires a non-empty reason")
+    state, _definition = _require_state(project)
+    loop = next((item for item in state["loops"] if item["loop_id"] == loop_id), None)
+    if loop is None:
+        raise MethodologyValidationError(f"unknown loop_id: {loop_id!r}")
+    _require(loop["status"] == "ACTIVE", f"loop {loop_id} is not ACTIVE (status={loop['status']!r})")
+    loop["status"] = status_value
+    loop["resolved_at"] = _now()
+    state["updated_at"] = loop["resolved_at"]
+    _write_state(project, state)
+    return state
+
+
+def active_loops(project: Path) -> list[dict[str, Any]]:
+    state, _definition = _require_state(project)
+    return [loop for loop in state["loops"] if loop["status"] == "ACTIVE"]
+
+
+def evaluate_phase_status(project: Path, phase_id: str | None = None) -> str:
+    """NOT_STARTED | ACTIVE | BLOCKED | READY_TO_EXIT | COMPLETED.
+
+    COMPLETED is earned only by an actual recorded forward-flavored transition_history entry
+    (FORWARD/LOOP_ENTRY/SKIP) whose from_phase is this phase - never asserted directly, and
+    never inferred merely from current_phase having moved past it some other way.
+    """
+    state, definition = _require_state(project)
+    phase_id = phase_id or state["current_phase"]
+    phase = definition.get_phase(phase_id)  # fail closed on an unknown phase id
+
+    if phase_id == state["current_phase"]:
+        if not phase.allowed_next:
+            return "ACTIVE"
+        evaluation = _evaluate_transition(project, state, definition, phase.allowed_next[0], [], [])
+        return "READY_TO_EXIT" if evaluation["allowed"] else "BLOCKED"
+
+    exited_forward = any(
+        entry["from_phase"] == phase_id and entry["transition_type"] in {"FORWARD", "LOOP_ENTRY", "SKIP"}
+        for entry in state["transition_history"]
+    )
+    return "COMPLETED" if exited_forward else "NOT_STARTED"
 
 
 def main() -> None:
