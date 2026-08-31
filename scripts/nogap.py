@@ -815,6 +815,12 @@ def cmd_context(args: argparse.Namespace) -> None:
         print(f"updated context: {root / 'context.json'}")
 
 
+def cmd_dashboard(args: argparse.Namespace) -> None:
+    from nogap_dashboard import serve
+
+    serve(Path(args.path), args.host, args.port)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -896,6 +902,12 @@ def main() -> None:
     autolearn.add_argument("--include-learned", action="store_true")
     autolearn.add_argument("--actor", default="nogap autolearn")
     autolearn.set_defaults(func=cmd_autolearn)
+
+    dashboard = sub.add_parser("dashboard")
+    dashboard.add_argument("path", nargs="?", default=".")
+    dashboard.add_argument("--host", default="127.0.0.1")
+    dashboard.add_argument("--port", type=int, default=8765)
+    dashboard.set_defaults(func=cmd_dashboard)
 
     args = parser.parse_args()
     if args.command == "goal" and args.action == "set" and not args.objective:

@@ -204,6 +204,13 @@ python scripts/nogap.py recall /path/to/project --tag gate
 python scripts/nogap.py context /path/to/project --show
 ```
 
+The visual runtime dashboard prototype is available at `dashboard/index.html`.
+Run it against a real project runtime with:
+
+```bash
+python scripts/nogap.py dashboard /path/to/project
+```
+
 The runtime is intentionally local-first and server-ready. A frozen gate is hash-locked for the run;
 evidence that claims to prove work must reference the frozen gate hash. Authoritative evidence
 records producer identity, authority class, role, and provenance. Lessons are scoped, tagged, and
@@ -335,11 +342,20 @@ metadata with selected provider/runtime/model, reason, cheap alternatives, quota
 known, and policy version. Commercial facts such as pricing or model rankings belong in adapters or
 config, not immutable gate meaning.
 
+The default local routing policy is recorded in `runtime/config/model-router.policy.json`:
+`gpt-5.6-terra` plans, `gpt-5.4` implements, and `gpt-5.6-sol` judges.
+
 ## Deferred Runtime Work
 
 NoGapCode deliberately defers distributed workers, Kubernetes, graph databases, vector-memory
 platforms, mandatory A2A, automatic merge of learned lessons, and multi-cloud GPU control planes
 until tests or benchmarks prove they close a real trust gap.
+
+The intended product extension path is:
+
+1. CLI plus localhost Dashboard.
+2. Tauri installer that wraps the same Dashboard and starts the same local Runtime.
+3. Optional server mode for remote access with authentication.
 
 ## Validate
 

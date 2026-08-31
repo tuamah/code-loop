@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 code-loop-*.zip
+dashboard/screenshot-*.png
+dashboard/chrome-profile*/

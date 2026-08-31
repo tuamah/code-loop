@@ -1,0 +1,1007 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NoGapCode Trust Runtime Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #070b12;
+      --panel: #0d1420;
+      --panel-2: #111a27;
+      --panel-3: #0a111b;
+      --line: rgba(148, 163, 184, 0.16);
+      --line-strong: rgba(148, 163, 184, 0.26);
+      --text: #f6f8fb;
+      --muted: #a7b1c2;
+      --subtle: #778195;
+      --green: #35e37d;
+      --green-soft: rgba(53, 227, 125, 0.14);
+      --blue: #3298ff;
+      --blue-soft: rgba(50, 152, 255, 0.16);
+      --purple: #b069ff;
+      --purple-soft: rgba(176, 105, 255, 0.16);
+      --amber: #ffb11f;
+      --amber-soft: rgba(255, 177, 31, 0.14);
+      --red: #ff6969;
+      --red-soft: rgba(255, 105, 105, 0.14);
+      --nav: 226px;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at 55% -10%, rgba(25, 92, 151, 0.16), transparent 34rem),
+        linear-gradient(180deg, #080d15 0%, #07101a 52%, #08111a 100%);
+      color: var(--text);
+    }
+
+    button, select {
+      font: inherit;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: var(--nav) minmax(0, 1fr);
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(9, 16, 25, 0.96), rgba(6, 11, 18, 0.98));
+      padding: 18px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
+    .mark {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 22px;
+      line-height: 1.05;
+      font-weight: 750;
+    }
+
+    .brand p {
+      margin: 2px 0 0;
+      color: var(--green);
+      font-size: 14px;
+      font-weight: 650;
+    }
+
+    .nav {
+      display: grid;
+      gap: 18px;
+    }
+
+    .nav-section {
+      display: grid;
+      gap: 8px;
+    }
+
+    .nav-title {
+      color: #8c97aa;
+      font-size: 12px;
+      text-transform: uppercase;
+      margin: 0 8px;
+    }
+
+    .nav-item {
+      min-height: 40px;
+      border: 0;
+      border-radius: 6px;
+      color: #d8deea;
+      background: transparent;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 10px;
+      text-align: left;
+      cursor: default;
+    }
+
+    .nav-item.active {
+      color: #fff;
+      background: linear-gradient(90deg, rgba(32, 171, 124, 0.26), rgba(32, 171, 124, 0.1));
+    }
+
+    .nav-item svg {
+      width: 19px;
+      height: 19px;
+      color: currentColor;
+      flex: 0 0 auto;
+    }
+
+    .version {
+      margin-top: auto;
+      color: #a8b2c2;
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 8px;
+    }
+
+    .main {
+      min-width: 0;
+      display: grid;
+      grid-template-rows: 76px 1fr;
+    }
+
+    .topbar {
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      padding: 0 24px 0 28px;
+      background: rgba(8, 13, 21, 0.78);
+      backdrop-filter: blur(14px);
+    }
+
+    .menu-button {
+      width: 36px;
+      height: 36px;
+      display: grid;
+      place-items: center;
+      border: 0;
+      background: transparent;
+      color: #d9e2ef;
+      padding: 0;
+    }
+
+    .project-select {
+      width: min(300px, 34vw);
+      height: 40px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      background: #0e1521;
+      color: #d8deea;
+      padding: 0 14px;
+    }
+
+    .top-actions {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .runtime-pill {
+      border: 0;
+      border-radius: 6px;
+      background: rgba(27, 107, 91, 0.26);
+      color: var(--green);
+      min-height: 30px;
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .runtime-pill::before,
+    .status-dot {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 12px rgba(53, 227, 125, 0.65);
+    }
+
+    .icon-button {
+      width: 32px;
+      height: 32px;
+      border: 0;
+      background: transparent;
+      color: #dbe3ef;
+      display: grid;
+      place-items: center;
+      position: relative;
+      padding: 0;
+    }
+
+    .badge {
+      position: absolute;
+      top: 1px;
+      right: 0;
+      min-width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--blue);
+      color: white;
+      font-size: 10px;
+      line-height: 16px;
+      text-align: center;
+      font-weight: 750;
+    }
+
+    .user {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: linear-gradient(145deg, #b98767, #f0c7a5);
+      border: 2px solid rgba(255, 255, 255, 0.15);
+      display: grid;
+      place-items: center;
+      color: #2e1b12;
+      font-weight: 800;
+    }
+
+    .user strong,
+    .user span {
+      display: block;
+    }
+
+    .user strong {
+      font-size: 14px;
+      line-height: 1.1;
+    }
+
+    .user span {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 3px;
+    }
+
+    .content {
+      min-width: 0;
+      padding: 22px 24px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .overview {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) auto;
+      align-items: start;
+      gap: 20px;
+    }
+
+    .overview h2 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .overview p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .summary-row {
+      display: flex;
+      align-items: center;
+      gap: 22px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .summary-stat {
+      min-width: 72px;
+      padding-right: 20px;
+      border-right: 1px solid var(--line);
+    }
+
+    .summary-stat strong {
+      display: block;
+      color: #fff;
+      font-size: 18px;
+      margin-top: 4px;
+    }
+
+    .date-filter {
+      height: 40px;
+      border: 1px solid var(--line-strong);
+      border-radius: 6px;
+      color: #f3f7fb;
+      background: #0a111c;
+      padding: 0 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 14px;
+      white-space: nowrap;
+    }
+
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(170px, 1fr));
+      gap: 14px;
+    }
+
+    .card,
+    .wide-card,
+    .status-bar {
+      border: 1px solid var(--line-strong);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(17, 27, 41, 0.95), rgba(11, 18, 28, 0.95));
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    }
+
+    .metric {
+      height: 160px;
+      padding: 16px 18px 10px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .metric-head {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .metric-icon,
+    .decision-icon,
+    .activity-icon {
+      width: 56px;
+      height: 56px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+    }
+
+    .metric-icon svg,
+    .decision-icon svg,
+    .activity-icon svg {
+      width: 28px;
+      height: 28px;
+    }
+
+    .blue { color: var(--blue); background: var(--blue-soft); }
+    .green { color: var(--green); background: var(--green-soft); }
+    .purple { color: var(--purple); background: var(--purple-soft); }
+    .amber { color: var(--amber); background: var(--amber-soft); }
+    .red { color: var(--red); background: var(--red-soft); }
+    .tone-blue { color: var(--blue); }
+    .tone-green { color: var(--green); }
+    .tone-amber { color: var(--amber); }
+    .tone-red { color: var(--red); }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 14px;
+      margin-bottom: 6px;
+    }
+
+    .metric-value {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      font-size: 34px;
+      font-weight: 780;
+      line-height: 1;
+    }
+
+    .delta {
+      color: var(--green);
+      font-size: 14px;
+      font-weight: 750;
+    }
+
+    .metric-note {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .sparkline {
+      width: 100%;
+      height: 36px;
+      margin-top: 12px;
+    }
+
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr 0.96fr;
+      gap: 14px;
+    }
+
+    .wide-card {
+      min-height: 500px;
+      overflow: hidden;
+    }
+
+    .card-header {
+      min-height: 54px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+    }
+
+    .card-header h3 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .view-link {
+      border: 0;
+      background: transparent;
+      color: var(--green);
+      font-size: 13px;
+      padding: 0;
+      white-space: nowrap;
+    }
+
+    .gate-head,
+    .gate-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 74px 58px 58px;
+      gap: 10px;
+      align-items: center;
+      padding: 0 16px;
+    }
+
+    .gate-head {
+      color: var(--muted);
+      font-size: 12px;
+      height: 26px;
+    }
+
+    .gate-row {
+      min-height: 62px;
+      border-top: 1px solid var(--line);
+    }
+
+    .gate-name {
+      display: grid;
+      grid-template-columns: 3px minmax(0, 1fr);
+      gap: 12px;
+      align-items: center;
+    }
+
+    .gate-bar {
+      width: 3px;
+      height: 28px;
+      background: currentColor;
+    }
+
+    .gate-title {
+      font-size: 14px;
+      color: #fff;
+      margin-bottom: 5px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .gate-sub {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .pill {
+      justify-self: end;
+      border-radius: 5px;
+      padding: 6px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      min-width: 64px;
+      text-align: center;
+    }
+
+    .pill.pass { color: var(--green); background: var(--green-soft); border: 1px solid rgba(53, 227, 125, 0.18); }
+    .pill.fail { color: var(--red); background: var(--red-soft); border: 1px solid rgba(255, 105, 105, 0.18); }
+    .pill.pending { color: var(--amber); background: var(--amber-soft); border: 1px solid rgba(255, 177, 31, 0.2); }
+
+    .count {
+      font-size: 16px;
+      font-weight: 760;
+      text-align: center;
+    }
+
+    .decision-list,
+    .activity-list {
+      display: grid;
+    }
+
+    .decision-row,
+    .activity-row {
+      display: grid;
+      gap: 12px;
+      padding: 14px 16px;
+      border-top: 1px solid var(--line);
+      min-height: 72px;
+    }
+
+    .decision-row {
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      align-items: center;
+    }
+
+    .decision-icon,
+    .activity-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+    }
+
+    .decision-icon svg,
+    .activity-icon svg {
+      width: 20px;
+      height: 20px;
+    }
+
+    .decision-main strong,
+    .activity-main strong {
+      display: block;
+      font-size: 14px;
+      margin-bottom: 7px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .decision-main span,
+    .activity-main span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .decision-status {
+      display: grid;
+      justify-items: end;
+      gap: 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .activity-row {
+      grid-template-columns: 34px minmax(0, 1fr) auto;
+      align-items: start;
+      position: relative;
+    }
+
+    .activity-row::before {
+      content: "";
+      position: absolute;
+      left: 32px;
+      top: 50px;
+      bottom: -16px;
+      border-left: 1px dashed rgba(100, 154, 210, 0.35);
+    }
+
+    .activity-row:last-child::before {
+      display: none;
+    }
+
+    .time {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+      margin-top: 8px;
+    }
+
+    .activity-main em {
+      color: var(--green);
+      font-style: normal;
+      font-weight: 700;
+    }
+
+    .card-footer {
+      height: 48px;
+      border-top: 1px solid var(--line);
+      display: grid;
+      place-items: center;
+    }
+
+    .status-bar {
+      min-height: 68px;
+      display: grid;
+      grid-template-columns: repeat(6, minmax(120px, 1fr)) 150px;
+      align-items: center;
+      padding: 0 20px;
+      gap: 0;
+    }
+
+    .status-item {
+      min-height: 46px;
+      display: grid;
+      align-content: center;
+      gap: 8px;
+      border-right: 1px solid var(--line);
+      padding: 0 18px;
+    }
+
+    .status-item:first-child {
+      padding-left: 0;
+    }
+
+    .status-item strong {
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    .status-item span {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--green);
+      font-size: 12px;
+    }
+
+    .trust {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      font-weight: 750;
+    }
+
+    .trust strong {
+      color: var(--green);
+      font-size: 22px;
+    }
+
+    .trust span {
+      color: #fff;
+      font-size: 18px;
+    }
+
+    svg {
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .book-fill {
+      fill: currentColor;
+      stroke: none;
+    }
+
+    @media (max-width: 1180px) {
+      :root { --nav: 76px; }
+      .brand h1, .brand p, .nav-title, .nav-item span, .version, .user div { display: none; }
+      .sidebar { align-items: center; padding: 18px 10px; }
+      .nav-item { justify-content: center; width: 48px; padding: 0; }
+      .dashboard-grid { grid-template-columns: 1fr; }
+      .wide-card { min-height: auto; }
+      .status-bar { grid-template-columns: repeat(2, 1fr); row-gap: 14px; padding: 18px; }
+      .status-item:nth-child(2n) { border-right: 0; }
+      .trust { justify-content: flex-start; padding-left: 18px; }
+    }
+
+    @media (max-width: 760px) {
+      .shell { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .main { grid-template-rows: auto 1fr; }
+      .topbar { min-height: 74px; padding: 12px; gap: 12px; flex-wrap: wrap; }
+      .project-select { width: min(100%, 260px); }
+      .top-actions { margin-left: 0; gap: 12px; }
+      .overview { grid-template-columns: 1fr; }
+      .summary-row { overflow-x: auto; padding-bottom: 4px; }
+      .metrics { grid-template-columns: 1fr; }
+      .content { padding: 18px 12px; }
+      .decision-row,
+      .activity-row { grid-template-columns: 34px minmax(0, 1fr); }
+      .decision-status,
+      .time { grid-column: 2; justify-items: start; margin-top: 0; }
+      .status-bar { grid-template-columns: 1fr; }
+      .status-item { border-right: 0; border-bottom: 1px solid var(--line); padding: 12px 0; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand">
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48"><path d="M24 4 41 12v13c0 10-6.5 16-17 20C13.5 41 7 35 7 25V12L24 4Z"></path><path d="M24 12v24"></path><path d="m24 34 9-11"></path></svg>
+        </div>
+        <div>
+          <h1>NoGapCode</h1>
+          <p>Trust Runtime</p>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <div class="nav-section">
+          <button class="nav-item active" aria-current="page"><svg viewBox="0 0 24 24"><path d="m3 11 9-8 9 8"></path><path d="M5 10v10h14V10"></path><path d="M9 20v-6h6v6"></path></svg><span>Overview</span></button>
+        </div>
+        <div class="nav-section">
+          <p class="nav-title">Execution</p>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h1"></path><path d="M3 12h1"></path><path d="M3 18h1"></path></svg><span>Work Items</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="m10 13 2 2 4-4"></path></svg><span>Executions</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M6 4h12v16H6z"></path><path d="M9 8h6"></path><path d="M9 12h6"></path><path d="M9 16h4"></path></svg><span>Evidence</span></button>
+        </div>
+        <div class="nav-section">
+          <p class="nav-title">Verification</p>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg><span>Verifications</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Gates</span></button>
+        </div>
+        <div class="nav-section">
+          <p class="nav-title">Decisions</p>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 22 4 18V6l8-4 8 4v12Z"></path><path d="m9 12 2 2 4-5"></path></svg><span>Decisions</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="M8 12h8"></path><path d="M12 8v8"></path></svg><span>Appeals</span></button>
+        </div>
+        <div class="nav-section">
+          <p class="nav-title">Learning</p>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5Z"></path></svg><span>Literature</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="M8 9l4 2 4-2"></path><path d="M8 15l4 2 4-2"></path></svg><span>Knowledge Base</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg><span>Hypotheses</span></button>
+        </div>
+        <div class="nav-section">
+          <p class="nav-title">System</p>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M12 3 4 7v10l8 4 8-4V7Z"></path><path d="m4 7 8 4 8-4"></path><path d="M12 11v10"></path></svg><span>Models</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-8 0v2"></path><circle cx="12" cy="7" r="4"></circle><path d="M20 8v6"></path><path d="M23 11h-6"></path></svg><span>Agents</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><path d="m14.7 6.3 3 3"></path><path d="m7 17 7.7-7.7"></path><path d="m5 19 2-2"></path><path d="M17 3l4 4-3 3-4-4Z"></path></svg><span>Tools</span></button>
+          <button class="nav-item"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2 3-.2-.1a1.8 1.8 0 0 0-2 .2 1.7 1.7 0 0 0-.8 1.6V22h-4v-.3a1.7 1.7 0 0 0-.8-1.6 1.8 1.8 0 0 0-2-.2l-.2.1-2-3 .1-.1A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.4-1H3v-4h.2a1.7 1.7 0 0 0 1.4-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2-3 .2.1a1.8 1.8 0 0 0 2-.2A1.7 1.7 0 0 0 10.8 2H11h4v.3a1.7 1.7 0 0 0 .8 1.6 1.8 1.8 0 0 0 2 .2l.2-.1 2 3-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.4 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"></path></svg><span>Settings</span></button>
+        </div>
+      </nav>
+
+      <div class="version">NoGapCode Runtime<br>v0.5.0</div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="menu-button" aria-label="Toggle navigation"><svg viewBox="0 0 24 24"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path></svg></button>
+        <select class="project-select" aria-label="Select project">
+          <option>Select Project</option>
+          <option>Auth Service</option>
+          <option>Core Service</option>
+        </select>
+        <div class="top-actions">
+          <span class="runtime-pill">Runtime Online</span>
+          <button class="icon-button" aria-label="Open repository"><svg viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-6.5 0-1.3-.5-2.5-1.3-3.4.1-.4.5-1.9-.1-3.3 0 0-1.1-.4-3.6 1.3a12.4 12.4 0 0 0-6 0C6.4.9 5.4 1.3 5.4 1.3c-.6 1.4-.2 2.9-.1 3.3A5 5 0 0 0 4 8c0 4.5 3 6.5 6 6.5-.4.4-.7 1-.8 1.8-1 .5-3.6 1.2-5.2-1.5 0 0-1-.1-2 1.1 0 0 1.4 3.9 7 2.7V22"></path></svg></button>
+          <button class="icon-button" aria-label="Notifications"><svg viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"></path><path d="M13.7 21a2 2 0 0 1-3.4 0"></path></svg><span class="badge">3</span></button>
+          <div class="user" aria-label="Signed in user">
+            <div class="avatar">T</div>
+            <div><strong>tuamah</strong><span>Council Member</span></div>
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="m6 9 6 6 6-6"></path></svg>
+          </div>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="overview">
+          <div>
+            <h2>Overview</h2>
+            <p>Trust is earned. Gaps are closed. Quality is provable.</p>
+          </div>
+          <div class="summary-row" aria-label="Summary">
+            <div class="summary-stat">Projects<strong data-summary="projects">3</strong></div>
+            <div class="summary-stat">Open Items<strong data-summary="open_items">7</strong></div>
+            <div class="summary-stat">Pending Verifications<strong data-summary="pending_verifications">4</strong></div>
+            <div class="summary-stat">Decisions (30d)<strong data-summary="decisions_30d">23</strong></div>
+            <div class="date-filter">May 17 - Jun 16, 2025 <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M3 10h18"></path><rect x="3" y="4" width="18" height="18" rx="2"></rect></svg></div>
+          </div>
+        </div>
+
+        <div class="metrics">
+          <article class="card metric">
+            <div class="metric-head"><div class="metric-icon blue"><svg viewBox="0 0 24 24"><path d="M8 6V4h8v2"></path><rect x="5" y="6" width="14" height="15" rx="2"></rect><path d="M9 11h6"></path><path d="M9 15h6"></path></svg></div><div><div class="metric-label">Executions</div><div class="metric-value"><span data-metric="executions">18</span> <span class="delta">↑ 12%</span></div><div class="metric-note">from runtime events</div></div></div>
+            <svg class="sparkline" viewBox="0 0 260 46" preserveAspectRatio="none"><path d="M0 34 18 29 36 21 54 14 72 23 90 15 108 27 126 18 144 14 162 22 180 10 198 18 216 9 234 19 252 10 260 9" stroke="#3298ff"></path></svg>
+          </article>
+          <article class="card metric">
+            <div class="metric-head"><div class="metric-icon green"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg></div><div><div class="metric-label">Verifications</div><div class="metric-value"><span data-metric="verifications">24</span> <span class="delta">↑ 8%</span></div><div class="metric-note">from evidence files</div></div></div>
+            <svg class="sparkline" viewBox="0 0 260 46" preserveAspectRatio="none"><path d="M0 35 20 28 38 22 56 17 74 27 92 19 110 30 128 22 146 20 164 25 182 14 200 20 218 12 236 23 254 12 260 10" stroke="#35e37d"></path></svg>
+          </article>
+          <article class="card metric">
+            <div class="metric-head"><div class="metric-icon purple"><svg viewBox="0 0 24 24"><path d="m14 4 6 6"></path><path d="m5 13 6 6"></path><path d="m11 7 6 6"></path><path d="m2 22 7-7"></path><path d="m15 9 3-3"></path></svg></div><div><div class="metric-label">Decisions</div><div class="metric-value"><span data-metric="decisions">16</span> <span class="delta">↑ 14%</span></div><div class="metric-note">from decision records</div></div></div>
+            <svg class="sparkline" viewBox="0 0 260 46" preserveAspectRatio="none"><path d="M0 34 18 29 36 23 54 18 72 27 90 20 108 31 126 23 144 21 162 25 180 14 198 22 216 13 234 8 252 17 260 9" stroke="#b069ff"></path></svg>
+          </article>
+          <article class="card metric">
+            <div class="metric-head"><div class="metric-icon amber"><svg viewBox="0 0 24 24"><path class="book-fill" d="M5 4c3.3 0 5 .8 7 2v14c-2-1.2-3.7-2-7-2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm14 0a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2c-3.3 0-5 .8-7 2V6c2-1.2 3.7-2 7-2Z"></path></svg></div><div><div class="metric-label">Knowledge Items</div><div class="metric-value"><span data-metric="knowledge">102</span> <span class="delta">↑ 5%</span></div><div class="metric-note">lessons and literature</div></div></div>
+            <svg class="sparkline" viewBox="0 0 260 46" preserveAspectRatio="none"><path d="M0 35 18 30 36 22 54 16 72 25 90 17 108 29 126 20 144 17 162 24 180 16 198 20 216 10 234 15 252 8 260 8" stroke="#ffb11f"></path></svg>
+          </article>
+        </div>
+
+        <div class="dashboard-grid">
+          <section class="wide-card">
+            <header class="card-header"><h3>Gate Status</h3><button class="view-link">View all gates →</button></header>
+            <div class="gate-head"><span></span><span></span><span>Passed</span><span>Failed</span></div>
+            <div class="gate-row"><div class="gate-name tone-green"><span class="gate-bar"></span><div><div class="gate-title">Format &amp; Style Gate</div><div class="gate-sub">Code style, formatting, linting</div></div></div><span class="pill pass">PASSED</span><span class="count">18</span><span class="count">2</span></div>
+            <div class="gate-row"><div class="gate-name tone-green"><span class="gate-bar"></span><div><div class="gate-title">Unit Tests Gate</div><div class="gate-sub">All unit tests must pass</div></div></div><span class="pill pass">PASSED</span><span class="count">17</span><span class="count">3</span></div>
+            <div class="gate-row"><div class="gate-name tone-blue"><span class="gate-bar"></span><div><div class="gate-title">Integration Gate</div><div class="gate-sub">Integration tests</div></div></div><span class="pill pass">PASSED</span><span class="count">15</span><span class="count">1</span></div>
+            <div class="gate-row"><div class="gate-name tone-red"><span class="gate-bar"></span><div><div class="gate-title">Security Gate</div><div class="gate-sub">SAST, dependency scan, secrets</div></div></div><span class="pill fail">FAILED</span><span class="count">10</span><span class="count">4</span></div>
+            <div class="gate-row"><div class="gate-name tone-amber"><span class="gate-bar"></span><div><div class="gate-title">Performance Gate</div><div class="gate-sub">Performance benchmarks</div></div></div><span class="pill pending">PENDING</span><span class="count">4</span><span class="count">0</span></div>
+            <div class="gate-row"><div class="gate-name tone-green"><span class="gate-bar"></span><div><div class="gate-title">Documentation Gate</div><div class="gate-sub">Docs and examples</div></div></div><span class="pill pass">PASSED</span><span class="count">9</span><span class="count">1</span></div>
+          </section>
+
+          <section class="wide-card">
+            <header class="card-header"><h3>Recent Decisions</h3><button class="view-link">View all →</button></header>
+            <div class="decision-list">
+              <div class="decision-row"><span class="decision-icon green"><svg viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"></path></svg></span><div class="decision-main"><strong>Add user authentication module</strong><span>Project: Auth Service</span><span>by Verifier: council-2</span></div><div class="decision-status"><span class="pill pass">ACCEPTED</span><span>2h ago</span></div></div>
+              <div class="decision-row"><span class="decision-icon green"><svg viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"></path></svg></span><div class="decision-main"><strong>Refactor payment processing</strong><span>Project: Payment Service</span><span>by Verifier: council-1</span></div><div class="decision-status"><span class="pill pass">ACCEPTED</span><span>5h ago</span></div></div>
+              <div class="decision-row"><span class="decision-icon red"><svg viewBox="0 0 24 24"><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path></svg></span><div class="decision-main"><strong>Implement new caching layer</strong><span>Project: Core Service</span><span>by Verifier: council-3</span></div><div class="decision-status"><span class="pill fail">REJECTED</span><span>1d ago</span></div></div>
+              <div class="decision-row"><span class="decision-icon amber"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"></circle><path d="M12 8v5"></path><path d="M12 16h.01"></path></svg></span><div class="decision-main"><strong>Optimize database queries</strong><span>Project: Analytics Service</span><span>by Verifier: council-2</span></div><div class="decision-status"><span class="pill pending">PENDING</span><span>1d ago</span></div></div>
+              <div class="decision-row"><span class="decision-icon green"><svg viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"></path></svg></span><div class="decision-main"><strong>Fix memory leak in worker</strong><span>Project: Worker Service</span><span>by Verifier: council-1</span></div><div class="decision-status"><span class="pill pass">ACCEPTED</span><span>2d ago</span></div></div>
+            </div>
+            <footer class="card-footer"><button class="view-link">View all decisions →</button></footer>
+          </section>
+
+          <section class="wide-card">
+            <header class="card-header"><h3>Recent Activity</h3><button class="view-link">View all →</button></header>
+            <div class="activity-list">
+              <div class="activity-row"><span class="activity-icon blue"><svg viewBox="0 0 24 24"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg></span><div class="activity-main"><strong>Execution started</strong><span>Implement user login endpoint</span><span>by executor-1</span></div><span class="time">10m ago</span></div>
+              <div class="activity-row"><span class="activity-icon green"><svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg></span><div class="activity-main"><strong>Verification completed</strong><span>Unit Tests Gate</span><span>by verifier-2</span></div><span class="time">25m ago</span></div>
+              <div class="activity-row"><span class="activity-icon purple"><svg viewBox="0 0 24 24"><path d="m14 4 6 6"></path><path d="m5 13 6 6"></path><path d="m11 7 6 6"></path><path d="m2 22 7-7"></path></svg></span><div class="activity-main"><strong>Decision made</strong><span>Add rate limiting to API</span><span><em>ACCEPTED</em> by council-1</span></div><span class="time">1h ago</span></div>
+              <div class="activity-row"><span class="activity-icon amber"><svg viewBox="0 0 24 24"><path class="book-fill" d="M5 4c3.3 0 5 .8 7 2v14c-2-1.2-3.7-2-7-2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm14 0a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2c-3.3 0-5 .8-7 2V6c2-1.2 3.7-2 7-2Z"></path></svg></span><div class="activity-main"><strong>New knowledge added</strong><span>Rate limiting best practices</span><span>by autolearn</span></div><span class="time">2h ago</span></div>
+              <div class="activity-row"><span class="activity-icon blue"><svg viewBox="0 0 24 24"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg></span><div class="activity-main"><strong>Execution completed</strong><span>Fix validation logic</span><span>by executor-2</span></div><span class="time">3h ago</span></div>
+            </div>
+            <footer class="card-footer"><button class="view-link">View all activity →</button></footer>
+          </section>
+        </div>
+
+        <footer class="status-bar" aria-label="System status">
+          <div class="status-item"><strong>System Status</strong><span><i class="status-dot"></i>All Systems Operational</span></div>
+          <div class="status-item"><strong>Model Router</strong><span><i class="status-dot"></i>Terra plans</span></div>
+          <div class="status-item"><strong>Agent Runtime</strong><span><i class="status-dot"></i>5.4 executes</span></div>
+          <div class="status-item"><strong>Tool Provider</strong><span><i class="status-dot"></i>Operational</span></div>
+          <div class="status-item"><strong>Execution Backend</strong><span><i class="status-dot"></i>Operational</span></div>
+          <div class="status-item"><strong>Evidence Store</strong><span><i class="status-dot"></i>Operational</span></div>
+          <div class="trust"><svg viewBox="0 0 24 24" width="32" height="32" class="green"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg><div><small>Sol judges</small><br><strong>92</strong><span> / 100</span></div></div>
+        </footer>
+      </section>
+    </main>
+  </div>
+  <script>
+    const statusClass = (status) => {
+      const normalized = String(status || "").toLowerCase();
+      if (normalized.includes("fail") || normalized.includes("reject")) return "fail";
+      if (normalized.includes("pending") || normalized.includes("abstain") || normalized.includes("repair")) return "pending";
+      return "pass";
+    };
+
+    const iconClass = (status) => {
+      const normalized = String(status || "").toLowerCase();
+      if (normalized.includes("fail") || normalized.includes("reject")) return "red";
+      if (normalized.includes("pending") || normalized.includes("abstain") || normalized.includes("repair")) return "amber";
+      if (normalized.includes("decision")) return "purple";
+      return "green";
+    };
+
+    const escapeHtml = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#39;"
+    }[char]));
+
+    const checkIcon = '<svg viewBox="0 0 24 24"><path d="m8 12 3 3 5-6"></path></svg>';
+    const codeIcon = '<svg viewBox="0 0 24 24"><path d="m8 9-4 3 4 3"></path><path d="m16 9 4 3-4 3"></path><path d="m14 5-4 14"></path></svg>';
+
+    function setText(selector, value) {
+      const node = document.querySelector(selector);
+      if (node) node.textContent = value;
+    }
+
+    function setStatus(selector, value) {
+      const node = document.querySelector(selector);
+      if (node) node.innerHTML = `<i class="status-dot"></i>${escapeHtml(value)}`;
+    }
+
+    function renderGates(gates) {
+      const rows = document.querySelectorAll(".gate-row");
+      rows.forEach((row) => row.remove());
+      const head = document.querySelector(".gate-head");
+      const parent = head?.parentElement;
+      if (!parent || !head) return;
+      const visible = gates.length ? gates : [{
+        name: "No Runtime Gate",
+        detail: "Start scripts/nogap.py init and freeze a gate",
+        status: "PENDING",
+        passed: 0,
+        failed: 0
+      }];
+      visible.slice(0, 6).forEach((gate) => {
+        const tone = statusClass(gate.status) === "fail" ? "tone-red" : statusClass(gate.status) === "pending" ? "tone-amber" : "tone-green";
+        head.insertAdjacentHTML("afterend", `
+          <div class="gate-row">
+            <div class="gate-name ${tone}"><span class="gate-bar"></span><div><div class="gate-title">${escapeHtml(gate.name)}</div><div class="gate-sub">${escapeHtml(gate.detail)}</div></div></div>
+            <span class="pill ${statusClass(gate.status)}">${escapeHtml(gate.status)}</span>
+            <span class="count">${Number(gate.passed || 0)}</span>
+            <span class="count">${Number(gate.failed || 0)}</span>
+          </div>
+        `);
+      });
+    }
+
+    function renderDecisions(decisions) {
+      const list = document.querySelector(".decision-list");
+      if (!list) return;
+      const visible = decisions.length ? decisions : [{
+        title: "No decisions recorded",
+        project: "Create runtime decisions with scripts/nogap.py decide",
+        by: "backend",
+        status: "PENDING",
+        time: "now"
+      }];
+      list.innerHTML = visible.map((item) => `
+        <div class="decision-row">
+          <span class="decision-icon ${iconClass(item.status)}">${checkIcon}</span>
+          <div class="decision-main"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.project)}</span><span>by ${escapeHtml(item.by || "unknown")}</span></div>
+          <div class="decision-status"><span class="pill ${statusClass(item.status)}">${escapeHtml(item.status)}</span><span>${escapeHtml(item.time)}</span></div>
+        </div>
+      `).join("");
+    }
+
+    function renderActivity(activity) {
+      const list = document.querySelector(".activity-list");
+      if (!list) return;
+      const visible = activity.length ? activity : [{
+        title: "No runtime activity",
+        detail: "Events will appear when gates, evidence, and decisions are recorded",
+        actor: "backend",
+        created_at: "now",
+        type: "EVENT"
+      }];
+      list.innerHTML = visible.map((item) => `
+        <div class="activity-row">
+          <span class="activity-icon ${iconClass(item.type)}">${item.type === "VERIFICATION_EVIDENCE_RECORDED" ? checkIcon : codeIcon}</span>
+          <div class="activity-main"><strong>${escapeHtml(item.title)}</strong><span>${escapeHtml(item.detail)}</span><span>by ${escapeHtml(item.actor || "unknown")}</span></div>
+          <span class="time">${escapeHtml(String(item.created_at || "").slice(0, 16) || "now")}</span>
+        </div>
+      `).join("");
+    }
+
+    async function loadDashboard() {
+      try {
+        const response = await fetch("/api/dashboard", { cache: "no-store" });
+        if (!response.ok) throw new Error(`Dashboard API returned ${response.status}`);
+        const data = await response.json();
+        document.querySelector(".runtime-pill").textContent = data.project.runtime_exists ? "Runtime Online" : "No Runtime";
+        document.querySelector(".runtime-pill").style.color = data.project.runtime_exists ? "var(--green)" : "var(--amber)";
+        setText("[data-summary='projects']", data.summary.projects);
+        setText("[data-summary='open_items']", data.summary.open_items);
+        setText("[data-summary='pending_verifications']", data.summary.pending_verifications);
+        setText("[data-summary='decisions_30d']", data.summary.decisions_30d);
+        Object.entries(data.metrics).forEach(([key, value]) => setText(`[data-metric='${key}']`, value));
+        setText(".overview p", data.project.objective || "Trust is earned. Gaps are closed. Quality is provable.");
+        renderGates(data.gates || []);
+        renderDecisions(data.decisions || []);
+        renderActivity(data.activity || []);
+        setStatus(".status-item:nth-child(2) span", data.system.model_router);
+        setStatus(".status-item:nth-child(3) span", data.system.agent_runtime);
+        setText(".trust small", data.system.arbiter);
+        setText(".trust strong", data.system.trust_score);
+      } catch (error) {
+        document.querySelector(".runtime-pill").textContent = "Backend Offline";
+        document.querySelector(".runtime-pill").style.color = "var(--red)";
+        setText(".overview p", "Start scripts/nogap_dashboard.py to connect the dashboard to runtime data.");
+      }
+    }
+
+    loadDashboard();
+  </script>
+</body>
+</html>

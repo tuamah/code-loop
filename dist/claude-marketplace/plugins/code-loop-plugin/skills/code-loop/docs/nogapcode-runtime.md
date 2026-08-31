@@ -175,6 +175,10 @@ Routing decisions are serializable evidence/event metadata: selected provider/ru
 cheap alternatives, cost or quota metadata when known, and policy version. Pricing and model
 rankings are adapter/config facts, not immutable gate semantics.
 
+The current default routing policy is stored as mutable configuration in
+`runtime/config/model-router.policy.json`: `gpt-5.6-terra` plans, `gpt-5.4` implements, and
+`gpt-5.6-sol` judges. This policy selects clients; it does not grant acceptance authority.
+
 ## Context Learning
 
 NoGapCode should learn context as conditional lessons, not as raw memory. A lesson is useful only
@@ -227,3 +231,15 @@ Do not build these in the first runtime:
 - marketplace
 - dozens of agents
 - multi-cloud execution
+
+## Product Extension
+
+NoGapCode should not become web-only or desktop-only. The architectural path is:
+
+1. `NoGapCode Core Runtime`: local service, schemas, gates, evidence, and decision engine without GUI.
+2. `NoGapCode CLI`: commands such as `nogap run`, `nogap verify`, `nogap status`, and `nogap dashboard`.
+3. `NoGapCode Dashboard`: a localhost web UI that reads runtime APIs and event files.
+4. `Desktop Shell`: later Tauri packaging of the same Dashboard and Runtime for Windows, Linux, and macOS.
+5. `Server Mode`: optional remote Dashboard with authentication.
+
+If the Dashboard fails, the Runtime must still run, verify, and decide from the CLI.
