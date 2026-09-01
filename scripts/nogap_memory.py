@@ -226,6 +226,10 @@ def collect_memory_sources(project: Path) -> dict[str, Any]:
     events = _load_jsonl_dir_strict(runtime_dir(project) / "events")
     gates = _load_json_dir_strict(runtime_dir(project) / "gates")
 
+    research = _collect_research(project)
+    _check_research_duplicate_ids(research)
+    _check_research_cross_refs(research)
+
     return {
         "methodology_state": state,
         "artifacts": artifacts,
@@ -234,10 +238,68 @@ def collect_memory_sources(project: Path) -> dict[str, Any]:
         "decisions_current": decisions_current,
         "events": events,
         "gates": gates,
+        "research": research,
         "git": _collect_git(project),
         "runtime_exists": (runtime_dir(project) / "run.json").is_file(),
         "methodology_exists": state is not None,
     }
+
+
+# --- M7-J research collection (read-only; nogap_research.py owns all writes) -----
+
+RESEARCH_KINDS = ("questions", "hypotheses", "protocols", "experiments", "observations", "claims", "assessments")
+RESEARCH_ID_FIELDS = {
+    "questions": "question_id", "hypotheses": "hypothesis_id", "protocols": "protocol_id",
+    "experiments": "experiment_id", "observations": "observation_id", "claims": "claim_id",
+    "assessments": "assessment_id",
+}
+
+
+def _collect_research(project: Path) -> dict[str, list[dict[str, Any]]]:
+    from nogap_research import research_dir as _research_dir
+    base = _research_dir(project)
+    return {kind: _load_json_dir_strict(base / kind) for kind in RESEARCH_KINDS}
+
+
+def _check_research_duplicate_ids(research: dict[str, list[dict[str, Any]]]) -> None:
+    for kind, id_field in RESEARCH_ID_FIELDS.items():
+        seen: set[str] = set()
+        for record in research[kind]:
+            rid = record.get(id_field)
+            if not rid:
+                continue
+            if rid in seen:
+                raise MethodologyValidationError(f"memory: duplicate authoritative {id_field} {rid!r} in research/{kind}")
+            seen.add(rid)
+
+
+def _check_research_cross_refs(research: dict[str, list[dict[str, Any]]]) -> None:
+    known_questions = {r["question_id"] for r in research["questions"]}
+    known_hypotheses = {r["hypothesis_id"] for r in research["hypotheses"]}
+    known_protocols = {r["protocol_id"] for r in research["protocols"]}
+    known_experiments = {r["experiment_id"] for r in research["experiments"]}
+    known_claims = {r["claim_id"] for r in research["claims"]}
+
+    for record in research["hypotheses"] + research["protocols"] + research["claims"]:
+        if record.get("question_id") and record["question_id"] not in known_questions:
+            raise MethodologyValidationError(f"memory: research record references unknown question_id {record['question_id']!r}")
+    for record in research["protocols"] + research["experiments"] + research["claims"]:
+        for ref in record.get("hypothesis_refs") or []:
+            if ref not in known_hypotheses:
+                raise MethodologyValidationError(f"memory: research record references unknown hypothesis_id {ref!r}")
+    for record in research["experiments"]:
+        if record.get("protocol_id") and record["protocol_id"] not in known_protocols:
+            raise MethodologyValidationError(f"memory: experiment references unknown protocol_id {record['protocol_id']!r}")
+    for record in research["observations"]:
+        if record.get("experiment_id") and record["experiment_id"] not in known_experiments:
+            raise MethodologyValidationError(f"memory: observation references unknown experiment_id {record['experiment_id']!r}")
+    for record in research["claims"]:
+        for ref in record.get("protocol_refs") or []:
+            if ref not in known_protocols:
+                raise MethodologyValidationError(f"memory: claim references unknown protocol_id {ref!r}")
+    for record in research["assessments"]:
+        if record.get("claim_id") and record["claim_id"] not in known_claims:
+            raise MethodologyValidationError(f"memory: assessment references unknown claim_id {record['claim_id']!r}")
 
 
 def _check_duplicate_stable_ids(artifacts: dict[str, list[dict[str, Any]]]) -> None:
@@ -323,6 +385,10 @@ def _flatten_sources(sources: dict[str, Any]) -> list[tuple[str, str, str]]:
         flat.append(("event", event.get("id", str(idx)) + f"#{idx}", _content_hash(event)))
     for gate in sources["gates"]:
         flat.append(("gate", gate.get("id", _content_hash(gate)), _content_hash(gate)))
+    for kind, records in sources.get("research", {}).items():
+        id_field = RESEARCH_ID_FIELDS[kind]
+        for record in records:
+            flat.append((f"research:{kind}", record[id_field], _content_hash(record)))
     return sorted(flat)
 
 
@@ -696,6 +762,80 @@ def _build_source_refs(sources: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- M7-J structured research derivation --------------------------------------
+# Additive to (never a replacement for) the older P3_PRIOR_ART-sourced
+# active_research/research_findings fields above - both stay valid and tested;
+# M7-J's own structured records get their own dedicated fields instead of being
+# force-merged into the P3-era ones. Memory only ever READS these; nothing here
+# reassesses a claim or picks a "better" outcome than what nogap_research.py itself
+# already recorded.
+
+def _current_research_assessments_by_claim(research: dict[str, list[dict[str, Any]]]) -> dict[str, dict[str, Any]]:
+    """Groups already-collected assessments by claim and delegates the actual
+    "which one is current" decision to nogap_research.select_current_assessment() -
+    the single authoritative owner of that semantic. Memory projects the result;
+    it does not re-derive it. Operates on the sources already collected (rather than
+    re-reading disk per claim) so this reflects exactly this snapshot's own
+    point-in-time view, but the SELECTION RULE ITSELF lives in exactly one place."""
+    from nogap_research import select_current_assessment
+
+    by_claim: dict[str, list[dict[str, Any]]] = {}
+    for assessment in research["assessments"]:
+        by_claim.setdefault(assessment["claim_id"], []).append(assessment)
+    return {claim_id: select_current_assessment(assessments) for claim_id, assessments in by_claim.items()}
+
+
+def _derive_structured_research(sources: dict[str, Any]) -> dict[str, Any]:
+    research = sources["research"]
+    claims_by_id = {c["claim_id"]: c for c in research["claims"]}
+
+    open_questions = [
+        {"question_id": q["question_id"], "title": q["title"], "status": q["status"], "source_ref": q["question_id"]}
+        for q in research["questions"] if q["status"] not in {"ANSWERED", "INCONCLUSIVE", "CLOSED", "ABANDONED"}
+    ]
+    active_hypotheses = [
+        {"hypothesis_id": h["hypothesis_id"], "question_id": h["question_id"], "statement": h["statement"],
+         "status": h["status"], "preregistered": h["preregistered"], "analysis_mode": h["analysis_mode"],
+         "source_ref": h["hypothesis_id"]}
+        for h in research["hypotheses"] if h["status"] in {"REGISTERED", "UNDER_TEST"}
+    ]
+    frozen_protocols = [
+        {"protocol_id": p["protocol_id"], "question_id": p["question_id"], "objective": p["objective"],
+         "primary_metric": p["primary_metric"], "status": p["status"], "source_ref": p["protocol_id"]}
+        for p in research["protocols"] if p["status"] in {"FROZEN", "EXECUTED"}
+    ]
+
+    current_by_claim = _current_research_assessments_by_claim(research)
+    buckets: dict[str, list[dict[str, Any]]] = {"SUPPORTED": [], "PARTIALLY_SUPPORTED": [], "REFUTED": [], "INCONCLUSIVE": []}
+    current_claim_assessments = []
+    conflicts = []
+    for claim_id, current in current_by_claim.items():
+        claim = claims_by_id.get(claim_id, {})
+        if current["status"] == "CONFLICT":
+            conflicts.append({"claim_id": claim_id, "conflicting_assessment_ids": current["conflicting_assessment_ids"]})
+            continue
+        assessment = current["assessment"]
+        entry = {
+            "claim_id": claim_id, "statement": claim.get("statement"), "outcome": assessment["outcome"],
+            "assessment_id": assessment["assessment_id"], "assessor_role": assessment["assessor_role"],
+            "created_at": assessment["created_at"], "source_ref": assessment["assessment_id"],
+        }
+        current_claim_assessments.append(entry)
+        buckets.setdefault(assessment["outcome"], []).append(entry)
+
+    return {
+        "open_research_questions": open_questions,
+        "active_hypotheses": active_hypotheses,
+        "frozen_protocols": frozen_protocols,
+        "current_claim_assessments": current_claim_assessments,
+        "supported_findings": buckets["SUPPORTED"],
+        "partially_supported_findings": buckets["PARTIALLY_SUPPORTED"],
+        "refuted_findings": buckets["REFUTED"],
+        "inconclusive_findings": buckets["INCONCLUSIVE"],
+        "research_assessment_conflicts": conflicts,
+    }
+
+
 # --- snapshot build --------------------------------------------------------
 
 def build_memory_snapshot(project: Path, actor: str) -> dict[str, Any]:
@@ -712,6 +852,7 @@ def build_memory_snapshot(project: Path, actor: str) -> dict[str, Any]:
     active_research, research_findings = _derive_research(sources)
     verified_artifacts, verification_summary = _derive_verification(sources)
     architecture_decisions, frozen_decisions = _derive_architecture(sources)
+    structured_research = _derive_structured_research(sources)
 
     flat = _flatten_sources(sources)
     source_fingerprint = hashlib.sha256(json.dumps(flat, sort_keys=True).encode("utf-8")).hexdigest()
@@ -746,6 +887,7 @@ def build_memory_snapshot(project: Path, actor: str) -> dict[str, Any]:
 
         "active_research": active_research,
         "research_findings": research_findings,
+        **structured_research,
 
         "verified_artifacts": verified_artifacts,
         "verification_summary": verification_summary,
@@ -774,7 +916,7 @@ def build_memory_snapshot(project: Path, actor: str) -> dict[str, Any]:
             "source_fingerprint": source_fingerprint,
             "projection_hash": None,  # filled in by rebuild_memory once markdown body is rendered
             "generator_version": GENERATOR_VERSION,
-            "conflicts": [],
+            "conflicts": list(structured_research["research_assessment_conflicts"]),
             "stale": False,
         },
     }
@@ -932,6 +1074,44 @@ def _render_body_sections(snapshot: dict[str, Any]) -> str:
     lines.append(_bullets([f"{r['artifact_id']}: {r['research_question']}{_fmt_source(r['source_ref'])}" for r in snapshot["active_research"]], "none"))
     lines.append("\nFindings:\n")
     lines.append(_bullets([f"{r['finding']}{_fmt_source(r['source_ref'])}" for r in snapshot["research_findings"]], "none recorded"))
+    lines.append("\nOpen research questions:\n")
+    lines.append(_bullets([f"{q['question_id']} [{q['status']}]: {q['title']}{_fmt_source(q['source_ref'])}" for q in snapshot["open_research_questions"]], "none"))
+    lines.append("\nActive hypotheses:\n")
+    lines.append(_bullets(
+        [f"{h['hypothesis_id']}: {h['statement']} (preregistered={h['preregistered']}, {h['analysis_mode']}){_fmt_source(h['source_ref'])}"
+         for h in snapshot["active_hypotheses"]], "none",
+    ))
+    lines.append("\nFrozen protocols:\n")
+    lines.append(_bullets(
+        [f"{p['protocol_id']}: {p['objective']} (primary_metric={p['primary_metric']}){_fmt_source(p['source_ref'])}"
+         for p in snapshot["frozen_protocols"]], "none",
+    ))
+    lines.append("\nCurrent claim assessments (SUPPORTED):\n")
+    lines.append(_bullets(
+        [f"{c['claim_id']}: {c['statement']} ({c['assessment_id']}, assessor_role={c['assessor_role']}){_fmt_source(c['source_ref'])}"
+         for c in snapshot["supported_findings"]], "none",
+    ))
+    lines.append("\nCurrent claim assessments (PARTIALLY_SUPPORTED):\n")
+    lines.append(_bullets(
+        [f"{c['claim_id']}: {c['statement']} ({c['assessment_id']}){_fmt_source(c['source_ref'])}"
+         for c in snapshot["partially_supported_findings"]], "none",
+    ))
+    lines.append("\nCurrent claim assessments (REFUTED - negative results, permanently preserved):\n")
+    lines.append(_bullets(
+        [f"{c['claim_id']}: {c['statement']} ({c['assessment_id']}){_fmt_source(c['source_ref'])}"
+         for c in snapshot["refuted_findings"]], "none",
+    ))
+    lines.append("\nCurrent claim assessments (INCONCLUSIVE):\n")
+    lines.append(_bullets(
+        [f"{c['claim_id']}: {c['statement']} ({c['assessment_id']}){_fmt_source(c['source_ref'])}"
+         for c in snapshot["inconclusive_findings"]], "none",
+    ))
+    if snapshot["research_assessment_conflicts"]:
+        lines.append("\nUNRESOLVED CONFLICTING ASSESSMENTS (fail-closed, no current outcome selected):\n")
+        lines.append(_bullets(
+            [f"{c['claim_id']}: conflicting assessment ids {c['conflicting_assessment_ids']}" for c in snapshot["research_assessment_conflicts"]],
+            "none",
+        ))
 
     section("Known Constraints")
     lines.append(_bullets([f"{c['constraint']}{_fmt_source(c['source_ref'])}" for c in snapshot["known_constraints"]], "none recorded"))

@@ -810,6 +810,8 @@ OWNER_COMPONENTS = {
     "nogap_failure.py",
     "nogap_failure.py:record_research",
     "nogap_memory.py",
+    "nogap_research.py",
+    "nogap_research.py:assess_claim",
 }
 
 
