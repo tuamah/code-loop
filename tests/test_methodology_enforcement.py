@@ -116,10 +116,14 @@ class RealEnforcementMapTests(unittest.TestCase):
         self.assertEqual(record.status, "PARTIAL")
         self.assertIsNone(record.future_milestone)
 
-    def test_15_gp9_not_fully_enforced_before_m7i(self) -> None:
+    def test_15_gp9_partial_after_m7i_projection_is_opt_in(self) -> None:
+        # M7-I's Memory Projector is real and tested, but is invoked on demand
+        # (nogap memory build/rebuild) rather than automatically after every
+        # relevant transition/decision/failure event - so PARTIAL, not ENFORCED,
+        # and no milestone is left blocking it.
         record = get_principle_enforcement("GP-9")
-        self.assertNotEqual(record.status, "ENFORCED")
-        self.assertEqual(record.future_milestone, "M7-I")
+        self.assertEqual(record.status, "PARTIAL")
+        self.assertIsNone(record.future_milestone)
 
     def test_16_gp16_not_fully_enforced_before_model_router(self) -> None:
         record = get_principle_enforcement("GP-16")

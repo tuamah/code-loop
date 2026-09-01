@@ -2059,6 +2059,62 @@ def cmd_failure(args: argparse.Namespace) -> None:
     _print_failure(record)
 
 
+def cmd_memory(args: argparse.Namespace) -> None:
+    """Thin CLI dispatcher only: every action calls straight into nogap_memory.py's
+    engine API. There is no generic "memory add" path here or in the engine - the
+    only inputs are project/actor; every fact in the projection comes from an
+    existing source record, never from CLI-supplied prose."""
+    import nogap_memory as nm
+    from nogap_methodology import MethodologyValidationError as _MethodologyValidationError
+
+    project = Path(args.path)
+
+    try:
+        if args.action == "build":
+            status = nm.memory_status(project)
+            if status["status"] == "CURRENT":
+                print(f"memory already CURRENT: {nm.snapshot_path(project)}")
+                return
+            snapshot = nm.rebuild_memory(project, args.actor)
+            print(f"memory built: {nm.snapshot_path(project)} (source_count={snapshot['integrity']['source_count']})")
+            return
+
+        if args.action == "rebuild":
+            snapshot = nm.rebuild_memory(project, args.actor)
+            print(f"memory rebuilt: {nm.snapshot_path(project)} (source_count={snapshot['integrity']['source_count']})")
+            return
+
+        if args.action == "status":
+            status = nm.memory_status(project)
+            print(status["status"])
+            for reason in status["reasons"]:
+                print(f"  - {reason}")
+            return
+
+        if args.action == "show":
+            path = nm.markdown_path(project)
+            if not path.is_file():
+                raise SystemExit("FAIL: no MEMORY.md yet; run 'nogap memory build' first")
+            print(path.read_text(encoding="utf-8"))
+            return
+
+        if args.action == "query":
+            result = nm.query_memory(project, category=args.category, item_id=args.id)
+            print(json.dumps(result, indent=2, sort_keys=True, default=str))
+            return
+
+        if args.action == "verify":
+            result = nm.verify_projection_integrity(project)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            if not result["valid"]:
+                raise SystemExit(1)
+            return
+
+        raise SystemExit(f"FAIL: unknown memory action {args.action!r}")
+    except _MethodologyValidationError as exc:
+        raise SystemExit(f"FAIL: {exc}") from exc
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2246,6 +2302,14 @@ def main() -> None:
     failure.add_argument("--state", help="list: filter by current_state")
     failure.add_argument("--close-status", choices=["REJECTED", "ABANDONED"], help="close: which negative terminal outcome")
     failure.set_defaults(func=cmd_failure)
+
+    memory = sub.add_parser("memory")
+    memory.add_argument("action", choices=["build", "rebuild", "status", "show", "query", "verify"])
+    memory.add_argument("path", nargs="?", default=".")
+    memory.add_argument("--actor", default="nogap memory")
+    memory.add_argument("--category", help="query: top-level MemorySnapshot field to read (omit for the whole snapshot)")
+    memory.add_argument("--id", help="query: filter the category's list to items matching this id")
+    memory.set_defaults(func=cmd_memory)
 
     argv = sys.argv[1:]
     worktree_command: list[str] = []
