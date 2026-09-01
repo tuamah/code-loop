@@ -2115,6 +2115,163 @@ def cmd_memory(args: argparse.Namespace) -> None:
         raise SystemExit(f"FAIL: {exc}") from exc
 
 
+def cmd_research(args: argparse.Namespace) -> None:
+    """Thin CLI dispatcher only: every action calls straight into nogap_research.py's
+    engine API - entity-specific structured fields travel through --fields-json
+    rather than an ever-growing flag surface, matching cmd_failure's own convention.
+    No trust logic is duplicated here; the engine alone decides what is legal."""
+    import nogap_research as nrs
+    from nogap_methodology import MethodologyValidationError as _MethodologyValidationError
+
+    project = Path(args.path)
+    fields = json.loads(args.fields_json) if args.fields_json else {}
+    refs = args.ref or []
+
+    def _print(record: dict) -> None:
+        print(json.dumps(record, indent=2, sort_keys=True, default=str))
+
+    try:
+        if args.entity == "question":
+            if args.action == "create":
+                record = nrs.create_research_question(
+                    project, title=fields.get("title"), question=fields.get("question"), actor=args.actor, reason=args.reason,
+                    scope=fields.get("scope"), related_requirement_refs=fields.get("related_requirement_refs", []),
+                    related_artifact_refs=fields.get("related_artifact_refs", []), related_failure_refs=fields.get("related_failure_refs", []),
+                    source_refs=fields.get("source_refs", []),
+                )
+            elif args.action == "status":
+                record = nrs.set_question_status(project, args.id, args.status, actor=args.actor, reason=args.reason)
+            elif args.action == "list":
+                print(json.dumps(nrs.list_research_questions(project, status=args.status), indent=2, sort_keys=True, default=str))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown research question action {args.action!r}")
+        elif args.entity == "hypothesis":
+            if args.action == "create":
+                record = nrs.create_hypothesis(
+                    project, question_id=args.question_id, statement=fields.get("statement"), actor=args.actor, reason=args.reason,
+                    direction=fields.get("direction"), expected_effect=fields.get("expected_effect"),
+                    null_hypothesis=fields.get("null_hypothesis"), alternative_hypothesis=fields.get("alternative_hypothesis"),
+                )
+            elif args.action == "register":
+                record = nrs.register_hypothesis(
+                    project, args.id, actor=args.actor, reason=args.reason,
+                    preregistered=fields.get("preregistered", True), protocol_ref=args.protocol_id,
+                )
+            elif args.action == "list":
+                print(json.dumps(nrs.list_hypotheses(project, question_id=args.question_id), indent=2, sort_keys=True, default=str))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown research hypothesis action {args.action!r}")
+        elif args.entity == "protocol":
+            if args.action == "create":
+                record = nrs.create_protocol(
+                    project, question_id=args.question_id, objective=fields.get("objective"), actor=args.actor, reason=args.reason,
+                    hypothesis_refs=fields.get("hypothesis_refs", []), primary_metric=fields.get("primary_metric"),
+                    secondary_metrics=fields.get("secondary_metrics", []), baseline_refs=fields.get("baseline_refs", []),
+                    dataset_refs=fields.get("dataset_refs", []), data_provenance=fields.get("data_provenance"),
+                    split_strategy=fields.get("split_strategy"), seed_policy=fields.get("seed_policy"),
+                    random_seeds=fields.get("random_seeds", []), evaluation_method=fields.get("evaluation_method"),
+                    success_criteria=fields.get("success_criteria", []), failure_criteria=fields.get("failure_criteria", []),
+                    inconclusive_criteria=fields.get("inconclusive_criteria", []), leakage_controls=fields.get("leakage_controls", []),
+                    required_evidence_kinds=fields.get("required_evidence_kinds", []),
+                    required_validation_level=fields.get("required_validation_level"),
+                    claim_strength=fields.get("claim_strength", "LOW"),
+                )
+            elif args.action == "freeze":
+                record = nrs.freeze_protocol(project, args.id, actor=args.actor, reason=args.reason)
+            elif args.action == "amend":
+                record = nrs.amend_protocol(project, args.id, field_updates=fields, actor=args.actor, reason=args.reason, authority=args.authority)
+            elif args.action == "list":
+                print(json.dumps(nrs.list_protocols(project, question_id=args.question_id), indent=2, sort_keys=True, default=str))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown research protocol action {args.action!r}")
+        elif args.entity == "experiment":
+            if args.action == "create":
+                record = nrs.create_experiment(
+                    project, protocol_id=args.protocol_id, actor=args.actor, reason=args.reason,
+                    hypothesis_refs=fields.get("hypothesis_refs", []), candidate_id=fields.get("candidate_id"),
+                    task_id=fields.get("task_id"), environment=fields.get("environment"),
+                    dataset_fingerprint=fields.get("dataset_fingerprint"), code_revision=fields.get("code_revision"),
+                    seed_values=fields.get("seed_values", []), execution_refs=refs, artifact_refs=fields.get("artifact_refs", []),
+                    evidence_refs=fields.get("evidence_refs", []),
+                )
+            elif args.action == "result":
+                if not args.status:
+                    raise SystemExit("FAIL: research experiment result requires --status")
+                record = nrs.record_experiment_result(
+                    project, args.id, status=args.status, actor=args.actor, reason=args.reason,
+                    execution_refs=refs, evidence_refs=fields.get("evidence_refs", []),
+                )
+            elif args.action == "list":
+                print(json.dumps(nrs.list_experiments(project, protocol_id=args.protocol_id), indent=2, sort_keys=True, default=str))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown research experiment action {args.action!r}")
+        elif args.entity == "observation":
+            if args.action == "record":
+                record = nrs.record_observation(
+                    project, experiment_id=args.experiment_id, metric_name=fields.get("metric_name"),
+                    metric_value=fields.get("metric_value"), actor=args.actor, reason=args.reason,
+                    metric_unit=fields.get("metric_unit"), dataset_or_slice=fields.get("dataset_or_slice"),
+                    sample_size=fields.get("sample_size"), seed=fields.get("seed"), aggregation=fields.get("aggregation"),
+                    uncertainty=fields.get("uncertainty"), confidence_interval=fields.get("confidence_interval"),
+                    raw_evidence_refs=refs, notes=fields.get("notes"),
+                )
+            elif args.action == "list":
+                print(json.dumps(nrs.list_observations(project, experiment_id=args.experiment_id), indent=2, sort_keys=True, default=str))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown research observation action {args.action!r}")
+        elif args.entity == "claim":
+            if args.action == "create":
+                record = nrs.create_claim(
+                    project, question_id=args.question_id, statement=fields.get("statement"), claim_type=fields.get("claim_type"),
+                    claim_strength=fields.get("claim_strength"), scope=fields.get("scope"), actor=args.actor, reason=args.reason,
+                    hypothesis_refs=fields.get("hypothesis_refs", []), protocol_refs=fields.get("protocol_refs", []),
+                    baseline_ref=fields.get("baseline_ref"), baseline_version=fields.get("baseline_version"),
+                    baseline_metric=fields.get("baseline_metric"), candidate_metric=fields.get("candidate_metric"),
+                    comparison_method=fields.get("comparison_method"),
+                )
+            elif args.action == "list":
+                print(json.dumps(nrs.list_claims(project, question_id=args.question_id), indent=2, sort_keys=True, default=str))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown research claim action {args.action!r}")
+        elif args.entity == "assessment":
+            if args.action == "create":
+                if not args.outcome:
+                    raise SystemExit("FAIL: research assessment create requires --outcome")
+                record = nrs.assess_claim(
+                    project, args.id, outcome=args.outcome, rationale=fields.get("rationale", args.reason), actor=args.actor,
+                    reason=args.reason, assessor_id=args.assessor_id or args.actor, assessor_role=args.assessor_role,
+                    protocol_refs=fields.get("protocol_refs", []), experiment_refs=fields.get("experiment_refs", []),
+                    observation_refs=fields.get("observation_refs", []), evidence_refs=fields.get("evidence_refs", []),
+                    hypothesis_refs=fields.get("hypothesis_refs", []), limitations=fields.get("limitations", []),
+                    confounders=fields.get("confounders", []), validity_notes=fields.get("validity_notes"),
+                    reproducibility_status=fields.get("reproducibility_status", "NOT_REQUIRED"),
+                    analysis_mode=fields.get("analysis_mode", "PREREGISTERED"),
+                )
+            elif args.action == "list":
+                print(json.dumps(nrs.list_assessments(project, claim_id=args.id), indent=2, sort_keys=True, default=str))
+                return
+            elif args.action == "current":
+                print(json.dumps(nrs.get_current_claim_assessment(project, args.id), indent=2, sort_keys=True, default=str))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown research assessment action {args.action!r}")
+        elif args.entity == "query":
+            print(json.dumps(nrs.query_research(project, args.kind, args.id), indent=2, sort_keys=True, default=str))
+            return
+        else:
+            raise SystemExit(f"FAIL: unknown research entity {args.entity!r}")
+    except _MethodologyValidationError as exc:
+        raise SystemExit(f"FAIL: {exc}") from exc
+
+    _print(record)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2310,6 +2467,26 @@ def main() -> None:
     memory.add_argument("--category", help="query: top-level MemorySnapshot field to read (omit for the whole snapshot)")
     memory.add_argument("--id", help="query: filter the category's list to items matching this id")
     memory.set_defaults(func=cmd_memory)
+
+    research = sub.add_parser("research")
+    research.add_argument("entity", choices=["question", "hypothesis", "protocol", "experiment", "observation", "claim", "assessment", "query"])
+    research.add_argument("action", choices=["create", "status", "register", "freeze", "amend", "result", "record", "current", "list", "query"], nargs="?", default="create")
+    research.add_argument("path", nargs="?", default=".")
+    research.add_argument("--actor", default="nogap research")
+    research.add_argument("--reason", help="required for most state-changing actions")
+    research.add_argument("--id", help="target record id for status/register/freeze/amend/result/current/query")
+    research.add_argument("--question-id", help="hypothesis/protocol/claim create: parent ResearchQuestion")
+    research.add_argument("--protocol-id", help="experiment create/list: parent ResearchProtocol")
+    research.add_argument("--experiment-id", help="observation record/list: parent ExperimentRecord")
+    research.add_argument("--status", help="question status / experiment result: target status value")
+    research.add_argument("--outcome", choices=sorted({"SUPPORTED", "PARTIALLY_SUPPORTED", "REFUTED", "INCONCLUSIVE"}), help="assessment create: proposed outcome")
+    research.add_argument("--assessor-id", help="assessment create: assessor identity (defaults to --actor)")
+    research.add_argument("--assessor-role", default="SELF", choices=sorted({"SELF", "INDEPENDENT", "HUMAN", "SYSTEM_DETERMINISTIC"}))
+    research.add_argument("--authority", default="human", help="protocol amend: authority class recorded for the amendment")
+    research.add_argument("--ref", action="append", help="repeatable; execution_refs/raw_evidence_refs depending on entity")
+    research.add_argument("--kind", help="query: which record kind to list/load (questions|hypotheses|protocols|experiments|observations|claims|assessments)")
+    research.add_argument("--fields-json", help="entity-specific structured fields (title/statement/objective/criteria/... depending on entity+action)")
+    research.set_defaults(func=cmd_research)
 
     argv = sys.argv[1:]
     worktree_command: list[str] = []

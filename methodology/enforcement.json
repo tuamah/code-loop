@@ -168,15 +168,19 @@
     {
       "principle_id": "GP-12",
       "classification": "C",
-      "status": "DECLARED",
+      "status": "ENFORCED",
       "scope": "methodology_engine",
-      "owner_component": "none",
-      "mechanism": "literature 'reject'/'defer' decisions are accepted as legitimate outcomes rather than forced toward 'learn', but there is no Hypothesis/Claim registry to preserve a negative research result as a first-class, queryable record yet.",
-      "evidence_kind": null,
-      "implemented_by": [],
-      "tests": [],
-      "future_milestone": "M7-J",
-      "notes": null
+      "owner_component": "nogap_research.py",
+      "mechanism": "REFUTED and INCONCLUSIVE are first-class ClaimAssessment outcomes, structurally equal to SUPPORTED/PARTIALLY_SUPPORTED - assess_claim() enforces the same preconditions for all four and there is no delete/update path for an assessment once written (claim['assessment_refs'] is append-only). A later, revised assessment never overwrites or removes an earlier REFUTED/INCONCLUSIVE one; get_current_claim_assessment() only ever SELECTS which is current for projection, and ties it cannot resolve report CONFLICT rather than silently picking a favorable one. assess_claim() also actively refuses to let missing evidence become REFUTED (that produces INCONCLUSIVE or a rejected call instead) and refuses REFUTED without genuine contradictory evidence - a negative result cannot be faked into existence any more than it can be deleted.",
+      "evidence_kind": "claim_assessment (append-only per claim)",
+      "implemented_by": ["scripts/nogap_research.py:assess_claim", "scripts/nogap_research.py:get_current_claim_assessment"],
+      "tests": [
+        "tests/test_methodology_research.py::NegativeResultTests",
+        "tests/test_methodology_research.py::InconclusiveResultTests",
+        "tests/test_methodology_research.py::ScenarioBTests::test_scenario_b_negative_result_preserved"
+      ],
+      "future_milestone": null,
+      "notes": "The literature reject/defer path (nogap.py cmd_literature) is unrelated machinery and unchanged by this; GP-12's real gap - no structured registry preserving a negative research result - is what M7-J closes."
     },
     {
       "principle_id": "GP-13",
@@ -210,10 +214,10 @@
       "status": "ENFORCED",
       "scope": "methodology_engine",
       "owner_component": "nogap_methodology.py:derive_profile",
-      "mechanism": "claim_score contributes to the same raw_score/profile derivation as risk; a higher claim_strength raises the profile, which (through skippable_phases) determines whether P17/P18's deeper verification is mandatory or optional.",
-      "evidence_kind": "methodology_state.derivation",
-      "implemented_by": ["scripts/nogap_methodology.py:derive_profile"],
-      "tests": ["tests/test_methodology_state.py::ProfileDerivationTests", "tests/test_methodology_engine.py::ProfileAndSkipTests"],
+      "mechanism": "claim_score contributes to the same raw_score/profile derivation as risk; a higher claim_strength raises the profile, which (through skippable_phases) determines whether P17/P18's deeper verification is mandatory or optional. M7-J adds a second, independent enforcement of the same principle specifically for research claims: assess_claim() hard-blocks a HIGH-strength claim from SUPPORTED unless reproducibility_status=REPRODUCED and the assessor is independent (assessor_role != SELF) - a HIGH claim is never allowed to require less evidence than a LOW one.",
+      "evidence_kind": "methodology_state.derivation and claim_assessment preconditions",
+      "implemented_by": ["scripts/nogap_methodology.py:derive_profile", "scripts/nogap_research.py:assess_claim"],
+      "tests": ["tests/test_methodology_state.py::ProfileDerivationTests", "tests/test_methodology_engine.py::ProfileAndSkipTests", "tests/test_methodology_research.py::ClaimStrengthEvidenceDepthTests"],
       "future_milestone": null,
       "notes": null
     },
@@ -278,15 +282,16 @@
       "status": "ENFORCED",
       "scope": "cross_cutting",
       "owner_component": "nogap_methodology.py:transition",
-      "mechanism": "Every methodology transition requires a non-empty actor_id and reason, and always records timestamp + evidence_refs + artifact_refs (transition() rejects empty actor/reason outright). Decision records populate actor_id/decided_by on every decide call through the CLI. Every FailureRecord history entry (nogap_failure.py:_append_history) likewise requires a non-empty actor_id and reason and is append-only; repair selection additionally records selected_by/authority/timestamp. M7-I's Project Memory now makes this traceability queryable end to end: every derived fact in MemorySnapshot carries a source_ref back to the real transition/decision/failure/artifact record it came from, and query_memory() preserves that provenance rather than returning bare values.",
+      "mechanism": "Every methodology transition requires a non-empty actor_id and reason, and always records timestamp + evidence_refs + artifact_refs (transition() rejects empty actor/reason outright). Decision records populate actor_id/decided_by on every decide call through the CLI. Every FailureRecord history entry (nogap_failure.py:_append_history) likewise requires a non-empty actor_id and reason and is append-only; repair selection additionally records selected_by/authority/timestamp. M7-I's Project Memory now makes this traceability queryable end to end: every derived fact in MemorySnapshot carries a source_ref back to the real transition/decision/failure/artifact record it came from, and query_memory() preserves that provenance rather than returning bare values. M7-J extends the same discipline into research: every material research state change (hypothesis registration, protocol freeze/amendment, claim assessment, supersession) requires actor_id+reason and is append-only, and every research fact Memory projects carries a source_ref back to its real question/hypothesis/protocol/claim/assessment record.",
       "evidence_kind": "transition_history, decision records, failure_record history, and memory source_refs",
-      "implemented_by": ["scripts/nogap_methodology.py:transition", "scripts/nogap.py:cmd_decide", "scripts/nogap_failure.py:_append_history", "scripts/nogap_memory.py"],
+      "implemented_by": ["scripts/nogap_methodology.py:transition", "scripts/nogap.py:cmd_decide", "scripts/nogap_failure.py:_append_history", "scripts/nogap_memory.py", "scripts/nogap_research.py"],
       "tests": [
         "tests/test_methodology_engine.py::RejectionAndFailClosedTests::test_18_transition_without_actor_rejected",
         "tests/test_methodology_engine.py::RejectionAndFailClosedTests::test_19_transition_without_reason_rejected",
         "tests/test_methodology_engine.py::ApiIntegrityTests::test_20_transition_history_is_append_only",
         "tests/test_methodology_failure.py::RepairLoopTests::test_22_repair_selection_requires_actor_and_reason",
-        "tests/test_methodology_memory.py::QueryApiTests::test_46_query_preserves_provenance"
+        "tests/test_methodology_memory.py::QueryApiTests::test_46_query_preserves_provenance",
+        "tests/test_methodology_research.py::ActorReasonRequirementTests"
       ],
       "future_milestone": null,
       "notes": "decision.schema.json does not itself require actor_id (only the Python-level acceptability() check does for ACCEPT specifically) - a minor schema gap, not a functional one, since the CLI never omits it in practice."
