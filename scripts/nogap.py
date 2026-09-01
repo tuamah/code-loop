@@ -1426,6 +1426,33 @@ def cmd_decide(args: argparse.Namespace) -> None:
         and item.get("status") in {"failed", "blocked", "inconclusive"}
     ]
 
+    # Methodology verification interlock (post-M7-G, closing a live-discovered
+    # false-pass path): a necessary, never sufficient, precondition for ACCEPT.
+    # "Methodology verification isn't ready" can block ACCEPT below; "it is ready"
+    # never by itself grants it - every other check in this function still applies.
+    # Reuses nogap_verify_binding's own staleness/depth logic; nothing here
+    # re-derives it. Only evaluated once there is authoritative evidence to
+    # potentially accept, matching every other check's ordering in this function.
+    methodology_block_reason: str | None = None
+    if authoritative_passed:
+        from nogap_methodology import load_state as _load_state
+        from nogap_verify_binding import verification_acceptance_precondition
+
+        project_root = Path(args.path)
+        if _load_state(project_root) is not None:
+            candidate_task_ids = {
+                evidence_by_id[eid]["provenance"].get("task_id")
+                for eid in authoritative_passed
+                if evidence_by_id[eid].get("provenance", {}).get("task_id")
+            }
+            if len(candidate_task_ids) > 1:
+                methodology_block_reason = f"authoritative evidence references multiple tasks {sorted(candidate_task_ids)}; cannot determine a single candidate to check"
+            else:
+                task_id = next(iter(candidate_task_ids), None)
+                precondition = verification_acceptance_precondition(project_root, task_id)
+                if not precondition["satisfied"]:
+                    methodology_block_reason = precondition["reason"]
+
     if failed or unsupported:
         decision, reason, event_type = "repair", "failed evidence or unsupported supported-claim references require repair", "DECISION_REPAIR"
     elif decision_actor in executors:
@@ -1438,6 +1465,8 @@ def cmd_decide(args: argparse.Namespace) -> None:
         decision, reason, event_type = "abstain", "independent authoritative verification evidence is required for ACCEPT", "ACCEPTANCE_BLOCKED"
     elif not passed:
         decision, reason, event_type = "abstain", "no passing evidence is available", "DECISION_ABSTAIN"
+    elif methodology_block_reason:
+        decision, reason, event_type = "abstain", f"methodology verification precondition not satisfied: {methodology_block_reason}", "ACCEPTANCE_BLOCKED"
     else:
         decision, reason, event_type = "accept", "independent authoritative verification evidence passed and acceptance authority is separate from execution", "DECISION_ACCEPTED"
 

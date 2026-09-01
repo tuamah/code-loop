@@ -13,9 +13,13 @@ Boundaries, kept strict:
   write_isolated_run_evidence exactly as it already did before this milestone, now
   with the same methodology-tagging kwargs M7-F added. This mirrors nogap_build.py's
   own layering: pure logic here, evidence-writing orchestration in nogap.py.
-- Nothing here ever produces or writes authority="acceptance". VERIFICATION_COMPLETE_
-  AWAITING_DECISION is the ceiling; only `nogap decide` (unmodified, M8 territory)
-  can accept, and only from independent authoritative evidence.
+- Nothing here ever produces or writes authority="acceptance", and nothing here ever
+  decides ACCEPT. `nogap decide` remains the sole acceptance authority (M8 territory
+  for its actual DecisionEngine redesign) - the one narrow exception is
+  verification_acceptance_precondition() below (added post-M7-G to close a
+  live-discovered false-pass path): it is consulted by cmd_decide as a NECESSARY,
+  never sufficient, gate - "methodology verification isn't ready" can block ACCEPT,
+  but "methodology verification is ready" never by itself grants it.
 """
 
 from __future__ import annotations
@@ -26,13 +30,14 @@ from pathlib import Path
 from typing import Any
 
 from nogap_artifacts import list_artifacts
-from nogap_build import load_task_contract  # reused, not duplicated
+from nogap_build import _frozen_gate, load_task_contract  # reused, not duplicated
 from nogap_methodology import (
     MethodologyValidationError,
     _effective_profile_for_phase,
     _is_skippable,
     _require_state,
     load_methodology,
+    load_state,
 )
 
 # The canonical 9-rung ladder from the brief, and the 3-level validation model - both
@@ -190,3 +195,50 @@ def verification_staleness(project: Path, result_record: dict[str, Any], frozen_
     if sorted(fields.get("requirement_refs", [])) != current["requirement_refs"]:
         reasons.append("requirement set changed since this verification ran")
     return reasons
+
+
+def verification_acceptance_precondition(project: Path, task_id: str | None) -> dict[str, Any]:
+    """A NECESSARY, not sufficient, precondition for ACCEPT on a methodology-tracked
+    project: the given task's current candidate must have a P18_VERIFICATION_RESULT
+    that is genuinely VERIFICATION_COMPLETE_AWAITING_DECISION under the LIVE
+    methodology_version/task/requirement-set/candidate/patch/gate bindings - reusing
+    verification_staleness() rather than re-deriving any of that here.
+
+    This function only ever answers "is methodology verification ready?" - it never
+    accepts or rejects a decision itself. DecisionEngine (nogap.py's cmd_decide)
+    remains the sole acceptance authority and still applies its own independent-
+    evidence/identity checks on top of this; a caller must never treat
+    satisfied=True as itself sufficient for ACCEPT.
+
+    LEGACY COMPATIBILITY (temporary technical debt, matching M7-E/F/G's "smallest
+    explicit compatibility policy"): a project with no methodology state at all
+    reports satisfied=True - once a project runs `methodology init`, this precondition
+    becomes mandatory and fail-closed, including when no task_id is resolvable at all
+    (e.g. the evidence under consideration was never bound to a BUILD candidate).
+    """
+    state = load_state(project)
+    if state is None:
+        return {"satisfied": True, "reason": "no methodology state at this project; legacy compatibility (temporary)"}
+    if not task_id:
+        return {"satisfied": False, "reason": "methodology is initialized but no task_id is associated with the evidence under consideration"}
+
+    gate = _frozen_gate(project)
+    frozen_gate_hash = gate.get("hash") if gate else None
+
+    results = [
+        r for r in list_artifacts(project, artifact_type="P18_VERIFICATION_RESULT")
+        if r["fields"].get("task_id") == task_id
+    ]
+    if not results:
+        return {"satisfied": False, "reason": f"no methodology verification result recorded for task {task_id!r}"}
+    result = results[-1]
+    if result.get("status") != "VERIFICATION_COMPLETE_AWAITING_DECISION":
+        return {
+            "satisfied": False,
+            "reason": f"methodology verification status is {result.get('status')!r}, not VERIFICATION_COMPLETE_AWAITING_DECISION",
+        }
+
+    stale_reasons = verification_staleness(project, result, frozen_gate_hash)
+    if stale_reasons:
+        return {"satisfied": False, "reason": "methodology verification evidence is stale: " + "; ".join(stale_reasons)}
+    return {"satisfied": True, "reason": f"methodology verification {result['fields']['verification_run_id']} is complete and current"}
