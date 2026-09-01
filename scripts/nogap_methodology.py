@@ -809,6 +809,7 @@ OWNER_COMPONENTS = {
     "nogap_methodology.py:derive_profile",
     "nogap_failure.py",
     "nogap_failure.py:record_research",
+    "nogap_memory.py",
 }
 
 

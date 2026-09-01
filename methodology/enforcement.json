@@ -121,13 +121,13 @@
       "classification": "B",
       "status": "PARTIAL",
       "scope": "trust_runtime",
-      "owner_component": "trust_runtime_event_ledger",
-      "mechanism": "events/evidence/decisions/transition_history are durable, append-only, and written only through the CLI - no API lets an agent rewrite them. A dedicated Project Memory engine (a generated MEMORY.md current-state projection) does not exist yet.",
-      "evidence_kind": "event ledger",
-      "implemented_by": ["scripts/nogap.py:append_event"],
-      "tests": [],
-      "future_milestone": "M7-I",
-      "notes": "The append-only ledger this principle depends on already exists and is exercised throughout the test suite; the missing piece is the MEMORY.md projection, not the ledger itself."
+      "owner_component": "nogap_memory.py",
+      "mechanism": "nogap_memory.py deterministically projects a MemorySnapshot/MEMORY.md from methodology state, transition history, P0-P18 artifacts, FailureRecords, and the decision/evidence/event ledgers - never from Agent conversational memory or prose, and there is no generic 'memory add' path (the only inputs to build_memory_snapshot are project/actor; every fact traces to an existing source record). memory_status() detects both source staleness and MEMORY.md tampering, and rebuild_memory() always regenerates both files from current sources, so nothing here can drift into standing in for the sources it was built from. The mechanism is real and tested end to end, but is invoked on demand (nogap memory build/rebuild) rather than automatically after every relevant transition/decision/failure event - that gap keeps this PARTIAL rather than ENFORCED.",
+      "evidence_kind": "memory snapshot and projection",
+      "implemented_by": ["scripts/nogap.py:append_event", "scripts/nogap_memory.py"],
+      "tests": ["tests/test_methodology_memory.py"],
+      "future_milestone": null,
+      "notes": "The append-only ledger this principle depends on already exists and is exercised throughout the test suite; M7-I added the actual MEMORY.md/snapshot projection. Auto-invoking a rebuild after every relevant trust-runtime action (rather than requiring an explicit CLI call) is the remaining gap toward ENFORCED, and has no named milestone yet."
     },
     {
       "principle_id": "GP-10",
@@ -152,16 +152,18 @@
       "status": "PARTIAL",
       "scope": "trust_runtime",
       "owner_component": "nogap_failure.py",
-      "mechanism": "Execution and verification evidence is always written regardless of pass/fail status. A failure is now also a first-class, permanently queryable FailureRecord (OPEN -> EVIDENCE_PRESERVED -> REPRODUCED -> CHARACTERIZED -> RESEARCHED -> ROOT_CAUSE_IDENTIFIED -> REPAIR_PROPOSED -> REPAIR_SELECTED -> REPAIRED -> REGRESSION_TESTED -> REVALIDATED -> RESOLVED, plus INCONCLUSIVE/REJECTED/ABANDONED): create_failure()/record_evidence_preservation() reject unknown evidence/artifact refs, history is append-only (each step calls _append_history, never edits or deletes a prior entry), and no code path deletes a failure record. Remaining gap: nothing yet reads FailureRecords back as a corpus (no cross-failure learning/analytics) - that is Project Memory (M7-I), explicitly deferred.",
-      "evidence_kind": "failure_record (append-only history)",
-      "implemented_by": ["scripts/nogap.py:write_isolated_run_evidence", "scripts/nogap_failure.py"],
+      "mechanism": "Execution and verification evidence is always written regardless of pass/fail status. A failure is a first-class, permanently queryable FailureRecord (OPEN -> EVIDENCE_PRESERVED -> REPRODUCED -> CHARACTERIZED -> RESEARCHED -> ROOT_CAUSE_IDENTIFIED -> REPAIR_PROPOSED -> REPAIR_SELECTED -> REPAIRED -> REGRESSION_TESTED -> REVALIDATED -> RESOLVED, plus INCONCLUSIVE/REJECTED/ABANDONED): create_failure()/record_evidence_preservation() reject unknown evidence/artifact refs, history is append-only, and no code path deletes a failure record. M7-I's Project Memory now reads this back as a corpus: open/resolved/inconclusive failures, root cause, and repair target all surface in MemorySnapshot/MEMORY.md with their source_ref pointing back at the real failure record, and a RESOLVED failure's own full history remains independently queryable through nogap_failure.load_failure - the projection never hides that a failure happened.",
+      "evidence_kind": "failure_record (append-only history) and memory snapshot",
+      "implemented_by": ["scripts/nogap.py:write_isolated_run_evidence", "scripts/nogap_failure.py", "scripts/nogap_memory.py"],
       "tests": [
         "tests/test_execution_backend.py", "tests/test_verification_pipeline.py",
         "tests/test_methodology_failure.py::CreationAndHistoryTests::test_3_history_is_append_only",
-        "tests/test_methodology_failure.py::RepairAndBudgetTests::test_29_and_30_and_31_successful_full_cycle_resolves_and_stays_queryable"
+        "tests/test_methodology_failure.py::RepairAndBudgetTests::test_29_and_30_and_31_successful_full_cycle_resolves_and_stays_queryable",
+        "tests/test_methodology_memory.py::FailureIntegrationTests",
+        "tests/test_methodology_memory.py::ScenarioCTests::test_scenario_c_historical_failure_preservation"
       ],
-      "future_milestone": "M7-I",
-      "notes": "The FailureRecord lifecycle itself is real and tested; M7-I would add reading failures back as durable project memory."
+      "future_milestone": null,
+      "notes": "The FailureRecord lifecycle itself is real and tested; M7-I added reading failures back as durable, sourced project memory without ever collapsing RESOLVED into deletion of what actually happened."
     },
     {
       "principle_id": "GP-12",
@@ -276,14 +278,15 @@
       "status": "ENFORCED",
       "scope": "cross_cutting",
       "owner_component": "nogap_methodology.py:transition",
-      "mechanism": "Every methodology transition requires a non-empty actor_id and reason, and always records timestamp + evidence_refs + artifact_refs (transition() rejects empty actor/reason outright). Decision records populate actor_id/decided_by on every decide call through the CLI. Every FailureRecord history entry (nogap_failure.py:_append_history) likewise requires a non-empty actor_id and reason and is append-only; repair selection additionally records selected_by/authority/timestamp.",
-      "evidence_kind": "transition_history, decision records, and failure_record history",
-      "implemented_by": ["scripts/nogap_methodology.py:transition", "scripts/nogap.py:cmd_decide", "scripts/nogap_failure.py:_append_history"],
+      "mechanism": "Every methodology transition requires a non-empty actor_id and reason, and always records timestamp + evidence_refs + artifact_refs (transition() rejects empty actor/reason outright). Decision records populate actor_id/decided_by on every decide call through the CLI. Every FailureRecord history entry (nogap_failure.py:_append_history) likewise requires a non-empty actor_id and reason and is append-only; repair selection additionally records selected_by/authority/timestamp. M7-I's Project Memory now makes this traceability queryable end to end: every derived fact in MemorySnapshot carries a source_ref back to the real transition/decision/failure/artifact record it came from, and query_memory() preserves that provenance rather than returning bare values.",
+      "evidence_kind": "transition_history, decision records, failure_record history, and memory source_refs",
+      "implemented_by": ["scripts/nogap_methodology.py:transition", "scripts/nogap.py:cmd_decide", "scripts/nogap_failure.py:_append_history", "scripts/nogap_memory.py"],
       "tests": [
         "tests/test_methodology_engine.py::RejectionAndFailClosedTests::test_18_transition_without_actor_rejected",
         "tests/test_methodology_engine.py::RejectionAndFailClosedTests::test_19_transition_without_reason_rejected",
         "tests/test_methodology_engine.py::ApiIntegrityTests::test_20_transition_history_is_append_only",
-        "tests/test_methodology_failure.py::RepairLoopTests::test_22_repair_selection_requires_actor_and_reason"
+        "tests/test_methodology_failure.py::RepairLoopTests::test_22_repair_selection_requires_actor_and_reason",
+        "tests/test_methodology_memory.py::QueryApiTests::test_46_query_preserves_provenance"
       ],
       "future_milestone": null,
       "notes": "decision.schema.json does not itself require actor_id (only the Python-level acceptability() check does for ACCEPT specifically) - a minor schema gap, not a functional one, since the CLI never omits it in practice."
