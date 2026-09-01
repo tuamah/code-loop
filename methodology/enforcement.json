@@ -30,15 +30,19 @@
     {
       "principle_id": "GP-3",
       "classification": "B",
-      "status": "DECLARED",
+      "status": "PARTIAL",
       "scope": "methodology_engine",
-      "owner_component": "none",
-      "mechanism": "P18's allowed_back_transitions includes P3/P4 as an optional prior-art-reconsideration path, but nothing requires research before a repair transition - P18->P13 is legal without ever visiting P3/P4.",
-      "evidence_kind": null,
-      "implemented_by": [],
-      "tests": [],
-      "future_milestone": "M7-H",
-      "notes": "No enforcement exists yet; this is the Failure Orchestrator's job."
+      "owner_component": "nogap_failure.py:record_research",
+      "mechanism": "propose_repair()/select_repair() are only reachable once a FailureRecord has passed through record_research(); record_research() rejects an empty research_refs list unless the project's effective profile is LIGHT AND an explicit, audited policy_exception (reason/actor_id/authority) is supplied. STANDARD/STRICT accept no exception at all. The remaining gap: this governs the M7-H failure/repair path specifically, not every possible route back into BUILD (e.g. a plain re-run outside the FailureRecord lifecycle is untouched by this check).",
+      "evidence_kind": "failure_record.research_refs / research_policy_exception",
+      "implemented_by": ["scripts/nogap_failure.py:record_research", "scripts/nogap_failure.py:propose_repair"],
+      "tests": [
+        "tests/test_methodology_failure.py::ResearchAndRootCauseTests::test_9_repair_before_research_rejected",
+        "tests/test_methodology_failure.py::ResearchAndRootCauseTests::test_32_light_cannot_blind_retry_research_still_mandatory_or_explicit",
+        "tests/test_methodology_failure.py::ResearchAndRootCauseTests::test_33_standard_enforces_research_before_repair_no_exception"
+      ],
+      "future_milestone": null,
+      "notes": "Enforced for the M7-H repair path (the actual scope of GP-3's 'research before repair' framing); a future milestone could extend the same interlock to any other path back into BUILD."
     },
     {
       "principle_id": "GP-4",
@@ -147,13 +151,17 @@
       "classification": "B",
       "status": "PARTIAL",
       "scope": "trust_runtime",
-      "owner_component": "nogap.py:write_isolated_run_evidence",
-      "mechanism": "Execution and verification evidence is always written regardless of pass/fail status - a failed run is never silently discarded, only classified honestly. The full FailureRecord lifecycle (OPEN/REPRODUCED/CHARACTERIZED/ROOT_CAUSE_IDENTIFIED/...) does not exist yet.",
-      "evidence_kind": "execution and verification evidence",
-      "implemented_by": ["scripts/nogap.py:write_isolated_run_evidence"],
-      "tests": ["tests/test_execution_backend.py", "tests/test_verification_pipeline.py"],
-      "future_milestone": "M7-H",
-      "notes": null
+      "owner_component": "nogap_failure.py",
+      "mechanism": "Execution and verification evidence is always written regardless of pass/fail status. A failure is now also a first-class, permanently queryable FailureRecord (OPEN -> EVIDENCE_PRESERVED -> REPRODUCED -> CHARACTERIZED -> RESEARCHED -> ROOT_CAUSE_IDENTIFIED -> REPAIR_PROPOSED -> REPAIR_SELECTED -> REPAIRED -> REGRESSION_TESTED -> REVALIDATED -> RESOLVED, plus INCONCLUSIVE/REJECTED/ABANDONED): create_failure()/record_evidence_preservation() reject unknown evidence/artifact refs, history is append-only (each step calls _append_history, never edits or deletes a prior entry), and no code path deletes a failure record. Remaining gap: nothing yet reads FailureRecords back as a corpus (no cross-failure learning/analytics) - that is Project Memory (M7-I), explicitly deferred.",
+      "evidence_kind": "failure_record (append-only history)",
+      "implemented_by": ["scripts/nogap.py:write_isolated_run_evidence", "scripts/nogap_failure.py"],
+      "tests": [
+        "tests/test_execution_backend.py", "tests/test_verification_pipeline.py",
+        "tests/test_methodology_failure.py::CreationAndHistoryTests::test_3_history_is_append_only",
+        "tests/test_methodology_failure.py::RepairAndBudgetTests::test_29_and_30_and_31_successful_full_cycle_resolves_and_stays_queryable"
+      ],
+      "future_milestone": "M7-I",
+      "notes": "The FailureRecord lifecycle itself is real and tested; M7-I would add reading failures back as durable project memory."
     },
     {
       "principle_id": "GP-12",
@@ -268,13 +276,14 @@
       "status": "ENFORCED",
       "scope": "cross_cutting",
       "owner_component": "nogap_methodology.py:transition",
-      "mechanism": "Every methodology transition requires a non-empty actor_id and reason, and always records timestamp + evidence_refs + artifact_refs (transition() rejects empty actor/reason outright). Decision records populate actor_id/decided_by on every decide call through the CLI.",
-      "evidence_kind": "transition_history and decision records",
-      "implemented_by": ["scripts/nogap_methodology.py:transition", "scripts/nogap.py:cmd_decide"],
+      "mechanism": "Every methodology transition requires a non-empty actor_id and reason, and always records timestamp + evidence_refs + artifact_refs (transition() rejects empty actor/reason outright). Decision records populate actor_id/decided_by on every decide call through the CLI. Every FailureRecord history entry (nogap_failure.py:_append_history) likewise requires a non-empty actor_id and reason and is append-only; repair selection additionally records selected_by/authority/timestamp.",
+      "evidence_kind": "transition_history, decision records, and failure_record history",
+      "implemented_by": ["scripts/nogap_methodology.py:transition", "scripts/nogap.py:cmd_decide", "scripts/nogap_failure.py:_append_history"],
       "tests": [
         "tests/test_methodology_engine.py::RejectionAndFailClosedTests::test_18_transition_without_actor_rejected",
         "tests/test_methodology_engine.py::RejectionAndFailClosedTests::test_19_transition_without_reason_rejected",
-        "tests/test_methodology_engine.py::ApiIntegrityTests::test_20_transition_history_is_append_only"
+        "tests/test_methodology_engine.py::ApiIntegrityTests::test_20_transition_history_is_append_only",
+        "tests/test_methodology_failure.py::RepairLoopTests::test_22_repair_selection_requires_actor_and_reason"
       ],
       "future_milestone": null,
       "notes": "decision.schema.json does not itself require actor_id (only the Python-level acceptability() check does for ACCEPT specifically) - a minor schema gap, not a functional one, since the CLI never omits it in practice."

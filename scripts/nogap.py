@@ -820,11 +820,16 @@ def cmd_run(args: argparse.Namespace) -> None:
             task_contract = load_task_contract(project_root, requested_task_id)
             if preflight["current_phase"] == "P11":
                 enter_build_phase(project_root, actor, "prebuild readiness satisfied; entering BUILD")
-            plan_evidence_id = record_plan_evidence(project_root, run_id, task_contract, actor)
-            enter_execution_phase(
-                project_root, actor, "task contract recorded; entering minimal controlled implementation",
-                task_contract, plan_evidence_id,
-            )
+            # A repair selected by M7-H's Failure Orchestrator can legitimately land
+            # current_phase directly at P13 (re-entering BUILD for the same task
+            # without recreating P12) - only drive P12->P13 when we are not already
+            # there, or this would attempt the illegal edge P13->P13.
+            if preflight["current_phase"] in ("P11", "P12"):
+                plan_evidence_id = record_plan_evidence(project_root, run_id, task_contract, actor)
+                enter_execution_phase(
+                    project_root, actor, "task contract recorded; entering minimal controlled implementation",
+                    task_contract, plan_evidence_id,
+                )
         except _MethodologyValidationError as exc:
             raise SystemExit(f"FAIL: {exc}") from exc
     elif requested_task_id:
@@ -1918,7 +1923,7 @@ def _cmd_methodology_artifacts(args: argparse.Namespace) -> None:
                     )
                 self_checks = list_artifacts(project, artifact_type="P14_SELF_CHECK")
                 if result["current_phase"] == "P14" and self_checks:
-                    latest = self_checks[-1]
+                    latest = max(self_checks, key=lambda r: r.get("created_at", ""))
                     print(
                         f"BUILD_COMPLETE_AWAITING_VERIFICATION: task_id={latest['fields']['task_id']} "
                         f"execution_evidence_ids={latest['fields']['execution_evidence_ids']}"
@@ -1926,6 +1931,132 @@ def _cmd_methodology_artifacts(args: argparse.Namespace) -> None:
             return
     except MethodologyValidationError as exc:
         raise SystemExit(f"FAIL: {exc}") from exc
+
+
+def cmd_failure(args: argparse.Namespace) -> None:
+    """Thin CLI dispatcher only: every action calls straight into nogap_failure.py's
+    engine API - no CLI shortcut here bypasses a state transition or re-derives logic
+    that module already owns."""
+    import nogap_failure as nf
+    from nogap_methodology import MethodologyValidationError as _MethodologyValidationError
+
+    project = Path(args.path)
+    fields = json.loads(args.fields_json) if args.fields_json else {}
+
+    def _print_failure(record: dict) -> None:
+        print(f"{record['failure_id']}: {record['current_state']} (root_cause_class={record.get('root_cause_class')})")
+
+    try:
+        if args.action == "create":
+            if not (args.failure_class and args.summary):
+                raise SystemExit("FAIL: failure create requires --failure-class and --summary")
+            record = nf.create_failure(
+                project, failure_class=args.failure_class, summary=args.summary, actor=args.actor,
+                origin_phase=args.origin_phase, task_id=args.task_id,
+                evidence_refs=args.evidence_ref or [], artifact_refs=args.artifact_ref or [],
+            )
+            _print_failure(record)
+            return
+
+        if args.action == "list":
+            records = nf.list_failures(project, state=args.state)
+            print(f"{len(records)} failure(s)")
+            for record in records:
+                print(f"  {record['failure_id']} [{record['current_state']}] task_id={record.get('task_id')} class={record.get('failure_class')}")
+            return
+
+        if args.action == "status":
+            if not args.failure_id:
+                raise SystemExit("FAIL: failure status requires --failure-id")
+            record = nf.load_failure(project, args.failure_id)
+            if record is None:
+                raise SystemExit(f"FAIL: unknown failure_id {args.failure_id!r}")
+            print(json.dumps(record, indent=2, sort_keys=True))
+            return
+
+        if not args.failure_id:
+            raise SystemExit(f"FAIL: failure {args.action} requires --failure-id")
+        if not args.reason:
+            raise SystemExit(f"FAIL: failure {args.action} requires --reason")
+
+        if args.action == "preserve-evidence":
+            record = nf.record_evidence_preservation(
+                project, args.failure_id, evidence_refs=args.evidence_ref or [], artifact_refs=args.artifact_ref or [],
+                actor=args.actor, reason=args.reason,
+            )
+        elif args.action == "reproduce":
+            if not args.reproduction_status:
+                raise SystemExit("FAIL: failure reproduce requires --reproduction-status")
+            record = nf.record_reproduction(
+                project, args.failure_id, reproduction_status=args.reproduction_status, actor=args.actor,
+                reason=args.reason, environment=args.environment, reproduction_evidence_refs=args.evidence_ref or [],
+            )
+        elif args.action == "characterize":
+            record = nf.record_characterization(
+                project, args.failure_id, actor=args.actor, reason=args.reason,
+                affected_requirement_refs=fields.get("affected_requirement_refs", []),
+                affected_gate_refs=fields.get("affected_gate_refs", []), scope=fields.get("scope"),
+                expected=fields.get("expected"), observed=fields.get("observed"), frequency=fields.get("frequency"),
+                deterministic=fields.get("deterministic"), blast_radius=fields.get("blast_radius"),
+            )
+        elif args.action == "research":
+            policy_exception = json.loads(args.policy_exception_json) if args.policy_exception_json else None
+            record = nf.record_research(
+                project, args.failure_id, actor=args.actor, reason=args.reason,
+                research_refs=args.evidence_ref or [], policy_exception=policy_exception,
+            )
+        elif args.action == "root-cause":
+            if not (args.root_cause_class and args.root_cause_summary):
+                raise SystemExit("FAIL: failure root-cause requires --root-cause-class and --root-cause-summary")
+            record = nf.record_root_cause(
+                project, args.failure_id, root_cause_class=args.root_cause_class,
+                root_cause_summary=args.root_cause_summary, supporting_evidence_refs=args.evidence_ref or [],
+                actor=args.actor, reason=args.reason,
+            )
+        elif args.action == "propose-repair":
+            if not (args.description and args.target_phase):
+                raise SystemExit("FAIL: failure propose-repair requires --description and --target-phase")
+            record = nf.propose_repair(
+                project, args.failure_id, description=args.description, target_phase=args.target_phase,
+                actor=args.actor, reason=args.reason, expected_effect=fields.get("expected_effect"),
+                risk=fields.get("risk"), cost=fields.get("cost"),
+                affected_requirements=fields.get("affected_requirements", []),
+                evidence_refs=args.evidence_ref or [], repair_id=args.repair_id,
+            )
+        elif args.action == "select-repair":
+            if not args.repair_id:
+                raise SystemExit("FAIL: failure select-repair requires --repair-id")
+            record = nf.select_repair(
+                project, args.failure_id, args.repair_id, actor=args.actor, reason=args.reason, authority=args.authority,
+            )
+        elif args.action == "repaired":
+            record = nf.record_repaired(
+                project, args.failure_id, repair_evidence_refs=args.evidence_ref or [], actor=args.actor, reason=args.reason,
+            )
+        elif args.action == "regression":
+            if not args.result:
+                raise SystemExit("FAIL: failure regression requires --result")
+            record = nf.record_regression(
+                project, args.failure_id, result=args.result, actor=args.actor, reason=args.reason,
+                tests_executed=fields.get("tests_executed", []), gate_ids=fields.get("gate_ids", []),
+                requirements_affected=fields.get("requirements_affected", []), evidence_refs=args.evidence_ref or [],
+            )
+        elif args.action == "revalidate":
+            record = nf.record_revalidation(project, args.failure_id, actor=args.actor, reason=args.reason)
+        elif args.action == "resolve":
+            record = nf.resolve_failure(project, args.failure_id, actor=args.actor, reason=args.reason)
+        elif args.action == "inconclusive":
+            record = nf.mark_inconclusive(project, args.failure_id, actor=args.actor, reason=args.reason)
+        elif args.action == "close":
+            if not args.close_status:
+                raise SystemExit("FAIL: failure close requires --close-status")
+            record = nf.close_failure(project, args.failure_id, status=args.close_status, actor=args.actor, reason=args.reason)
+        else:
+            raise SystemExit(f"FAIL: unknown failure action {args.action!r}")
+    except _MethodologyValidationError as exc:
+        raise SystemExit(f"FAIL: {exc}") from exc
+
+    _print_failure(record)
 
 
 def main() -> None:
@@ -2081,6 +2212,40 @@ def main() -> None:
     methodology.add_argument("--assumption", action="append", help="repeatable; artifact-create assumptions")
     methodology.add_argument("--limitation", action="append", help="repeatable; artifact-create limitations")
     methodology.set_defaults(func=cmd_methodology)
+
+    failure = sub.add_parser("failure")
+    failure.add_argument("action", choices=[
+        "create", "status", "list", "preserve-evidence", "reproduce", "characterize",
+        "research", "root-cause", "propose-repair", "select-repair", "repaired",
+        "regression", "revalidate", "resolve", "inconclusive", "close",
+    ])
+    failure.add_argument("path", nargs="?", default=".")
+    failure.add_argument("--failure-id", help="target failure for every action except create/list")
+    failure.add_argument("--actor", default="nogap failure")
+    failure.add_argument("--reason", help="required for most state-changing actions")
+    failure.add_argument("--failure-class", help="create: surface-level failure classification (free text)")
+    failure.add_argument("--summary", help="create: what failed")
+    failure.add_argument("--task-id", help="create: associated P12_TASK_CONTRACT task_id")
+    failure.add_argument("--origin-phase", help="create: defaults to the project's current methodology phase")
+    failure.add_argument("--evidence-ref", action="append", help="repeatable; evidence and/or methodology-artifact reference(s)")
+    failure.add_argument("--artifact-ref", action="append", help="repeatable; methodology-artifact reference(s)")
+    failure.add_argument("--reproduction-status", choices=sorted({"REPRODUCED", "NOT_REPRODUCED", "INTERMITTENT", "INCONCLUSIVE"}))
+    failure.add_argument("--environment", help="reproduce: environment description")
+    failure.add_argument("--root-cause-class", choices=sorted({
+        "IMPLEMENTATION_DEFECT", "REQUIREMENT_DEFECT", "ARCHITECTURE_DEFECT", "PRIOR_ART_INVALIDATION",
+        "TEST_OR_GATE_DEFECT", "ENVIRONMENT_DEFECT", "DATA_DEFECT", "DEPENDENCY_DEFECT", "UNKNOWN",
+    }))
+    failure.add_argument("--root-cause-summary")
+    failure.add_argument("--repair-id", help="select-repair: which proposed candidate; propose-repair: optional explicit id")
+    failure.add_argument("--target-phase", help="propose-repair: destination phase for this candidate")
+    failure.add_argument("--description", help="propose-repair: what the candidate repair does")
+    failure.add_argument("--authority", default="human", help="select-repair: authority class recorded for the selection")
+    failure.add_argument("--result", choices=["passed", "failed"], help="regression: outcome")
+    failure.add_argument("--policy-exception-json", help="research: JSON {reason, actor_id, authority} - LIGHT profile only")
+    failure.add_argument("--fields-json", help="per-action extra structured fields (characterization details, repair proposal extras)")
+    failure.add_argument("--state", help="list: filter by current_state")
+    failure.add_argument("--close-status", choices=["REJECTED", "ABANDONED"], help="close: which negative terminal outcome")
+    failure.set_defaults(func=cmd_failure)
 
     argv = sys.argv[1:]
     worktree_command: list[str] = []
