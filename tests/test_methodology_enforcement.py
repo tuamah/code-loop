@@ -107,10 +107,14 @@ class RealEnforcementMapTests(unittest.TestCase):
         self.assertEqual(record.status, "ENFORCED")
         self.assertIn("nogap_methodology.py:derive_profile", record.owner_component)
 
-    def test_14_gp3_not_fully_enforced_before_m7h(self) -> None:
+    def test_14_gp3_partial_after_m7h_scoped_to_failure_repair_path(self) -> None:
+        # M7-H's Failure Orchestrator enforces research-before-repair for its own
+        # repair path (nogap_failure.py:record_research), but not every possible
+        # route back into BUILD - so PARTIAL, not ENFORCED, and no milestone is left
+        # blocking it (a wider guarantee would be a new, separately-scoped milestone).
         record = get_principle_enforcement("GP-3")
-        self.assertNotEqual(record.status, "ENFORCED")
-        self.assertEqual(record.future_milestone, "M7-H")
+        self.assertEqual(record.status, "PARTIAL")
+        self.assertIsNone(record.future_milestone)
 
     def test_15_gp9_not_fully_enforced_before_m7i(self) -> None:
         record = get_principle_enforcement("GP-9")
