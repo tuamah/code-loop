@@ -230,6 +230,10 @@ def collect_memory_sources(project: Path) -> dict[str, Any]:
     _check_research_duplicate_ids(research)
     _check_research_cross_refs(research)
 
+    lifecycle = _collect_lifecycle(project)
+    _check_lifecycle_duplicate_ids(lifecycle)
+    _check_lifecycle_cross_refs(lifecycle)
+
     return {
         "methodology_state": state,
         "artifacts": artifacts,
@@ -239,10 +243,55 @@ def collect_memory_sources(project: Path) -> dict[str, Any]:
         "events": events,
         "gates": gates,
         "research": research,
+        "lifecycle": lifecycle,
         "git": _collect_git(project),
         "runtime_exists": (runtime_dir(project) / "run.json").is_file(),
         "methodology_exists": state is not None,
     }
+
+
+# --- M7-K lifecycle collection (read-only; nogap_lifecycle.py owns all writes) ---
+
+LIFECYCLE_KINDS = ("release_candidates", "release_readiness", "deployments", "operations", "incidents", "improvements", "lifecycle_decisions")
+LIFECYCLE_ID_FIELDS = {
+    "release_candidates": "release_candidate_id", "release_readiness": "readiness_id",
+    "deployments": "deployment_id", "operations": "observation_id", "incidents": "incident_id",
+    "improvements": "improvement_id", "lifecycle_decisions": "lifecycle_decision_id",
+}
+
+
+def _collect_lifecycle(project: Path) -> dict[str, list[dict[str, Any]]]:
+    from nogap_lifecycle import lifecycle_dir as _lifecycle_dir
+    base = _lifecycle_dir(project)
+    return {kind: _load_json_dir_strict(base / kind) for kind in LIFECYCLE_KINDS}
+
+
+def _check_lifecycle_duplicate_ids(lifecycle: dict[str, list[dict[str, Any]]]) -> None:
+    for kind, id_field in LIFECYCLE_ID_FIELDS.items():
+        seen: set[str] = set()
+        for record in lifecycle[kind]:
+            rid = record.get(id_field)
+            if not rid:
+                continue
+            if rid in seen:
+                raise MethodologyValidationError(f"memory: duplicate authoritative {id_field} {rid!r} in lifecycle/{kind}")
+            seen.add(rid)
+
+
+def _check_lifecycle_cross_refs(lifecycle: dict[str, list[dict[str, Any]]]) -> None:
+    known_candidates = {r["release_candidate_id"] for r in lifecycle["release_candidates"]}
+    known_readiness = {r["readiness_id"] for r in lifecycle["release_readiness"]}
+    known_deployments = {r["deployment_id"] for r in lifecycle["deployments"]}
+
+    for record in lifecycle["release_readiness"] + lifecycle["deployments"]:
+        if record.get("release_candidate_id") and record["release_candidate_id"] not in known_candidates:
+            raise MethodologyValidationError(f"memory: lifecycle record references unknown release_candidate_id {record['release_candidate_id']!r}")
+    for record in lifecycle["deployments"]:
+        if record.get("readiness_id") and record["readiness_id"] not in known_readiness:
+            raise MethodologyValidationError(f"memory: deployment references unknown readiness_id {record['readiness_id']!r}")
+    for record in lifecycle["operations"] + lifecycle["incidents"]:
+        if record.get("deployment_id") and record["deployment_id"] not in known_deployments:
+            raise MethodologyValidationError(f"memory: lifecycle record references unknown deployment_id {record['deployment_id']!r}")
 
 
 # --- M7-J research collection (read-only; nogap_research.py owns all writes) -----
@@ -389,6 +438,10 @@ def _flatten_sources(sources: dict[str, Any]) -> list[tuple[str, str, str]]:
         id_field = RESEARCH_ID_FIELDS[kind]
         for record in records:
             flat.append((f"research:{kind}", record[id_field], _content_hash(record)))
+    for kind, records in sources.get("lifecycle", {}).items():
+        id_field = LIFECYCLE_ID_FIELDS[kind]
+        for record in records:
+            flat.append((f"lifecycle:{kind}", record[id_field], _content_hash(record)))
     return sorted(flat)
 
 
@@ -836,6 +889,147 @@ def _derive_structured_research(sources: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# --- M7-K structured lifecycle derivation ---------------------------------------
+# Every "which record is current" question below is answered by calling
+# nogap_lifecycle.py's OWN pure selector - never re-derived here. This is the exact
+# single-owner discipline required after the M7-J review fix, applied from the
+# start for M7-K.
+
+def _derive_structured_lifecycle(sources: dict[str, Any]) -> dict[str, Any]:
+    from nogap_lifecycle import (
+        compute_operational_status,
+        select_current_lifecycle_decision,
+        select_current_release_candidate,
+        select_current_release_readiness,
+    )
+
+    lifecycle = sources["lifecycle"]
+    candidates = lifecycle["release_candidates"]
+    readiness_records = lifecycle["release_readiness"]
+    deployments = lifecycle["deployments"]
+    observations = lifecycle["operations"]
+    incidents = lifecycle["incidents"]
+    improvements = lifecycle["improvements"]
+    decisions = lifecycle["lifecycle_decisions"]
+
+    current_candidate_result = select_current_release_candidate(candidates)
+    current_candidate = current_candidate_result.get("candidate")
+
+    current_readiness_by_candidate = {
+        candidate["release_candidate_id"]: select_current_release_readiness(
+            [r for r in readiness_records if r["release_candidate_id"] == candidate["release_candidate_id"]]
+        )
+        for candidate in candidates
+    }
+
+    # Memory projects health per deployment using the SAME pure function
+    # nogap_lifecycle.get_operational_status wraps - never HEALTHY, since Memory has
+    # no basis to supply health_criteria; only UNKNOWN (no data) or INCONCLUSIVE
+    # (data exists, no criteria) are reachable here, exactly matching the "no
+    # absence-as-success" invariant.
+    operational_status_by_deployment = {
+        deployment["deployment_id"]: compute_operational_status(
+            [o for o in observations if o["deployment_id"] == deployment["deployment_id"]]
+        )["status"]
+        for deployment in deployments
+    }
+
+    recent_observations = sorted(observations, key=lambda o: o["observed_at"], reverse=True)[:20]
+
+    open_incidents = [i for i in incidents if i["status"] not in {"RESOLVED", "CLOSED"}]
+    resolved_incidents = [i for i in incidents if i["status"] in {"RESOLVED", "CLOSED"}]
+    active_improvements = [i for i in improvements if i["status"] not in {"VALIDATED", "REJECTED", "ABANDONED"}]
+    validated_improvements = [i for i in improvements if i["status"] == "VALIDATED"]
+
+    current_decision_result = select_current_lifecycle_decision(decisions)
+    current_decision = current_decision_result.get("decision")
+
+    known_release_blockers = [
+        {"release_candidate_id": cid, "reasons": result["readiness"]["blocking_reasons"], "source_ref": result["readiness"]["readiness_id"]}
+        for cid, result in current_readiness_by_candidate.items()
+        if result["status"] == "OK" and result["readiness"]["blocking_reasons"]
+    ]
+    known_operational_risks = [
+        {"incident_id": i["incident_id"], "severity": i["severity"], "summary": i["summary"], "source_ref": i["incident_id"]}
+        for i in open_incidents
+    ]
+
+    conflicts = []
+    if current_candidate_result["status"] == "CONFLICT":
+        conflicts.append({"kind": "release_candidate", "conflicting_ids": current_candidate_result["conflicting_ids"]})
+    for cid, result in current_readiness_by_candidate.items():
+        if result["status"] == "CONFLICT":
+            conflicts.append({"kind": "release_readiness", "release_candidate_id": cid, "conflicting_ids": result["conflicting_ids"]})
+    if current_decision_result["status"] == "CONFLICT":
+        conflicts.append({"kind": "lifecycle_decision", "conflicting_ids": current_decision_result["conflicting_ids"]})
+
+    next_actions = []
+    for blocker in known_release_blockers:
+        next_actions.append({
+            "action": f"resolve release readiness blockers for {blocker['release_candidate_id']}: {blocker['reasons']}",
+            "priority": "REQUIRED", "source_ref": blocker["source_ref"],
+        })
+    for incident in open_incidents:
+        next_actions.append({
+            "action": f"address open incident {incident['incident_id']} ({incident['severity']})",
+            "priority": "REQUIRED" if incident["severity"] in {"HIGH", "CRITICAL"} else "RECOMMENDED",
+            "source_ref": incident["incident_id"],
+        })
+
+    return {
+        "release_candidates": [
+            {"release_candidate_id": c["release_candidate_id"], "version": c["version"], "status": c["status"], "source_ref": c["release_candidate_id"]}
+            for c in candidates
+        ],
+        "current_release_candidate": (
+            {"release_candidate_id": current_candidate["release_candidate_id"], "version": current_candidate["version"],
+             "status": current_candidate["status"], "source_ref": current_candidate["release_candidate_id"]}
+            if current_candidate else None
+        ),
+        "release_readiness": [
+            {"readiness_id": r["readiness_id"], "release_candidate_id": r["release_candidate_id"],
+             "readiness_outcome": r["readiness_outcome"], "source_ref": r["readiness_id"]}
+            for r in readiness_records
+        ],
+        "deployments": [
+            {"deployment_id": d["deployment_id"], "release_candidate_id": d["release_candidate_id"],
+             "environment": d["environment"], "status": d["status"], "source_ref": d["deployment_id"]}
+            for d in deployments
+        ],
+        "operational_status": operational_status_by_deployment,
+        "recent_operational_observations": [
+            {"observation_id": o["observation_id"], "deployment_id": o["deployment_id"], "metric_name": o["metric_name"],
+             "metric_value": o["metric_value"], "source_ref": o["observation_id"]}
+            for o in recent_observations
+        ],
+        "open_incidents": [
+            {"incident_id": i["incident_id"], "severity": i["severity"], "summary": i["summary"], "status": i["status"], "source_ref": i["incident_id"]}
+            for i in open_incidents
+        ],
+        "resolved_incidents": [
+            {"incident_id": i["incident_id"], "summary": i["summary"], "status": i["status"], "source_ref": i["incident_id"]}
+            for i in resolved_incidents
+        ],
+        "active_improvements": [
+            {"improvement_id": i["improvement_id"], "status": i["status"], "problem_or_opportunity": i["problem_or_opportunity"], "source_ref": i["improvement_id"]}
+            for i in active_improvements
+        ],
+        "validated_improvements": [
+            {"improvement_id": i["improvement_id"], "problem_or_opportunity": i["problem_or_opportunity"], "source_ref": i["improvement_id"]}
+            for i in validated_improvements
+        ],
+        "current_lifecycle_decision": (
+            {"lifecycle_decision_id": current_decision["lifecycle_decision_id"], "outcome": current_decision["outcome"],
+             "source_ref": current_decision["lifecycle_decision_id"]}
+            if current_decision else None
+        ),
+        "known_release_blockers": known_release_blockers,
+        "known_operational_risks": known_operational_risks,
+        "next_lifecycle_actions": next_actions,
+        "lifecycle_conflicts": conflicts,
+    }
+
+
 # --- snapshot build --------------------------------------------------------
 
 def build_memory_snapshot(project: Path, actor: str) -> dict[str, Any]:
@@ -853,6 +1047,7 @@ def build_memory_snapshot(project: Path, actor: str) -> dict[str, Any]:
     verified_artifacts, verification_summary = _derive_verification(sources)
     architecture_decisions, frozen_decisions = _derive_architecture(sources)
     structured_research = _derive_structured_research(sources)
+    structured_lifecycle = _derive_structured_lifecycle(sources)
 
     flat = _flatten_sources(sources)
     source_fingerprint = hashlib.sha256(json.dumps(flat, sort_keys=True).encode("utf-8")).hexdigest()
@@ -888,6 +1083,7 @@ def build_memory_snapshot(project: Path, actor: str) -> dict[str, Any]:
         "active_research": active_research,
         "research_findings": research_findings,
         **structured_research,
+        **structured_lifecycle,
 
         "verified_artifacts": verified_artifacts,
         "verification_summary": verification_summary,
@@ -916,7 +1112,7 @@ def build_memory_snapshot(project: Path, actor: str) -> dict[str, Any]:
             "source_fingerprint": source_fingerprint,
             "projection_hash": None,  # filled in by rebuild_memory once markdown body is rendered
             "generator_version": GENERATOR_VERSION,
-            "conflicts": list(structured_research["research_assessment_conflicts"]),
+            "conflicts": list(structured_research["research_assessment_conflicts"]) + list(structured_lifecycle["lifecycle_conflicts"]),
             "stale": False,
         },
     }
@@ -1112,6 +1308,46 @@ def _render_body_sections(snapshot: dict[str, Any]) -> str:
             [f"{c['claim_id']}: conflicting assessment ids {c['conflicting_assessment_ids']}" for c in snapshot["research_assessment_conflicts"]],
             "none",
         ))
+
+    section("Release / Operate / Evolve State")
+    current_rc = snapshot["current_release_candidate"]
+    lines.append(f"- current release candidate: {current_rc['release_candidate_id'] + ' (' + current_rc['version'] + ')' if current_rc else 'none'}\n")
+    lines.append("\nRelease candidates:\n")
+    lines.append(_bullets([f"{c['release_candidate_id']} v{c['version']} [{c['status']}]{_fmt_source(c['source_ref'])}" for c in snapshot["release_candidates"]], "none"))
+    lines.append("\nRelease readiness:\n")
+    lines.append(_bullets(
+        [f"{r['readiness_id']} for {r['release_candidate_id']}: {r['readiness_outcome']}{_fmt_source(r['source_ref'])}" for r in snapshot["release_readiness"]],
+        "none",
+    ))
+    lines.append("\nDeployments:\n")
+    lines.append(_bullets(
+        [f"{d['deployment_id']} ({d['environment']}): {d['status']}{_fmt_source(d['source_ref'])}" for d in snapshot["deployments"]],
+        "none",
+    ))
+    lines.append("\nOperational status by deployment (UNKNOWN with no telemetry, never HEALTHY by default):\n")
+    lines.append(_bullets([f"{deployment_id}: {status}" for deployment_id, status in snapshot["operational_status"].items()], "none"))
+    lines.append("\nOpen incidents:\n")
+    lines.append(_bullets(
+        [f"{i['incident_id']} [{i['severity']}] {i['summary']} (status={i['status']}){_fmt_source(i['source_ref'])}" for i in snapshot["open_incidents"]],
+        "none",
+    ))
+    lines.append("\nResolved incidents:\n")
+    lines.append(_bullets(
+        [f"{i['incident_id']}: {i['summary']}{_fmt_source(i['source_ref'])}" for i in snapshot["resolved_incidents"]],
+        "none",
+    ))
+    lines.append("\nActive improvements:\n")
+    lines.append(_bullets(
+        [f"{i['improvement_id']} [{i['status']}]: {i['problem_or_opportunity']}{_fmt_source(i['source_ref'])}" for i in snapshot["active_improvements"]],
+        "none",
+    ))
+    current_lcd = snapshot["current_lifecycle_decision"]
+    lines.append(f"\n- current lifecycle decision: {current_lcd['outcome'] + ' (' + current_lcd['lifecycle_decision_id'] + ')' if current_lcd else 'none'}\n")
+    lines.append("\nKnown release blockers:\n")
+    lines.append(_bullets([f"{b['release_candidate_id']}: {b['reasons']}{_fmt_source(b['source_ref'])}" for b in snapshot["known_release_blockers"]], "none"))
+    if snapshot["lifecycle_conflicts"]:
+        lines.append("\nUNRESOLVED LIFECYCLE CONFLICTS (fail-closed, no current record selected):\n")
+        lines.append(_bullets([f"{c['kind']}: conflicting ids {c['conflicting_ids']}" for c in snapshot["lifecycle_conflicts"]], "none"))
 
     section("Known Constraints")
     lines.append(_bullets([f"{c['constraint']}{_fmt_source(c['source_ref'])}" for c in snapshot["known_constraints"]], "none recorded"))
