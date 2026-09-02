@@ -1,5 +1,29 @@
 #!/usr/bin/env python3
-"""M8-A: Decision Contracts & Safety Model.
+"""M8-A/M8-B: Decision Contracts & Safety Model, Immutable Decision Snapshot.
+
+M8-B ADDENDUM: adds SnapshotReference, DecisionSubject, and DecisionSnapshot -
+a pure, immutable identity layer binding a future decision to the EXACT state
+it was about (Principle 2, in-toto/SLSA-derived: "a trusted statement is about
+an immutable subject"). Like M8-A, this addition is CONTRACT-ONLY:
+  - build_decision_snapshot() accepts only explicit, already-resolved
+    SnapshotReference/DecisionSubject values. It performs no filesystem, Git,
+    M7 methodology-state, verification-directory, decision-ledger, memory,
+    research, environment, network, or implicit-clock access of any kind.
+  - A DecisionSnapshot carries facts/references only - it structurally cannot
+    carry a verdict, a requested_verdict, a confidence/score, or a vote; no
+    such field exists anywhere on DecisionSnapshot or SnapshotReference, and
+    no method on either class derives one.
+  - Capturing a reference into a snapshot does not prove it valid, fresh,
+    independent, or authoritative - that evaluation belongs to M8-D/M8-E/M8-F.
+    A SnapshotReference is a provenance BINDING, never a truth claim.
+  - Fingerprinting reuses this module's own canonical_json() (no second
+    competing canonicalizer) and stdlib hashlib.sha256 (no Python hash(),
+    mtime, uuid, or filename-based identity anywhere).
+  - Candidate fingerprints are NOT recomputed here - scripts/nogap_lifecycle.py's
+    compute_candidate_fingerprint() remains the sole owner; DecisionSubject
+    only carries whatever value that function already produced, verbatim, as
+    an opaque already-computed digest. Likewise gate fingerprints remain
+    scripts/nogap.py's gate_hash()'s sole ownership.
 
 This module defines the formal vocabulary and structural safety contracts for
 NoGapCode's future Decision Engine (M8). It is CONTRACT FOUNDATION ONLY:
@@ -104,8 +128,12 @@ it is never the default branch of the algebra.
 
 from __future__ import annotations
 
+import collections.abc
 import dataclasses
+import hashlib
 import json
+import re
+import types
 from typing import Any, Mapping, Sequence
 
 # --- versioning ---------------------------------------------------------------
@@ -223,17 +251,23 @@ DECISION_REASON_CODES = frozenset({
 
 # --- canonical serialization -----------------------------------------------------
 
-# Excluded from canonical form / semantic equality: they record *when* a
-# contract was produced, never *what* it means. Two evaluations of the same
-# inputs a second apart must canonicalize identically.
-_TIMESTAMP_FIELDS = frozenset({"created_at", "evaluated_at"})
+# Excluded, by field name, from canonical form / semantic equality wherever
+# they occur on ANY dataclass in this module: created_at/evaluated_at/
+# captured_at record *when* a contract was produced, never *what* it means
+# (two evaluations of the same inputs a second apart must canonicalize
+# identically); `locator` (SnapshotReference's WHERE-to-find-it metadata) is
+# explicitly non-authoritative and must never participate in identity - see
+# SnapshotReference's own docstring. A field with one of these names is
+# non-semantic on every dataclass in this module; none of them happens to
+# carry a DIFFERENT, semantically-meaningful field under the same name.
+_NON_SEMANTIC_FIELD_NAMES = frozenset({"created_at", "evaluated_at", "captured_at", "locator"})
 
 
 def _canonicalize(value: Any) -> Any:
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
         result = {}
         for f in dataclasses.fields(value):
-            if f.name in _TIMESTAMP_FIELDS:
+            if f.name in _NON_SEMANTIC_FIELD_NAMES:
                 continue
             result[f.name] = _canonicalize(getattr(value, f.name))
         return result
@@ -244,8 +278,33 @@ def _canonicalize(value: Any) -> Any:
         if items and all(isinstance(v, dict) for v in items):
             return sorted(items, key=lambda d: json.dumps(d, sort_keys=True, separators=(",", ":")))
         return items
-    if isinstance(value, dict):
+    if isinstance(value, collections.abc.Mapping):
+        # Mapping, not bare dict: also handles types.MappingProxyType, the
+        # deep-frozen representation _deep_freeze() below produces - so this
+        # stays correct even if canonical_json() is ever pointed at a raw
+        # DecisionSnapshot instead of its semantic_payload().
         return {k: _canonicalize(v) for k, v in sorted(value.items())}
+    return value
+
+
+def _deep_freeze(value: Any) -> Any:
+    """Recursively converts dict -> types.MappingProxyType (over a dict whose
+    values are themselves already deep-frozen) and list/tuple -> tuple (of
+    already deep-frozen elements), so NO mutable container is reachable
+    anywhere in the returned structure - not the top level, and not any
+    nested level. Scalars (str/int/float/bool/None - the only other types
+    JSON-compatible metadata can contain, per _require_json_compatible)
+    pass through unchanged, since they are already immutable.
+
+    A single-level `dict(...)` or `tuple(...)` copy is NOT sufficient: it
+    protects only the outermost container, while any nested dict/list
+    remains the SAME mutable object the caller can still reach and mutate
+    through their own original reference (an aliasing attack). This function
+    closes that gap by freezing every level, not just the first."""
+    if isinstance(value, dict):
+        return types.MappingProxyType({k: _deep_freeze(v) for k, v in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(v) for v in value)
     return value
 
 
@@ -637,3 +696,357 @@ def derive_contract_verdict(
         return DecisionAlgebraResult("ABSTAIN", reasons, ("MANDATORY_PREDICATE_UNKNOWN",))
 
     return DecisionAlgebraResult("ACCEPT", (), ())
+
+
+# ================================================================================
+# M8-B: Immutable Decision Snapshot
+# ================================================================================
+
+def fingerprint_payload(payload: Any) -> str:
+    """SHA-256 hex digest (64 lowercase hex chars, no prefix - the SAME bare
+    format scripts/nogap.py's stable_hash()/gate_hash() and
+    scripts/nogap_lifecycle.py's compute_candidate_fingerprint()/
+    _artifact_content_hash() already use throughout this codebase) of a
+    payload's canonical JSON form. Reuses canonical_json() - never a second,
+    competing canonicalizer. A general-purpose utility; it does NOT become the
+    owner of candidate/gate/methodology fingerprint semantics - those stay
+    exactly where they already are."""
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+# Full immutable Git commit id only: 40-hex SHA-1 (the format every Git
+# repository in practice still uses today) or 64-hex SHA-256 (the newer,
+# still-uncommon Git object-format option) - both fixed lengths, lowercase
+# hex, and both refer to an unchangeable commit object, never a branch name,
+# "HEAD", or any other mutable locator. A branch name is exactly as long and
+# as hex-shaped as neither of these in the general case, but even a
+# coincidentally hex-looking branch name is still rejected on principle
+# alone: revision_ref accepts only pre-validated, already-resolved commit
+# ids from the caller - this module never resolves Git itself (M8-B does not
+# invoke Git; a future integration seam does).
+_GIT_REVISION_RE = re.compile(r"^([0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def _require_valid_digest(value: Any, field_name: str) -> None:
+    _require(isinstance(value, str) and bool(_SHA256_HEX_RE.match(value)), f"{field_name} must be a 64-character lowercase hex SHA-256 digest")
+
+
+def _require_valid_revision_ref(value: Any, field_name: str = "revision_ref") -> None:
+    _require(isinstance(value, str), f"{field_name} must be a string")
+    _require(
+        bool(_GIT_REVISION_RE.match(value)),
+        f"{field_name} must be a full immutable Git commit id (40-hex SHA-1 or 64-hex SHA-256) - "
+        f"a branch name or other mutable locator is never accepted as revision identity",
+    )
+
+
+# Minimal, sufficient reference-kind vocabulary. Unknown kinds fail closed.
+REFERENCE_KINDS = frozenset({
+    "POLICY", "METHODOLOGY", "REQUIREMENT", "GATE", "EXECUTION_EVIDENCE",
+    "VERIFICATION_EVIDENCE", "REVIEW", "FAILURE", "RESEARCH", "RELEASE", "ARTIFACT",
+})
+
+SUBJECT_TYPES = frozenset({"TASK", "REPAIR", "RELEASE"})
+
+
+@dataclasses.dataclass(frozen=True)
+class SnapshotReference:
+    """An immutable provenance binding: WHAT this snapshot points at, by
+    stable identity (ref_kind + ref_id) AND content fingerprint - never by
+    locator alone. `locator` (e.g. a filesystem path) is non-authoritative
+    metadata explaining WHERE something might currently be found; it never
+    participates in identity or in the snapshot fingerprint. A later file
+    replacement at the same locator is NOT the same SnapshotReference unless
+    its fingerprint also matches (Mandatory Scenario 11).
+
+    `fingerprint` is always caller-supplied. This module never computes it by
+    hashing `ref_id` (that would only prove a name was hashed, never that any
+    real content was inspected) and never reads the referenced content itself
+    - the true owner of that content (nogap_lifecycle.py's
+    compute_candidate_fingerprint(), nogap.py's gate_hash(), or a future
+    M8-D/E evidence loader) computes it; this module only carries it."""
+
+    ref_kind: str
+    ref_id: str
+    fingerprint: str
+    schema_version: str = M8_DECISION_SCHEMA_VERSION
+    locator: str | None = None
+
+    def __post_init__(self) -> None:
+        _require(self.ref_kind in REFERENCE_KINDS, f"unknown ref_kind: {self.ref_kind!r}")
+        _require_nonempty_str(self.ref_id, "ref_id")
+        _require_valid_digest(self.fingerprint, "fingerprint")
+        _require_supported_schema_version(self.schema_version)
+        if self.locator is not None:
+            _require_nonempty_str(self.locator, "locator")
+
+    def identity_key(self) -> tuple[str, str]:
+        return (self.ref_kind, self.ref_id)
+
+
+def _validate_reference_set(refs: Any, field_name: str, *, expected_kind: str | None = None) -> tuple[SnapshotReference, ...]:
+    """Validates a collection of SnapshotReference for a snapshot field: type-
+    checks every entry, optionally enforces a single expected ref_kind (so
+    e.g. `gate_refs` cannot silently accept a REVIEW reference), converts to
+    an immutable tuple (defeating mutable-input-attack - the caller's
+    original list/set can be mutated afterward with zero effect), and fails
+    closed on ANY duplicate ref_kind+ref_id pair - matching fingerprints or
+    not. Duplicates are never silently deduplicated or resolved by
+    first/last-wins; they signal malformed or ambiguous provenance."""
+    _require(isinstance(refs, (tuple, list, set, frozenset)), f"{field_name} must be a tuple/list of SnapshotReference")
+    refs = tuple(refs)
+    for ref in refs:
+        _require(isinstance(ref, SnapshotReference), f"{field_name} entries must be SnapshotReference")
+        if expected_kind is not None:
+            _require(ref.ref_kind == expected_kind, f"{field_name} entries must be ref_kind {expected_kind!r}, got {ref.ref_kind!r}")
+    seen: dict[tuple[str, str], str] = {}
+    for ref in refs:
+        key = ref.identity_key()
+        if key in seen:
+            raise DecisionValidationError(
+                f"{field_name}: duplicate reference {key} - conflicting or repeated provenance is never silently "
+                f"resolved (existing fingerprint {seen[key]!r}, new fingerprint {ref.fingerprint!r})"
+            )
+        seen[key] = ref.fingerprint
+    return refs
+
+
+@dataclasses.dataclass(frozen=True)
+class DecisionSubject:
+    """WHAT EXACT ENTITY/STATE IS BEING JUDGED - immutable concrete state
+    within a DecisionScope's logical boundary, not merely the scope's mutable
+    logical name. Example: scope names TASK/TASK-17 (a mutable logical
+    boundary that can be re-evaluated many times); subject pins TASK-17 at a
+    specific immutable Git revision, with an optional release-candidate
+    fingerprint and artifact identities - THIS exact state, not "whatever
+    TASK-17 currently looks like"."""
+
+    subject_type: str
+    subject_id: str
+    project_id: str
+    revision_ref: str
+    candidate_fingerprint: str | None = None
+    artifact_refs: tuple[SnapshotReference, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require(self.subject_type in SUBJECT_TYPES, f"unknown subject_type: {self.subject_type!r}")
+        _require_nonempty_str(self.subject_id, "subject_id")
+        _require_nonempty_str(self.project_id, "project_id")
+        _require_valid_revision_ref(self.revision_ref)
+        if self.candidate_fingerprint is not None:
+            _require_valid_digest(self.candidate_fingerprint, "candidate_fingerprint")
+        object.__setattr__(self, "artifact_refs", _validate_reference_set(self.artifact_refs, "artifact_refs", expected_kind="ARTIFACT"))
+
+    def canonical_id(self) -> str:
+        return f"{self.subject_type}:{self.project_id}:{self.subject_id}@{self.revision_ref}"
+
+
+_SNAPSHOT_REFERENCE_FIELDS: tuple[tuple[str, str], ...] = (
+    ("requirement_refs", "REQUIREMENT"),
+    ("gate_refs", "GATE"),
+    ("execution_evidence_refs", "EXECUTION_EVIDENCE"),
+    ("verification_evidence_refs", "VERIFICATION_EVIDENCE"),
+    ("review_refs", "REVIEW"),
+    ("failure_refs", "FAILURE"),
+    ("research_refs", "RESEARCH"),
+    ("release_refs", "RELEASE"),
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class DecisionSnapshot:
+    """Immutable identity layer binding a future decision to the exact state
+    it is about (Principle 2). Contains facts/references ONLY - there is
+    deliberately no verdict, requested_verdict, accept/reject/abstain result,
+    confidence, score, or vote field anywhere on this class, and no method
+    that derives one; snapshot construction cannot decide anything
+    (Principle 6). A SnapshotReference captured here is a provenance binding,
+    never a truth claim about freshness, independence, authority validity, or
+    methodology readiness (Principle 7) - those remain M8-D/M8-E/M8-F.
+
+    `subject` must lie WITHIN `scope`'s logical boundary (same project_id,
+    same type, same id) - a snapshot cannot claim to be about scope
+    TASK/TASK-17 while its subject silently names TASK-99.
+
+    Reference collections (`requirement_refs`, `gate_refs`, ... `release_refs`)
+    are set-like: constructor order never affects `snapshot_fingerprint`
+    (canonical_json() sorts them), but any duplicate ref_kind+ref_id pair
+    fails closed. Each collection enforces its own single ref_kind, so
+    provenance types (execution evidence vs. verification evidence vs.
+    review vs. research vs. failure vs. release) can never be silently mixed
+    - preserving M8-A's namespace-separation guarantee at the snapshot layer.
+
+    `captured_at` and `metadata` are explicitly NON-SEMANTIC: they participate
+    in neither `semantic_payload()` nor `snapshot_fingerprint`. `metadata` may
+    contain arbitrary diagnostic text (even text that happens to spell
+    "ACCEPT" or "PASS") with zero effect on identity or fingerprint, and with
+    no path anywhere in this class to convert it into a verdict. `metadata`
+    is deep-frozen at construction (see `_deep_freeze()`) - not merely a
+    shallow `dict(...)` copy - so no dict/list reachable from it, at any
+    nesting depth, is mutable either through the snapshot itself
+    (`snap.metadata["x"] = 2` raises `TypeError`) or via the caller's
+    original input object after construction (an aliasing attack: mutating
+    the caller's own nested dict/list post-construction has zero effect on
+    the stored snapshot).
+
+    `request_id` IS EXCLUDED from semantic identity: two different requests
+    evaluating the exact same semantic state are recognized as the same
+    snapshot identity; only WHAT the decision is about is semantic, never WHO
+    asked. `request_id` remains provenance/correlation metadata for tracing
+    which request produced this snapshot - it must never be treated as, or
+    substituted for, content identity.
+
+    `snapshot_id` is likewise EXCLUDED from semantic identity. It is an
+    optional caller-supplied event/record/correlation identifier - a
+    convenience label for a future persistence or audit layer, analogous to
+    `SnapshotReference.locator` (a WHERE/WHICH-RECORD label, not a WHAT-IS-IT
+    claim). `snapshot_fingerprint` - and ONLY `snapshot_fingerprint` - is the
+    semantic, immutable content identity. Two snapshots sharing the same
+    `snapshot_id` (e.g. a caller reusing a label, deliberately or by mistake)
+    are NOT thereby proven to have the same content; `snapshot_id` must never
+    be read as evidence of content equality, and no code anywhere in this
+    class does so - only `snapshot_fingerprint` equality means that."""
+
+    request_id: str
+    decision_type: str
+    scope: DecisionScope
+    subject: DecisionSubject
+    policy_ref: SnapshotReference
+    methodology_ref: SnapshotReference | None = None
+    requirement_refs: tuple[SnapshotReference, ...] = ()
+    gate_refs: tuple[SnapshotReference, ...] = ()
+    execution_evidence_refs: tuple[SnapshotReference, ...] = ()
+    verification_evidence_refs: tuple[SnapshotReference, ...] = ()
+    review_refs: tuple[SnapshotReference, ...] = ()
+    failure_refs: tuple[SnapshotReference, ...] = ()
+    research_refs: tuple[SnapshotReference, ...] = ()
+    release_refs: tuple[SnapshotReference, ...] = ()
+    captured_at: str | None = None
+    metadata: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    schema_version: str = M8_DECISION_SCHEMA_VERSION
+    engine_version: str = M8_DECISION_ENGINE_VERSION
+    snapshot_id: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self.request_id, "request_id")
+        _require(self.decision_type in DECISION_TYPES, f"unknown decision_type: {self.decision_type!r}")
+        _require(isinstance(self.scope, DecisionScope), "scope must be a DecisionScope")
+        _require(isinstance(self.subject, DecisionSubject), "subject must be a DecisionSubject")
+        _require(
+            self.subject.subject_type == self.scope.scope_type
+            and self.subject.subject_id == self.scope.scope_id
+            and self.subject.project_id == self.scope.project_id,
+            "subject must lie within scope's logical boundary (matching subject_type/subject_id/project_id) - "
+            f"scope was {self.scope.canonical_id()!r}, subject was {self.subject.canonical_id()!r}",
+        )
+        _require(isinstance(self.policy_ref, SnapshotReference), "policy_ref must be a SnapshotReference")
+        _require(self.policy_ref.ref_kind == "POLICY", f"policy_ref must be ref_kind POLICY, got {self.policy_ref.ref_kind!r}")
+
+        if self.methodology_ref is not None:
+            _require(isinstance(self.methodology_ref, SnapshotReference), "methodology_ref must be a SnapshotReference")
+            _require(self.methodology_ref.ref_kind == "METHODOLOGY", f"methodology_ref must be ref_kind METHODOLOGY, got {self.methodology_ref.ref_kind!r}")
+
+        for field_name, expected_kind in _SNAPSHOT_REFERENCE_FIELDS:
+            object.__setattr__(self, field_name, _validate_reference_set(getattr(self, field_name), field_name, expected_kind=expected_kind))
+
+        if self.captured_at is not None:
+            _require_nonempty_str(self.captured_at, "captured_at")
+
+        _require(isinstance(self.metadata, dict), "metadata must be a dict")
+        _require_json_compatible(self.metadata, "metadata")  # validated on the plain input, before freezing
+        # A single-level dict(...) copy only protects the top level - nested
+        # dict/list values would remain the SAME mutable objects the caller
+        # still holds a reference to (an aliasing attack: mutate a nested
+        # value in the original after construction and the "immutable"
+        # snapshot changes too). _deep_freeze() recursively converts every
+        # level to MappingProxyType/tuple, so nothing mutable is reachable
+        # from `self.metadata` at any depth - not even through the metadata
+        # attribute itself (`snapshot.metadata["x"] = 2` now raises
+        # TypeError, since MappingProxyType has no __setitem__).
+        object.__setattr__(self, "metadata", _deep_freeze(self.metadata))
+
+        _require_supported_schema_version(self.schema_version)
+        _require_supported_engine_version(self.engine_version)
+        if self.snapshot_id is not None:
+            _require_nonempty_str(self.snapshot_id, "snapshot_id")
+
+    def semantic_payload(self) -> dict[str, Any]:
+        """The explicit, audited subset of fields that participate in
+        `snapshot_fingerprint`. Deliberately excludes request_id, captured_at,
+        metadata, and snapshot_id - see the class docstring for why each is
+        non-semantic."""
+        return {
+            "schema_version": self.schema_version,
+            "engine_version": self.engine_version,
+            "decision_type": self.decision_type,
+            "scope": self.scope,
+            "subject": self.subject,
+            "policy_ref": self.policy_ref,
+            "methodology_ref": self.methodology_ref,
+            "requirement_refs": self.requirement_refs,
+            "gate_refs": self.gate_refs,
+            "execution_evidence_refs": self.execution_evidence_refs,
+            "verification_evidence_refs": self.verification_evidence_refs,
+            "review_refs": self.review_refs,
+            "failure_refs": self.failure_refs,
+            "research_refs": self.research_refs,
+            "release_refs": self.release_refs,
+        }
+
+    @property
+    def snapshot_fingerprint(self) -> str:
+        """Computed, never caller-supplied - a stored/settable fingerprint
+        field would let a caller claim an identity its own content doesn't
+        match. Deterministic: same semantic_payload() -> same fingerprint,
+        independent of capture time, request identity, or reference-tuple
+        construction order."""
+        return fingerprint_payload(self.semantic_payload())
+
+
+def build_decision_snapshot(
+    *,
+    request_id: str,
+    decision_type: str,
+    scope: DecisionScope,
+    subject: DecisionSubject,
+    policy_ref: SnapshotReference,
+    methodology_ref: SnapshotReference | None = None,
+    requirement_refs: Sequence[SnapshotReference] = (),
+    gate_refs: Sequence[SnapshotReference] = (),
+    execution_evidence_refs: Sequence[SnapshotReference] = (),
+    verification_evidence_refs: Sequence[SnapshotReference] = (),
+    review_refs: Sequence[SnapshotReference] = (),
+    failure_refs: Sequence[SnapshotReference] = (),
+    research_refs: Sequence[SnapshotReference] = (),
+    release_refs: Sequence[SnapshotReference] = (),
+    captured_at: str | None = None,
+    metadata: Mapping[str, Any] | None = None,
+    snapshot_id: str | None = None,
+) -> DecisionSnapshot:
+    """Pure snapshot builder. Accepts ONLY explicit, already-resolved values -
+    no filesystem, Git, M7 methodology-state, verification-directory,
+    decision-ledger, memory, research, environment, network, or implicit-
+    clock access of any kind. `captured_at` must be injected by the caller
+    (e.g. from a future integration seam's own clock read); this function
+    never calls one itself. All reference-collection arguments accept any
+    ordering - DecisionSnapshot's own construction canonicalizes them."""
+    return DecisionSnapshot(
+        request_id=request_id,
+        decision_type=decision_type,
+        scope=scope,
+        subject=subject,
+        policy_ref=policy_ref,
+        methodology_ref=methodology_ref,
+        requirement_refs=tuple(requirement_refs),
+        gate_refs=tuple(gate_refs),
+        execution_evidence_refs=tuple(execution_evidence_refs),
+        verification_evidence_refs=tuple(verification_evidence_refs),
+        review_refs=tuple(review_refs),
+        failure_refs=tuple(failure_refs),
+        research_refs=tuple(research_refs),
+        release_refs=tuple(release_refs),
+        captured_at=captured_at,
+        metadata=dict(metadata or {}),
+        snapshot_id=snapshot_id,
+    )
