@@ -1,0 +1,639 @@
+#!/usr/bin/env python3
+"""M8-A: Decision Contracts & Safety Model.
+
+This module defines the formal vocabulary and structural safety contracts for
+NoGapCode's future Decision Engine (M8). It is CONTRACT FOUNDATION ONLY:
+
+  - It does NOT read the filesystem, runtime evidence, methodology state,
+    verification records, failure records, research records, memory, or CLI
+    input. It has zero imports from any other nogap_*.py module or from
+    Python's filesystem/process libraries - by construction, not by
+    discipline alone.
+  - It does NOT call an LLM, AgentRuntime, model provider, or any consensus/
+    voting/scoring mechanism. There is no such call site to remove later.
+  - It does NOT persist decisions, does NOT implement a "current decision"
+    selector, and does NOT migrate scripts/nogap.py's existing cmd_decide()/
+    acceptability() (M6/M7's existing acceptance surface) or
+    nogap_lifecycle.py's decision_refs resolution. Those remain exactly as
+    they are; M8-A only defines the vocabulary a LATER milestone (M8-J) will
+    use to eventually become the single writer.
+  - It provides exactly one pure algebra helper, derive_contract_verdict(),
+    which operates only on already-formed DecisionPredicateResult objects
+    supplied by the caller. It proves the safety algebra is representable and
+    deterministic; it is not the production kernel.
+
+CANONICAL RULE: MODEL OPINION IS NOT ACCEPTANCE AUTHORITY. There is no
+DecisionScore, acceptance_probability, or weighted_vote anywhere in this
+module, and none may be added without discarding the entire safety model
+this milestone establishes - the algebra is conjunctive/constraint-based,
+never additive/weighted. A single failed mandatory condition can never be
+outweighed by any number of positive ones.
+
+NAMESPACE SEPARATION (enforced by construction, regression-tested in
+tests/test_decision_contracts.py against the real vocabularies): DecisionVerdict
+{ACCEPT, REJECT, ABSTAIN} is disjoint from every other outcome vocabulary this
+codebase already owns elsewhere - nogap_research.py's ASSESSMENT_OUTCOMES
+(SUPPORTED/PARTIALLY_SUPPORTED/REFUTED/INCONCLUSIVE), nogap_lifecycle.py's
+READINESS_OUTCOMES/DEPLOYMENT_STATUSES/LIFECYCLE_OUTCOMES, and
+nogap_verification.py's review verdict vocabulary (pass/fail/inconclusive).
+None of those may ever be read as a DecisionVerdict, and DecisionVerdict may
+never be written into their fields. Each vocabulary keeps its own owner.
+
+AUTHORITY CLASS MAPPING (documented, not imported - this module has zero
+dependencies on other project modules): AUTHORITY_CLASSES below is the M8-own
+uppercase vocabulary. It corresponds conceptually to scripts/nogap.py's
+ACCEPTANCE_AUTHORITIES = {"acceptance", "human"} and
+scripts/nogap_methodology.py's TRANSITION_AUTHORITY_CLASSES =
+{"execution", "verification", "acceptance", "human", "tool"}:
+  EXECUTION            <-> "execution"
+  VERIFICATION         <-> "verification"
+  ACCEPTANCE           <-> "acceptance"
+  HUMAN                <-> "human"
+  SYSTEM_DETERMINISTIC <-> "tool"
+  ADVISORY             <-> (new: advisory-only sources, e.g. model review
+                             votes, that carry no acceptance weight at all -
+                             M7 has no equivalent because M7 never lets
+                             advisory sources near acceptance in the first
+                             place)
+AuthorityClass is descriptive provenance context ONLY - this module
+deliberately defines NO "acceptance capable" classification of actor
+authority at all, not even a narrow one. An earlier draft of this module
+defined ACCEPTANCE_CAPABLE_AUTHORITY_CLASSES = {"ACCEPTANCE", "HUMAN"} plus
+an authority_class_is_acceptance_capable() helper; both were REMOVED after
+architectural review concluded the names could later be misread as "these
+authority classes may authorize writing DecisionVerdict.ACCEPT" - exactly
+the sole-writer boundary M8 exists to prevent any actor from crossing.
+Neither name nor an equivalent replacement exists anywhere in this module.
+HUMAN authority means policy/risk/lifecycle authority where applicable; it
+does NOT mean "a human can manufacture technical ACCEPT". A legacy class
+named ACCEPTANCE (see the mapping above - nogap.py's own bare, self-asserted
+CLI flag) is not, and must never become, the authorization mechanism for the
+future M8 technical decision writer. Safety Property S5 (Execution authority
+!= Acceptance authority) is proven structurally, not by a permissioning
+helper: derive_contract_verdict() below takes no actor/authority parameter
+of any kind - there is no code path through which any AuthorityClass value,
+including HUMAN or ACCEPTANCE, could influence a verdict. The eventual
+sole-writer boundary (M8 Decision Engine owns all ACCEPT/REJECT/ABSTAIN
+writes) is future kernel/persistence-layer work (M8-D/M8-F/M8-J); M8-A's
+contribution is simply refusing to define a shortcut that would let a later
+milestone reach for `actor.authority == HUMAN` or `== ACCEPTANCE` as if it
+were an authorization check.
+
+FORMAL SAFETY PROPERTIES this module's contracts make representable and
+tests directly (see tests/test_decision_contracts.py for the regressions):
+  S1  Any mandatory predicate UNKNOWN            -> verdict != ACCEPT
+  S2  Any mandatory predicate CONFLICT           -> verdict != ACCEPT
+  S3  A proven blocking violation exists         -> verdict != ACCEPT
+  S4  STALE required evidence                    -> that predicate cannot be TRUE
+  S5  Execution authority != Acceptance authority (no AuthorityClass, incl.
+      HUMAN or ACCEPTANCE, is ever verdict-capable by itself - proven by
+      derive_contract_verdict() having no actor/authority parameter at all)
+  S6  FrozenGateHash != ExecutedGateHash          -> verdict != ACCEPT (GATE_TAMPERING)
+  S7  EvidenceScope != DecisionScope              -> evidence cannot satisfy a
+                                                      mandatory predicate
+  S8  Research SUPPORTED                         -> never implies ACCEPT
+  S9  Verification PASS alone                    -> never implies ACCEPT
+  S10 Deployment SUCCEEDED                       -> never implies ACCEPT
+  S11 Memory projection                          -> never implies ACCEPT
+  S12 Model consensus                            -> never implies ACCEPT
+Liveness: if every mandatory REQUIREMENT predicate is TRUE, no blocking
+VIOLATION predicate is TRUE, and no mandatory predicate is UNKNOWN/CONFLICT,
+derive_contract_verdict() returns ACCEPT - the contract makes ACCEPT reachable,
+it is never the default branch of the algebra.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+from typing import Any, Mapping, Sequence
+
+# --- versioning ---------------------------------------------------------------
+
+M8_DECISION_SCHEMA_VERSION = "1"
+M8_DECISION_ENGINE_VERSION = "1"
+_SUPPORTED_SCHEMA_VERSIONS = {M8_DECISION_SCHEMA_VERSION}
+_SUPPORTED_ENGINE_VERSIONS = {M8_DECISION_ENGINE_VERSION}
+
+
+class DecisionValidationError(Exception):
+    """Raised for any malformed M8 decision contract. Fail closed, never a
+    silent skip or partial acceptance of malformed input. Deliberately NOT
+    MethodologyValidationError - a different semantic owner (M7 methodology
+    contracts vs. M8 decision contracts); conflating them would blur which
+    milestone's invariant was actually violated."""
+
+
+def _require(condition: bool, message: str) -> None:
+    if not condition:
+        raise DecisionValidationError(message)
+
+
+def _require_supported_schema_version(value: str) -> None:
+    _require(value in _SUPPORTED_SCHEMA_VERSIONS, f"unsupported schema_version: {value!r}")
+
+
+def _require_supported_engine_version(value: str) -> None:
+    _require(value in _SUPPORTED_ENGINE_VERSIONS, f"unsupported engine_version: {value!r}")
+
+
+def _require_str_tuple(value: Any, field_name: str, *, allow_empty_tuple: bool = True) -> tuple[str, ...]:
+    _require(isinstance(value, (tuple, list)), f"{field_name} must be a tuple/list of str")
+    items = tuple(value)
+    for item in items:
+        _require(isinstance(item, str) and item.strip() != "", f"{field_name} entries must be non-empty strings")
+    if not allow_empty_tuple:
+        _require(bool(items), f"{field_name} must not be empty")
+    _require(len(set(items)) == len(items), f"{field_name} must not contain duplicates")
+    return items
+
+
+def _require_nonempty_str(value: Any, field_name: str) -> None:
+    _require(isinstance(value, str) and value.strip() != "", f"{field_name} must be a non-empty string")
+
+
+def _require_json_compatible(value: Any, field_name: str) -> None:
+    try:
+        json.dumps(value)
+    except TypeError as exc:
+        raise DecisionValidationError(f"{field_name} must be JSON-compatible: {exc}") from None
+
+
+# --- core vocabularies ----------------------------------------------------------
+
+# The ONLY technical verdict vocabulary. PASS/FAIL/APPROVE/DENY/SUCCESS/SUPPORTED
+# etc. may never substitute for these - see namespace-separation tests.
+DECISION_VERDICTS = frozenset({"ACCEPT", "REJECT", "ABSTAIN"})
+
+# Four-valued predicate truth. Never collapse UNKNOWN to FALSE or CONFLICT to an
+# arbitrary winner - that collapse is exactly what this vocabulary exists to
+# make structurally impossible (bool cannot represent it at all).
+DECISION_TRUTH_VALUES = frozenset({"TRUE", "FALSE", "UNKNOWN", "CONFLICT"})
+
+# Minimal initial decision-type vocabulary. Deliberately NOT used for research
+# claim outcomes, deployment status, operational health, or methodology
+# lifecycle outcomes - those already have their own semantic owners elsewhere
+# in this codebase (nogap_research.py, nogap_lifecycle.py).
+DECISION_TYPES = frozenset({"TASK_ACCEPTANCE", "REPAIR_ACCEPTANCE", "RELEASE_ACCEPTANCE"})
+
+DECISION_SCOPE_TYPES = frozenset({"TASK", "REPAIR", "RELEASE"})
+
+# REQUIREMENT: TRUE=satisfied, FALSE=positively failed, UNKNOWN=insufficient
+#              evidence, CONFLICT=conflicting evidence.
+# VIOLATION:   TRUE=blocking violation positively exists, FALSE=violation
+#              positively absent, UNKNOWN=cannot determine, CONFLICT=conflicting
+#              evidence.
+PREDICATE_ROLES = frozenset({"REQUIREMENT", "VIOLATION"})
+
+# See module docstring's AUTHORITY CLASS MAPPING for the M7 correspondence.
+AUTHORITY_CLASSES = frozenset({
+    "EXECUTION", "VERIFICATION", "ACCEPTANCE", "HUMAN", "SYSTEM_DETERMINISTIC", "ADVISORY",
+})
+
+## Deliberately NO "acceptance capable" authority-class classification exists
+## here (see module docstring: removed after architectural review). Do not
+## reintroduce ACCEPTANCE_CAPABLE_AUTHORITY_CLASSES or an
+## authority_class_is_acceptance_capable()-shaped helper - AuthorityClass is
+## descriptive provenance only, and no actor identity or class may ever be
+## consulted by derive_contract_verdict() to influence a verdict.
+
+FRESHNESS_STATUSES = frozenset({"FRESH", "STALE", "UNKNOWN"})
+
+# Stable, non-overlapping machine-readable reason codes. Free prose is never
+# authoritative on its own (see `details` field docs below).
+DECISION_REASON_CODES = frozenset({
+    "MISSING_REQUIRED_EVIDENCE",
+    "STALE_REQUIRED_EVIDENCE",
+    "EVIDENCE_CONFLICT",
+    "SCOPE_MISMATCH",
+    "INVALID_AUTHORITY",
+    "MANDATORY_PREDICATE_FALSE",
+    "MANDATORY_PREDICATE_UNKNOWN",
+    "MANDATORY_PREDICATE_CONFLICT",
+    "BLOCKING_FAILURE",
+    "GATE_FAILURE",
+    "GATE_TAMPERING",
+    "VERIFICATION_INCOMPLETE",
+    "VERIFICATION_STALE",
+    "METHODOLOGY_NOT_READY",
+    "DECISION_POLICY_INVALID",
+    "INPUT_INVALID",
+})
+
+
+# --- canonical serialization -----------------------------------------------------
+
+# Excluded from canonical form / semantic equality: they record *when* a
+# contract was produced, never *what* it means. Two evaluations of the same
+# inputs a second apart must canonicalize identically.
+_TIMESTAMP_FIELDS = frozenset({"created_at", "evaluated_at"})
+
+
+def _canonicalize(value: Any) -> Any:
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        result = {}
+        for f in dataclasses.fields(value):
+            if f.name in _TIMESTAMP_FIELDS:
+                continue
+            result[f.name] = _canonicalize(getattr(value, f.name))
+        return result
+    if isinstance(value, (list, tuple)):
+        items = [_canonicalize(v) for v in value]
+        if items and all(isinstance(v, str) for v in items):
+            return sorted(items)
+        if items and all(isinstance(v, dict) for v in items):
+            return sorted(items, key=lambda d: json.dumps(d, sort_keys=True, separators=(",", ":")))
+        return items
+    if isinstance(value, dict):
+        return {k: _canonicalize(v) for k, v in sorted(value.items())}
+    return value
+
+
+def canonical_json(contract: Any) -> str:
+    """Deterministic canonical JSON for any contract dataclass in this module -
+    stable field ordering, set-like collections sorted, timestamps excluded.
+    Does not implement cryptographic hash chaining (that is M8-G); this only
+    guarantees hashing/replay are not made impossible later."""
+    return json.dumps(_canonicalize(contract), sort_keys=True, separators=(",", ":"))
+
+
+# --- DecisionScope ----------------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class DecisionScope:
+    scope_type: str
+    scope_id: str
+    project_id: str
+    revision_ref: str | None = None
+    candidate_ref: str | None = None
+    artifact_refs: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _require(self.scope_type in DECISION_SCOPE_TYPES, f"unknown scope_type: {self.scope_type!r}")
+        _require_nonempty_str(self.scope_id, "scope_id")
+        _require_nonempty_str(self.project_id, "project_id")
+        if self.revision_ref is not None:
+            _require_nonempty_str(self.revision_ref, "revision_ref")
+        if self.candidate_ref is not None:
+            _require_nonempty_str(self.candidate_ref, "candidate_ref")
+        object.__setattr__(self, "artifact_refs", _require_str_tuple(self.artifact_refs, "artifact_refs"))
+
+    def canonical_id(self) -> str:
+        """Deterministic canonical scope identity string - the value predicate
+        results' `scope_ref` must match to satisfy a mandatory predicate (S7)."""
+        return f"{self.scope_type}:{self.project_id}:{self.scope_id}"
+
+
+# --- DecisionPredicateResult -------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class DecisionPredicateResult:
+    predicate_id: str
+    role: str
+    truth_value: str
+    required: bool
+    blocking: bool
+    reason_codes: tuple[str, ...] = ()
+    source_refs: tuple[str, ...] = ()
+    authority_refs: tuple[str, ...] = ()
+    scope_ref: str | None = None
+    freshness_status: str | None = None
+    details: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self.predicate_id, "predicate_id")
+        _require(self.role in PREDICATE_ROLES, f"unknown predicate role: {self.role!r}")
+        _require(self.truth_value in DECISION_TRUTH_VALUES, f"unknown truth_value: {self.truth_value!r}")
+        _require(isinstance(self.required, bool), "required must be an explicit bool")
+        _require(isinstance(self.blocking, bool), "blocking must be an explicit bool")
+
+        reason_codes = _require_str_tuple(self.reason_codes, "reason_codes")
+        for code in reason_codes:
+            _require(code in DECISION_REASON_CODES, f"unknown reason code: {code!r}")
+        object.__setattr__(self, "reason_codes", reason_codes)
+
+        object.__setattr__(self, "source_refs", _require_str_tuple(self.source_refs, "source_refs"))
+        object.__setattr__(self, "authority_refs", _require_str_tuple(self.authority_refs, "authority_refs"))
+
+        if self.scope_ref is not None:
+            _require_nonempty_str(self.scope_ref, "scope_ref")
+        if self.freshness_status is not None:
+            _require(self.freshness_status in FRESHNESS_STATUSES, f"unknown freshness_status: {self.freshness_status!r}")
+        if self.details is not None:
+            _require(isinstance(self.details, str), "details must be a string when provided")
+
+        # Safety Property S4: stale required evidence can never prove TRUE.
+        # `details` (free prose) is explicitly NOT consulted anywhere in this
+        # module for truth - only structured fields are.
+        if self.freshness_status == "STALE":
+            _require(self.truth_value != "TRUE", "S4 violation: STALE evidence cannot prove a predicate TRUE")
+
+
+# --- DecisionPolicyContract --------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class DecisionPolicyContract:
+    decision_type: str
+    policy_id: str
+    policy_version: str
+    required_predicate_ids: tuple[str, ...] = ()
+    blocking_predicate_ids: tuple[str, ...] = ()
+    optional_predicate_ids: tuple[str, ...] = ()
+    required_authority_classes: tuple[str, ...] = ()
+    profile_constraints: tuple[str, ...] = ()
+    metadata: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    schema_version: str = M8_DECISION_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        _require(self.decision_type in DECISION_TYPES, f"unknown decision_type: {self.decision_type!r}")
+        _require_nonempty_str(self.policy_id, "policy_id")
+        _require_nonempty_str(self.policy_version, "policy_version")
+        _require_supported_schema_version(self.schema_version)
+
+        required = _require_str_tuple(self.required_predicate_ids, "required_predicate_ids")
+        blocking = _require_str_tuple(self.blocking_predicate_ids, "blocking_predicate_ids")
+        optional = _require_str_tuple(self.optional_predicate_ids, "optional_predicate_ids")
+        object.__setattr__(self, "required_predicate_ids", required)
+        object.__setattr__(self, "blocking_predicate_ids", blocking)
+        object.__setattr__(self, "optional_predicate_ids", optional)
+
+        # A predicate_id may belong to exactly one category - contradictory
+        # simultaneous categorization fails closed rather than picking a winner.
+        req_set, block_set, opt_set = set(required), set(blocking), set(optional)
+        _require(not (req_set & block_set), f"predicate(s) classified both required and blocking: {sorted(req_set & block_set)}")
+        _require(not (req_set & opt_set), f"predicate(s) classified both required and optional: {sorted(req_set & opt_set)}")
+        _require(not (block_set & opt_set), f"predicate(s) classified both blocking and optional: {sorted(block_set & opt_set)}")
+
+        authority_classes = _require_str_tuple(self.required_authority_classes, "required_authority_classes")
+        for authority in authority_classes:
+            _require(authority in AUTHORITY_CLASSES, f"unknown authority class in policy: {authority!r}")
+        object.__setattr__(self, "required_authority_classes", authority_classes)
+
+        object.__setattr__(self, "profile_constraints", _require_str_tuple(self.profile_constraints, "profile_constraints"))
+
+        _require(isinstance(self.metadata, dict), "metadata must be a dict")
+        _require_json_compatible(dict(self.metadata), "metadata")
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+
+# --- DecisionRequestContract --------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class DecisionRequestContract:
+    """A REQUEST asks the Decision Engine to evaluate. It never tells the
+    engine what result to return - there is deliberately no requested_verdict
+    (or similarly named) field anywhere in this dataclass. Passing one raises
+    TypeError at construction (an unknown dataclass field), which is the
+    intended, structural enforcement - not a runtime string check."""
+
+    request_id: str
+    project_id: str
+    decision_type: str
+    scope: DecisionScope
+    requested_by: str
+    requester_authority: str
+    reason: str
+    policy_ref: str | None = None
+    schema_version: str = M8_DECISION_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self.request_id, "request_id")
+        _require_nonempty_str(self.project_id, "project_id")
+        _require(self.decision_type in DECISION_TYPES, f"unknown decision_type: {self.decision_type!r}")
+        _require(isinstance(self.scope, DecisionScope), "scope must be a DecisionScope")
+        _require_nonempty_str(self.requested_by, "requested_by")
+        _require(self.requester_authority in AUTHORITY_CLASSES, f"unknown requester_authority: {self.requester_authority!r}")
+        _require_nonempty_str(self.reason, "reason")
+        if self.policy_ref is not None:
+            _require_nonempty_str(self.policy_ref, "policy_ref")
+        _require_supported_schema_version(self.schema_version)
+
+
+# --- DecisionEvaluationContract ------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class DecisionEvaluationContract:
+    """Represents the future pure kernel's output. M8-A does not compute a real
+    immutable DecisionSnapshot (M8-B); `input_fingerprint` is a placeholder
+    field only, to keep that future binding representable."""
+
+    evaluation_id: str
+    request_id: str
+    decision_type: str
+    scope: DecisionScope
+    policy_ref: str
+    predicate_results: tuple[DecisionPredicateResult, ...]
+    satisfied_predicates: tuple[str, ...]
+    failed_predicates: tuple[str, ...]
+    unknown_predicates: tuple[str, ...]
+    conflicting_predicates: tuple[str, ...]
+    blocking_reasons: tuple[str, ...]
+    reason_codes: tuple[str, ...]
+    verdict: str
+    input_fingerprint: str | None = None
+    engine_version: str = M8_DECISION_ENGINE_VERSION
+    schema_version: str = M8_DECISION_SCHEMA_VERSION
+    evaluated_at: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self.evaluation_id, "evaluation_id")
+        _require_nonempty_str(self.request_id, "request_id")
+        _require(self.decision_type in DECISION_TYPES, f"unknown decision_type: {self.decision_type!r}")
+        _require(isinstance(self.scope, DecisionScope), "scope must be a DecisionScope")
+        _require_nonempty_str(self.policy_ref, "policy_ref")
+        _require_supported_schema_version(self.schema_version)
+        _require_supported_engine_version(self.engine_version)
+
+        _require(isinstance(self.predicate_results, (tuple, list)), "predicate_results must be a tuple/list")
+        predicate_results = tuple(self.predicate_results)
+        for pr in predicate_results:
+            _require(isinstance(pr, DecisionPredicateResult), "predicate_results entries must be DecisionPredicateResult")
+        ids = [pr.predicate_id for pr in predicate_results]
+        _require(len(set(ids)) == len(ids), "predicate_results contains duplicate predicate_id")
+        object.__setattr__(self, "predicate_results", predicate_results)
+
+        by_id = {pr.predicate_id: pr for pr in predicate_results}
+        satisfied = _require_str_tuple(self.satisfied_predicates, "satisfied_predicates")
+        failed = _require_str_tuple(self.failed_predicates, "failed_predicates")
+        unknown = _require_str_tuple(self.unknown_predicates, "unknown_predicates")
+        conflicting = _require_str_tuple(self.conflicting_predicates, "conflicting_predicates")
+        buckets = {"satisfied": (satisfied, "TRUE"), "failed": (failed, "FALSE"), "unknown": (unknown, "UNKNOWN"), "conflicting": (conflicting, "CONFLICT")}
+        seen: set[str] = set()
+        for bucket_name, (bucket_ids, expected_truth) in buckets.items():
+            for pid in bucket_ids:
+                _require(pid in by_id, f"{bucket_name}_predicates references unknown predicate_id {pid!r}")
+                _require(by_id[pid].truth_value == expected_truth, f"{bucket_name}_predicates lists {pid!r} but its truth_value is {by_id[pid].truth_value!r}")
+                _require(pid not in seen, f"predicate {pid!r} appears in more than one result bucket")
+                seen.add(pid)
+        _require(seen == set(by_id), "every predicate_results entry must appear in exactly one result bucket")
+        object.__setattr__(self, "satisfied_predicates", satisfied)
+        object.__setattr__(self, "failed_predicates", failed)
+        object.__setattr__(self, "unknown_predicates", unknown)
+        object.__setattr__(self, "conflicting_predicates", conflicting)
+
+        object.__setattr__(self, "blocking_reasons", _require_str_tuple(self.blocking_reasons, "blocking_reasons"))
+        reason_codes = _require_str_tuple(self.reason_codes, "reason_codes")
+        for code in reason_codes:
+            _require(code in DECISION_REASON_CODES, f"unknown reason code: {code!r}")
+        object.__setattr__(self, "reason_codes", reason_codes)
+
+        _require(self.verdict in DECISION_VERDICTS, f"unknown verdict: {self.verdict!r}")
+        if self.input_fingerprint is not None:
+            _require_nonempty_str(self.input_fingerprint, "input_fingerprint")
+
+
+# --- DecisionRecordContract ----------------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class DecisionRecordContract:
+    """Conceptually IMMUTABLE. There is no update_verdict()/set_accept()/
+    rewrite_decision() method anywhere on this class or module, and being a
+    frozen dataclass, any attempt to assign an attribute after construction
+    raises dataclasses.FrozenInstanceError. New evidence must produce a NEW
+    DecisionRecordContract (with `supersedes` pointing at the old one), never
+    a mutation of this one. Persistence, hash chaining, and a real
+    get_current_decision() selector are explicitly out of scope for M8-A
+    (M8-G territory) - the fields below only avoid blocking that later work."""
+
+    decision_id: str
+    evaluation_id: str
+    request_id: str
+    decision_type: str
+    scope: DecisionScope
+    verdict: str
+    reason_codes: tuple[str, ...]
+    evaluation_ref: str
+    policy_ref: str
+    created_at: str
+    engine_version: str = M8_DECISION_ENGINE_VERSION
+    schema_version: str = M8_DECISION_SCHEMA_VERSION
+    supersedes: str | None = None
+    previous_decision_hash: str | None = None
+    decision_hash: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self.decision_id, "decision_id")
+        _require_nonempty_str(self.evaluation_id, "evaluation_id")
+        _require_nonempty_str(self.request_id, "request_id")
+        _require(self.decision_type in DECISION_TYPES, f"unknown decision_type: {self.decision_type!r}")
+        _require(isinstance(self.scope, DecisionScope), "scope must be a DecisionScope")
+        _require(self.verdict in DECISION_VERDICTS, f"unknown verdict: {self.verdict!r}")
+
+        reason_codes = _require_str_tuple(self.reason_codes, "reason_codes")
+        for code in reason_codes:
+            _require(code in DECISION_REASON_CODES, f"unknown reason code: {code!r}")
+        object.__setattr__(self, "reason_codes", reason_codes)
+
+        _require_nonempty_str(self.evaluation_ref, "evaluation_ref")
+        _require_nonempty_str(self.policy_ref, "policy_ref")
+        _require_nonempty_str(self.created_at, "created_at")
+        _require_supported_engine_version(self.engine_version)
+        _require_supported_schema_version(self.schema_version)
+        if self.supersedes is not None:
+            _require_nonempty_str(self.supersedes, "supersedes")
+        if self.previous_decision_hash is not None:
+            _require_nonempty_str(self.previous_decision_hash, "previous_decision_hash")
+        if self.decision_hash is not None:
+            _require_nonempty_str(self.decision_hash, "decision_hash")
+
+
+# --- pure verdict derivation algebra --------------------------------------------------
+
+@dataclasses.dataclass(frozen=True)
+class DecisionAlgebraResult:
+    verdict: str
+    blocking_reasons: tuple[str, ...]
+    reason_codes: tuple[str, ...]
+
+
+def derive_contract_verdict(
+    predicate_results: Sequence[DecisionPredicateResult],
+    *,
+    policy_contract: DecisionPolicyContract,
+    scope: DecisionScope | None = None,
+) -> DecisionAlgebraResult:
+    """Pure contract-level verdict algebra. Operates ONLY on already-formed
+    DecisionPredicateResult objects and a DecisionPolicyContract - no
+    filesystem, runtime evidence, methodology state, verification records,
+    failure records, research, memory, or CLI access of any kind.
+
+    CANONICAL CONTRACT ALGEBRA (order matters for which branch fires, not for
+    the final verdict's correctness under permutation of `predicate_results`,
+    since predicates are looked up by id, not by list position):
+      1. Validate all input; malformed input raises DecisionValidationError.
+      2. Any acceptance-critical (required or blocking) predicate CONFLICT
+         -> ABSTAIN.
+      3. Any blocking VIOLATION predicate TRUE -> REJECT.
+      4. Any mandatory REQUIREMENT predicate FALSE -> REJECT.
+      5. Any mandatory predicate (REQUIREMENT or blocking VIOLATION) UNKNOWN
+         -> ABSTAIN.
+      6. Every mandatory REQUIREMENT TRUE and every blocking VIOLATION FALSE
+         -> ACCEPT.
+    ACCEPT is never a default branch; every other path returns before it.
+    """
+    _require(isinstance(policy_contract, DecisionPolicyContract), "policy_contract must be a DecisionPolicyContract")
+    _require(isinstance(predicate_results, (list, tuple)), "predicate_results must be a list/tuple")
+    results = list(predicate_results)
+    for pr in results:
+        _require(isinstance(pr, DecisionPredicateResult), "predicate_results entries must be DecisionPredicateResult")
+
+    by_id: dict[str, DecisionPredicateResult] = {}
+    for pr in results:
+        _require(pr.predicate_id not in by_id, f"duplicate predicate_id in predicate_results: {pr.predicate_id!r}")
+        by_id[pr.predicate_id] = pr
+
+    required_ids = policy_contract.required_predicate_ids
+    blocking_ids = policy_contract.blocking_predicate_ids
+    optional_ids = policy_contract.optional_predicate_ids
+    classified = set(required_ids) | set(blocking_ids) | set(optional_ids)
+
+    for pid in required_ids:
+        _require(pid in by_id, f"policy requires predicate {pid!r} but no result was supplied")
+        pr = by_id[pid]
+        _require(pr.role == "REQUIREMENT", f"policy classifies {pid!r} as required but its role is {pr.role!r}")
+        _require(pr.required, f"policy classifies {pid!r} as required but the result's required flag is False")
+
+    for pid in blocking_ids:
+        _require(pid in by_id, f"policy references blocking predicate {pid!r} but no result was supplied")
+        pr = by_id[pid]
+        _require(pr.role == "VIOLATION", f"policy classifies {pid!r} as blocking but its role is {pr.role!r}")
+        _require(pr.blocking, f"policy classifies {pid!r} as blocking but the result's blocking flag is False")
+
+    for pid in optional_ids:
+        if pid in by_id:
+            pr = by_id[pid]
+            _require(not pr.required and not pr.blocking, f"policy classifies {pid!r} as optional but the result declares required/blocking")
+
+    for pid in by_id:
+        _require(pid in classified, f"predicate_results contains {pid!r}, which the policy does not classify as required/blocking/optional")
+
+    if scope is not None:
+        expected = scope.canonical_id()
+        for pid in (*required_ids, *blocking_ids):
+            pr = by_id[pid]
+            if pr.scope_ref is not None:
+                _require(pr.scope_ref == expected, f"S7 scope mismatch on {pid!r}: predicate scope_ref {pr.scope_ref!r} != decision scope {expected!r}")
+
+    mandatory_ids = (*required_ids, *blocking_ids)
+
+    conflict_ids = [pid for pid in mandatory_ids if by_id[pid].truth_value == "CONFLICT"]
+    if conflict_ids:
+        reasons = tuple(f"{pid}: CONFLICT" for pid in conflict_ids)
+        return DecisionAlgebraResult("ABSTAIN", reasons, ("MANDATORY_PREDICATE_CONFLICT",))
+
+    violation_true_ids = [pid for pid in blocking_ids if by_id[pid].truth_value == "TRUE"]
+    if violation_true_ids:
+        reasons = tuple(f"{pid}: blocking violation TRUE" for pid in violation_true_ids)
+        return DecisionAlgebraResult("REJECT", reasons, ("BLOCKING_FAILURE",))
+
+    required_false_ids = [pid for pid in required_ids if by_id[pid].truth_value == "FALSE"]
+    if required_false_ids:
+        reasons = tuple(f"{pid}: FALSE" for pid in required_false_ids)
+        return DecisionAlgebraResult("REJECT", reasons, ("MANDATORY_PREDICATE_FALSE",))
+
+    unknown_ids = [pid for pid in mandatory_ids if by_id[pid].truth_value == "UNKNOWN"]
+    if unknown_ids:
+        reasons = tuple(f"{pid}: UNKNOWN" for pid in unknown_ids)
+        return DecisionAlgebraResult("ABSTAIN", reasons, ("MANDATORY_PREDICATE_UNKNOWN",))
+
+    return DecisionAlgebraResult("ACCEPT", (), ())
