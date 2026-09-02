@@ -14,6 +14,7 @@ production logic).
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import itertools
 import json
 import sys
@@ -64,6 +65,60 @@ def request(**overrides) -> nd.DecisionRequestContract:
     )
     fields.update(overrides)
     return nd.DecisionRequestContract(**fields)
+
+
+# --- M8-C shared builders (PredicateEvidenceBinding / admissibility) ---------------
+
+def digest(seed: str) -> str:
+    return hashlib.sha256(seed.encode("utf-8")).hexdigest()
+
+
+def revision(seed: str) -> str:
+    return digest(seed)[:40]  # 40-hex, matches DecisionSubject's SHA-1-shaped revision contract
+
+
+def m8c_subject(**overrides) -> nd.DecisionSubject:
+    fields = dict(subject_type="TASK", subject_id="TASK-1", project_id="proj-1", revision_ref=revision("rev-1"))
+    fields.update(overrides)
+    return nd.DecisionSubject(**fields)
+
+
+def m8c_snapshot(**overrides) -> nd.DecisionSnapshot:
+    fields = dict(
+        request_id="req-1", decision_type="TASK_ACCEPTANCE", scope=scope(), subject=m8c_subject(),
+        policy_ref=nd.SnapshotReference(ref_kind="POLICY", ref_id="policy-1", fingerprint=digest("policy-content")),
+    )
+    fields.update(overrides)
+    return nd.build_decision_snapshot(**fields)
+
+
+def evidence_ref(ref_id: str = "ev-1", fingerprint: str | None = None, ref_kind: str = "VERIFICATION_EVIDENCE", **overrides) -> nd.SnapshotReference:
+    fields = dict(ref_kind=ref_kind, ref_id=ref_id, fingerprint=fingerprint or digest(f"{ref_kind}:{ref_id}"))
+    fields.update(overrides)
+    return nd.SnapshotReference(**fields)
+
+
+M8C_RESULT = requirement("P1", "TRUE")
+M8C_SNAPSHOT = m8c_snapshot()
+M8C_POLICY = policy(required_ids=("P1",))
+M8C_EVIDENCE = evidence_ref()
+
+
+def m8c_binding(**overrides) -> nd.PredicateEvidenceBinding:
+    fields = dict(
+        predicate_result_fingerprint=M8C_RESULT.result_fingerprint,
+        snapshot_fingerprint=M8C_SNAPSHOT.snapshot_fingerprint,
+        policy_id=M8C_POLICY.policy_id, policy_version=M8C_POLICY.policy_version,
+        evidence_refs=(M8C_EVIDENCE,), verifier_id="verifier-x",
+    )
+    fields.update(overrides)
+    return nd.PredicateEvidenceBinding(**fields)
+
+
+def m8c_admit(binding_obj: nd.PredicateEvidenceBinding, **overrides) -> nd.AdmissibilityResult:
+    fields = dict(predicate_result=M8C_RESULT, current_snapshot=M8C_SNAPSHOT, current_policy=M8C_POLICY, executor_ids=frozenset())
+    fields.update(overrides)
+    return nd.is_binding_admissible(binding_obj, **fields)
 
 
 # A canonical "complete proof" set matching M8-A Mandatory Scenario 1.
@@ -1235,6 +1290,468 @@ class DecisionNoScoreTests(unittest.TestCase):
         module_vars = vars(nd)
         for key in module_vars:
             self.assertNotIn("THRESHOLD", key.upper())
+
+
+# --- M8-C: Predicate Evidence Binding ------------------------------------------------
+
+# A. RESULT FINGERPRINT
+
+class ResultFingerprintTests(unittest.TestCase):
+    def test_1_deterministic_for_equal_semantic_claims(self) -> None:
+        a = requirement("P1", "TRUE")
+        b = requirement("P1", "TRUE")
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_2_predicate_id_change_changes_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE")
+        b = requirement("P2", "TRUE")
+        self.assertNotEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_3_role_change_changes_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE")
+        b = violation("P1", "TRUE")
+        self.assertNotEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_4_truth_value_change_changes_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE")
+        b = requirement("P1", "FALSE")
+        self.assertNotEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_5_required_change_does_not_change_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE", required=True)
+        b = requirement("P1", "TRUE", required=False)
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_6_blocking_change_does_not_change_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE", blocking=False)
+        b = requirement("P1", "TRUE", blocking=True)
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_7_reason_codes_change_does_not_change_fingerprint(self) -> None:
+        a = requirement("P1", "FALSE", reason_codes=())
+        b = requirement("P1", "FALSE", reason_codes=("MANDATORY_PREDICATE_FALSE",))
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_8_source_refs_change_does_not_change_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE", source_refs=())
+        b = requirement("P1", "TRUE", source_refs=("evidence-1",))
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_9_authority_refs_change_does_not_change_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE", authority_refs=())
+        b = requirement("P1", "TRUE", authority_refs=("actor-1",))
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_10_scope_ref_change_does_not_change_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE", scope_ref=None)
+        b = requirement("P1", "TRUE", scope_ref="TASK:proj-1:TASK-1")
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_11_freshness_status_change_does_not_change_fingerprint(self) -> None:
+        # only combinations valid under S4 (truth_value=TRUE cannot pair with STALE)
+        a = requirement("P1", "TRUE", freshness_status=None)
+        b = requirement("P1", "TRUE", freshness_status="FRESH")
+        c = requirement("P1", "TRUE", freshness_status="UNKNOWN")
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+        self.assertEqual(a.result_fingerprint, c.result_fingerprint)
+
+    def test_12_details_change_does_not_change_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE", details=None)
+        b = requirement("P1", "TRUE", details="looks fine to me")
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_semantic_payload_contains_exactly_three_fields(self) -> None:
+        payload = requirement("P1", "TRUE").semantic_payload()
+        self.assertEqual(set(payload), {"predicate_id", "role", "truth_value"})
+
+    def test_result_fingerprint_uses_existing_fingerprint_payload(self) -> None:
+        r = requirement("P1", "TRUE")
+        expected = nd.fingerprint_payload(r.semantic_payload())
+        self.assertEqual(r.result_fingerprint, expected)
+
+
+# B. PREDICATEEVIDENCEBINDING CONTRACT
+
+class PredicateEvidenceBindingContractTests(unittest.TestCase):
+    def test_13_valid_construction(self) -> None:
+        b = m8c_binding()
+        self.assertEqual(b.verifier_id, "verifier-x")
+
+    def test_14_invalid_result_fingerprint_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(predicate_result_fingerprint="not-a-digest")
+
+    def test_15_invalid_snapshot_fingerprint_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(snapshot_fingerprint="not-a-digest")
+
+    def test_16_empty_policy_id_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(policy_id="")
+
+    def test_17_empty_policy_version_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(policy_version="")
+
+    def test_18_empty_verifier_id_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(verifier_id="")
+
+    def test_19_invalid_optional_authority_class_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(authority_class="SUPERUSER")
+
+    def test_20_evidence_refs_stored_as_tuple(self) -> None:
+        b = m8c_binding(evidence_refs=[M8C_EVIDENCE])
+        self.assertIsInstance(b.evidence_refs, tuple)
+
+    def test_21_duplicate_evidence_refs_rejected(self) -> None:
+        dup = evidence_ref(ref_id="v1", fingerprint=digest("content-A"))
+        conflicting = evidence_ref(ref_id="v1", fingerprint=digest("content-B"))
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(evidence_refs=(dup, conflicting))
+
+    def test_22_caller_aliasing_defeated(self) -> None:
+        refs_list = [evidence_ref(ref_id="v1")]
+        b = m8c_binding(evidence_refs=refs_list)
+        refs_list.append(evidence_ref(ref_id="v2"))
+        self.assertEqual(len(b.evidence_refs), 1)
+
+    def test_23_frozen_dataclass_mutation_rejected(self) -> None:
+        b = m8c_binding()
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            b.verifier_id = "attacker"
+
+    def test_24_no_metadata_field_exists(self) -> None:
+        field_names = {f.name for f in dataclasses.fields(nd.PredicateEvidenceBinding)}
+        self.assertNotIn("metadata", field_names)
+
+    def test_25_no_predicate_id_field_exists(self) -> None:
+        field_names = {f.name for f in dataclasses.fields(nd.PredicateEvidenceBinding)}
+        self.assertNotIn("predicate_id", field_names)
+
+    def test_optional_correlation_fields_validated_when_present(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(execution_run_id="")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(evaluation_id="")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8c_binding(evaluated_at="")
+
+    def test_authority_class_structural_validation_only(self) -> None:
+        # valid class constructs fine - this is NOT the same as granting admissibility
+        b = m8c_binding(authority_class="ACCEPTANCE")
+        self.assertEqual(b.authority_class, "ACCEPTANCE")
+
+
+# C. BINDING FINGERPRINT
+
+class BindingFingerprintTests(unittest.TestCase):
+    def test_26_deterministic_for_equal_semantic_binding(self) -> None:
+        a = m8c_binding()
+        b = m8c_binding()
+        self.assertEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_27_predicate_result_fingerprint_change_changes_it(self) -> None:
+        other_result = requirement("P1", "FALSE")
+        a = m8c_binding()
+        b = m8c_binding(predicate_result_fingerprint=other_result.result_fingerprint)
+        self.assertNotEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_28_snapshot_fingerprint_change_changes_it(self) -> None:
+        other_snapshot = m8c_snapshot(subject=m8c_subject(revision_ref=revision("rev-2")))
+        a = m8c_binding()
+        b = m8c_binding(snapshot_fingerprint=other_snapshot.snapshot_fingerprint)
+        self.assertNotEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_29_policy_id_change_changes_it(self) -> None:
+        a = m8c_binding()
+        b = m8c_binding(policy_id="other-policy")
+        self.assertNotEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_30_policy_version_change_changes_it(self) -> None:
+        a = m8c_binding()
+        b = m8c_binding(policy_version="2")
+        self.assertNotEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_31_evidence_refs_change_changes_it(self) -> None:
+        a = m8c_binding()
+        b = m8c_binding(evidence_refs=(evidence_ref(ref_id="other-ev"),))
+        self.assertNotEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_32_verifier_id_change_does_not_change_it(self) -> None:
+        a = m8c_binding(verifier_id="verifier-x")
+        b = m8c_binding(verifier_id="verifier-y")
+        self.assertEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_33_authority_class_change_does_not_change_it(self) -> None:
+        a = m8c_binding(authority_class=None)
+        b = m8c_binding(authority_class="ACCEPTANCE")
+        self.assertEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_34_execution_run_id_change_does_not_change_it(self) -> None:
+        a = m8c_binding(execution_run_id="run-1")
+        b = m8c_binding(execution_run_id="run-2")
+        self.assertEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_35_evaluation_id_change_does_not_change_it(self) -> None:
+        a = m8c_binding(evaluation_id="eval-1")
+        b = m8c_binding(evaluation_id="eval-2")
+        self.assertEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_36_evaluated_at_change_does_not_change_it(self) -> None:
+        a = m8c_binding(evaluated_at="2026-01-01T00:00:00Z")
+        b = m8c_binding(evaluated_at="2030-01-01T00:00:00Z")
+        self.assertEqual(a.binding_fingerprint, b.binding_fingerprint)
+
+    def test_binding_semantic_payload_contains_exactly_five_fields(self) -> None:
+        payload = m8c_binding().semantic_payload()
+        self.assertEqual(set(payload), {
+            "predicate_result_fingerprint", "snapshot_fingerprint", "policy_id", "policy_version", "evidence_refs",
+        })
+
+
+# D. CLAIM SUBSTITUTION DEFENSE
+
+class ClaimSubstitutionDefenseTests(unittest.TestCase):
+    def test_37_true_binding_against_false_result_fails_closed(self) -> None:
+        true_result = requirement("P1", "TRUE")
+        false_result = requirement("P1", "FALSE")
+        b = m8c_binding(predicate_result_fingerprint=true_result.result_fingerprint)
+        result = m8c_admit(b, predicate_result=false_result)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "INPUT_INVALID")
+
+    def test_38_false_binding_against_true_result_fails_closed(self) -> None:
+        false_result = requirement("P1", "FALSE")
+        true_result = requirement("P1", "TRUE")
+        b = m8c_binding(predicate_result_fingerprint=false_result.result_fingerprint, evidence_refs=(M8C_EVIDENCE,))
+        result = m8c_admit(b, predicate_result=true_result)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "INPUT_INVALID")
+
+    def test_39_unknown_binding_against_true_result_fails_closed(self) -> None:
+        unknown_result = requirement("P1", "UNKNOWN")
+        true_result = requirement("P1", "TRUE")
+        b = m8c_binding(predicate_result_fingerprint=unknown_result.result_fingerprint, evidence_refs=())
+        result = m8c_admit(b, predicate_result=true_result)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "INPUT_INVALID")
+
+    def test_40_role_substitution_fails_closed(self) -> None:
+        requirement_result = requirement("P1", "TRUE")
+        violation_result = violation("P1", "TRUE")
+        b = m8c_binding(predicate_result_fingerprint=requirement_result.result_fingerprint)
+        result = m8c_admit(b, predicate_result=violation_result)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "INPUT_INVALID")
+
+    def test_41_predicate_id_substitution_fails_closed(self) -> None:
+        p1_result = requirement("P1", "TRUE")
+        p2_result = requirement("P2", "TRUE")
+        b = m8c_binding(predicate_result_fingerprint=p1_result.result_fingerprint)
+        result = m8c_admit(b, predicate_result=p2_result, current_policy=policy(required_ids=("P2",)))
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "INPUT_INVALID")
+
+
+# E. SNAPSHOT / POLICY REPLAY DEFENSE
+
+class SnapshotPolicyReplayDefenseTests(unittest.TestCase):
+    def test_42_correct_snapshot_passes_binding_check(self) -> None:
+        result = m8c_admit(m8c_binding())
+        self.assertTrue(result.admissible)
+
+    def test_43_wrong_snapshot_fails_stale_required_evidence(self) -> None:
+        other_snapshot = m8c_snapshot(subject=m8c_subject(revision_ref=revision("rev-2")))
+        result = m8c_admit(m8c_binding(), current_snapshot=other_snapshot)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "STALE_REQUIRED_EVIDENCE")
+
+    def test_44_old_revision_binding_replay_fails_closed(self) -> None:
+        snap_a = m8c_snapshot(subject=m8c_subject(revision_ref=revision("rev-A")))
+        snap_b = m8c_snapshot(subject=m8c_subject(revision_ref=revision("rev-B")))
+        self.assertNotEqual(snap_a.snapshot_fingerprint, snap_b.snapshot_fingerprint)
+        b = m8c_binding(snapshot_fingerprint=snap_a.snapshot_fingerprint)
+        result = m8c_admit(b, current_snapshot=snap_b)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "STALE_REQUIRED_EVIDENCE")
+
+    def test_45_correct_policy_id_version_passes(self) -> None:
+        result = m8c_admit(m8c_binding())
+        self.assertTrue(result.admissible)
+
+    def test_46_wrong_policy_id_fails(self) -> None:
+        other_policy = policy(policy_id="other-policy", required_ids=("P1",))
+        result = m8c_admit(m8c_binding(), current_policy=other_policy)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "DECISION_POLICY_INVALID")
+
+    def test_47_wrong_policy_version_fails(self) -> None:
+        other_policy = policy(policy_version="2", required_ids=("P1",))
+        result = m8c_admit(m8c_binding(), current_policy=other_policy)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "DECISION_POLICY_INVALID")
+
+
+# F. EVIDENCE REQUIREMENTS
+
+class EvidenceRequirementTests(unittest.TestCase):
+    def test_48_true_plus_empty_evidence_inadmissible(self) -> None:
+        true_result = requirement("P1", "TRUE")
+        b = m8c_binding(predicate_result_fingerprint=true_result.result_fingerprint, evidence_refs=())
+        result = m8c_admit(b, predicate_result=true_result)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "MISSING_REQUIRED_EVIDENCE")
+
+    def test_49_false_plus_empty_evidence_inadmissible(self) -> None:
+        false_result = requirement("P1", "FALSE")
+        b = m8c_binding(predicate_result_fingerprint=false_result.result_fingerprint, evidence_refs=())
+        result = m8c_admit(b, predicate_result=false_result)
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "MISSING_REQUIRED_EVIDENCE")
+
+    def test_50_unknown_plus_empty_evidence_may_be_admissible(self) -> None:
+        unknown_result = requirement("P1", "UNKNOWN")
+        b = m8c_binding(predicate_result_fingerprint=unknown_result.result_fingerprint, evidence_refs=())
+        result = m8c_admit(b, predicate_result=unknown_result)
+        self.assertTrue(result.admissible)
+
+    def test_51_actual_evidence_ref_permits_true_false_to_proceed(self) -> None:
+        false_result = requirement("P1", "FALSE")
+        b = m8c_binding(predicate_result_fingerprint=false_result.result_fingerprint, evidence_refs=(M8C_EVIDENCE,))
+        result = m8c_admit(b, predicate_result=false_result)
+        self.assertTrue(result.admissible)
+
+
+# G. AUTHORITY INDEPENDENCE
+
+class AuthorityIndependenceTests(unittest.TestCase):
+    def test_52_independent_verifier_for_acceptance_critical_predicate_may_proceed(self) -> None:
+        b = m8c_binding(verifier_id="independent-verifier")
+        result = m8c_admit(b, executor_ids=frozenset({"executor-1"}))
+        self.assertTrue(result.admissible)
+
+    def test_53_verifier_equals_executor_identity_invalid_authority(self) -> None:
+        b = m8c_binding(verifier_id="executor-1")
+        result = m8c_admit(b, executor_ids=frozenset({"executor-1"}))
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "INVALID_AUTHORITY")
+
+    def test_54_authority_class_acceptance_cannot_override_self_verification(self) -> None:
+        b = m8c_binding(verifier_id="executor-1", authority_class="ACCEPTANCE")
+        result = m8c_admit(b, executor_ids=frozenset({"executor-1"}))
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "INVALID_AUTHORITY")
+
+    def test_55_authority_class_human_cannot_override_self_verification(self) -> None:
+        b = m8c_binding(verifier_id="executor-1", authority_class="HUMAN")
+        result = m8c_admit(b, executor_ids=frozenset({"executor-1"}))
+        self.assertFalse(result.admissible)
+        self.assertEqual(result.reason_code, "INVALID_AUTHORITY")
+
+    def test_56_non_acceptance_critical_predicate_independence_not_enforced(self) -> None:
+        # documented, designed behavior: check 6 only applies when the
+        # predicate_id is required/blocking under current_policy - an
+        # OPTIONAL predicate has no independence requirement in this design.
+        optional_result = requirement("P_OPT", "TRUE")
+        b = m8c_binding(predicate_result_fingerprint=optional_result.result_fingerprint, verifier_id="executor-1")
+        optional_policy = policy(optional_ids=("P_OPT",))
+        result = m8c_admit(b, predicate_result=optional_result, current_policy=optional_policy, executor_ids=frozenset({"executor-1"}))
+        self.assertTrue(result.admissible)
+
+
+# H. FAIL-CLOSED / NON-REGRESSION
+
+class M8CFailClosedNonRegressionTests(unittest.TestCase):
+    def test_57_invalid_binding_never_mutates_truth_value(self) -> None:
+        true_result = requirement("P1", "TRUE")
+        false_result = requirement("P1", "FALSE")
+        b = m8c_binding(predicate_result_fingerprint=true_result.result_fingerprint)
+        m8c_admit(b, predicate_result=false_result)
+        self.assertEqual(false_result.truth_value, "FALSE")
+        self.assertEqual(true_result.truth_value, "TRUE")
+
+    def test_58_invalid_binding_never_becomes_unknown_automatically(self) -> None:
+        # is_binding_admissible() returns AdmissibilityResult, never a
+        # DecisionPredicateResult - there is no code path anywhere by which
+        # an inadmissible binding could synthesize an UNKNOWN truth value.
+        result = m8c_admit(m8c_binding(), current_snapshot=m8c_snapshot(subject=m8c_subject(revision_ref=revision("other"))))
+        self.assertFalse(result.admissible)
+        self.assertFalse(hasattr(result, "truth_value"))
+
+    def test_59_no_multi_evaluation_resolver_exists(self) -> None:
+        self.assertFalse(hasattr(nd, "resolve_predicate_truth"))
+
+    def test_60_existing_duplicate_predicate_id_behavior_still_raises(self) -> None:
+        dup = [requirement("P1", "TRUE"), requirement("P1", "TRUE")]
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.derive_contract_verdict(dup, policy_contract=policy(required_ids=("P1",)))
+
+    def test_61_decision_truth_values_unchanged(self) -> None:
+        self.assertEqual(nd.DECISION_TRUTH_VALUES, frozenset({"TRUE", "FALSE", "UNKNOWN", "CONFLICT"}))
+
+    def test_62_decision_verdicts_unchanged(self) -> None:
+        self.assertEqual(nd.DECISION_VERDICTS, frozenset({"ACCEPT", "REJECT", "ABSTAIN"}))
+
+    def test_63_existing_decision_predicate_result_validations_unchanged(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            requirement("P1", "TRUE", freshness_status="STALE")  # S4 still enforced
+        with self.assertRaises(nd.DecisionValidationError):
+            requirement("", "TRUE")  # empty predicate_id still rejected
+
+    def test_64_derive_contract_verdict_existing_behavior_unchanged(self) -> None:
+        result = nd.derive_contract_verdict(complete_proof_predicates(), policy_contract=COMPLETE_PROOF_POLICY)
+        self.assertEqual(result.verdict, "ACCEPT")
+
+    def test_65_m8b_snapshot_construction_unaffected(self) -> None:
+        snap = m8c_snapshot()
+        self.assertEqual(len(snap.snapshot_fingerprint), 64)
+
+    def test_66_no_authority_class_permission_shortcut_exists(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.is_binding_admissible)
+        self.assertNotIn("authority_class ==", source)
+        self.assertNotIn(".authority_class", source)
+
+
+# --- M8-C static safety sweep ----------------------------------------------------------
+
+class M8CStaticSafetySweepTests(unittest.TestCase):
+    def test_no_second_hash_or_canonicalizer_implementation(self) -> None:
+        import inspect
+        source = inspect.getsource(nd)
+        self.assertEqual(source.count("def fingerprint_payload"), 1)
+        self.assertEqual(source.count("def canonical_json"), 1)
+        self.assertEqual(source.count("def _canonicalize"), 1)
+        self.assertEqual(source.count("def _deep_freeze"), 1)
+
+    def test_no_second_evidence_reference_type(self) -> None:
+        self.assertFalse(hasattr(nd, "EvidenceReference"))
+
+    def test_no_m6_m7_imports_introduced(self) -> None:
+        import ast
+        tree = ast.parse(Path(nd.__file__).read_text(encoding="utf-8"))
+        project_modules = {p.stem for p in (ROOT / "scripts").glob("*.py")} - {"nogap_decision"}
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+        self.assertTrue(imported.isdisjoint(project_modules), f"found forbidden project imports: {imported & project_modules}")
+
+    def test_no_nondeterminism_tokens_in_new_surface(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.PredicateEvidenceBinding) + inspect.getsource(nd.is_binding_admissible) + inspect.getsource(nd.AdmissibilityResult)
+        for banned in ("random.", "uuid.", "time.time(", "datetime.now(", "hash("):
+            self.assertNotIn(banned, source)
+
+    def test_is_binding_admissible_is_pure_no_io(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.is_binding_admissible)
+        for banned in ("open(", "Path(", "os.listdir", "iterdir", "glob("):
+            self.assertNotIn(banned, source)
 
 
 if __name__ == "__main__":
