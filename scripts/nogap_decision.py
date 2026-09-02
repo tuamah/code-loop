@@ -577,7 +577,48 @@ class DecisionEvaluationContract:
 
         _require(self.verdict in DECISION_VERDICTS, f"unknown verdict: {self.verdict!r}")
         if self.input_fingerprint is not None:
-            _require_nonempty_str(self.input_fingerprint, "input_fingerprint")
+            # M8-D hardening: tightened from a bare non-empty-string check to
+            # the real digest shape - safe (no existing test ever supplies a
+            # non-None value here, confirmed before this change), and closes
+            # a gap where a malformed placeholder string could otherwise sit
+            # in a field this milestone now treats as a real commitment.
+            _require_valid_digest(self.input_fingerprint, "input_fingerprint")
+
+    def semantic_payload(self) -> dict[str, Any]:
+        """M8-D: LEGACY CONSTRUCTIBLE != TRUST IDENTIFIABLE. This method never
+        raises - even for a legacy object with input_fingerprint=None, it
+        honestly reports that fact; only `evaluation_fingerprint` (below)
+        treats a None input_fingerprint as a fail-closed precondition.
+
+        scope/policy_ref/predicate_results/the bucket lists/blocking_reasons
+        are deliberately excluded - not because they are non-authoritative,
+        but because input_fingerprint (once non-None) already transitively
+        commits to all of that content at least as precisely (scope and
+        policy identity via DecisionSnapshot.semantic_payload() feeding
+        snapshot_fingerprint; each individual claim via
+        predicate_result_fingerprints). Including them again here would be a
+        second, competing representation of the same facts. evaluation_id/
+        request_id/evaluated_at are correlation/timestamp, matching every
+        prior precedent in this module."""
+        return {
+            "decision_type": self.decision_type,
+            "verdict": self.verdict,
+            "reason_codes": self.reason_codes,
+            "input_fingerprint": self.input_fingerprint,
+            "engine_version": self.engine_version,
+            "schema_version": self.schema_version,
+        }
+
+    @property
+    def evaluation_fingerprint(self) -> str:
+        """Computed, never caller-supplied. Fails closed (DecisionValidationError,
+        never a hash of None) when this evaluation was never bound to a real
+        semantic input set - i.e. when it was constructed directly rather
+        than produced by evaluate_decision(). Trust identifiability is a
+        stronger claim than mere structural constructibility; this property
+        is exactly the boundary between the two."""
+        _require(self.input_fingerprint is not None, "evaluation_fingerprint requires a non-None input_fingerprint - this evaluation was not produced through the trusted M8-D kernel path (evaluate_decision())")
+        return fingerprint_payload(self.semantic_payload())
 
 
 # --- DecisionRecordContract ----------------------------------------------------------
@@ -603,6 +644,7 @@ class DecisionRecordContract:
     evaluation_ref: str
     policy_ref: str
     created_at: str
+    evaluation_fingerprint: str | None = None
     engine_version: str = M8_DECISION_ENGINE_VERSION
     schema_version: str = M8_DECISION_SCHEMA_VERSION
     supersedes: str | None = None
@@ -625,6 +667,11 @@ class DecisionRecordContract:
         _require_nonempty_str(self.evaluation_ref, "evaluation_ref")
         _require_nonempty_str(self.policy_ref, "policy_ref")
         _require_nonempty_str(self.created_at, "created_at")
+        # M8-D: optional for legacy constructor compatibility (LEGACY
+        # CONSTRUCTIBLE != TRUST IDENTIFIABLE) - reuses the existing digest
+        # validator, no second implementation, no new field type.
+        if self.evaluation_fingerprint is not None:
+            _require_valid_digest(self.evaluation_fingerprint, "evaluation_fingerprint")
         _require_supported_engine_version(self.engine_version)
         _require_supported_schema_version(self.schema_version)
         if self.supersedes is not None:
@@ -633,6 +680,45 @@ class DecisionRecordContract:
             _require_nonempty_str(self.previous_decision_hash, "previous_decision_hash")
         if self.decision_hash is not None:
             _require_nonempty_str(self.decision_hash, "decision_hash")
+
+    def semantic_payload(self) -> dict[str, Any]:
+        """M8-D. Excludes decision_id/evaluation_id/request_id (correlation),
+        scope (transitively covered via evaluation_fingerprint ->
+        input_fingerprint -> DecisionSnapshot.semantic_payload()),
+        evaluation_ref/policy_ref (correlation-only pointers - the real
+        commitment lives in evaluation_fingerprint, not in re-describing what
+        it points at), created_at (timestamp), and supersedes/
+        previous_decision_hash/decision_hash (chain/persistence placeholders,
+        explicitly M8-G territory - `decision_hash` is NOT
+        `decision_fingerprint`: the former will eventually be a hash of this
+        record's own serialized bytes chained to the previous record's hash;
+        the latter is a storage-order-independent content commitment,
+        computed identically regardless of chain position or persistence
+        history). verdict/reason_codes are kept despite already being
+        transitively committed via evaluation_fingerprint - not a competing
+        representation, but the record's own primary content, and (for
+        reason_codes specifically) a deliberate defense: under the trusted
+        kernel path reason_codes is a deterministic function of the same
+        committed inputs, so including it lets a mismatch between a real
+        input commitment and a fabricated verdict/reason_codes be detected by
+        fingerprint comparison alone."""
+        return {
+            "decision_type": self.decision_type,
+            "verdict": self.verdict,
+            "reason_codes": self.reason_codes,
+            "evaluation_fingerprint": self.evaluation_fingerprint,
+            "engine_version": self.engine_version,
+            "schema_version": self.schema_version,
+        }
+
+    @property
+    def decision_fingerprint(self) -> str:
+        """Computed, never caller-supplied. Fails closed when
+        evaluation_fingerprint is None - never hashes None as though it were
+        a valid lower-layer commitment. See DecisionEvaluationContract.
+        evaluation_fingerprint for the identical rationale one layer down."""
+        _require(self.evaluation_fingerprint is not None, "decision_fingerprint requires a non-None evaluation_fingerprint - this record was not produced through the trusted M8-D builder path (build_decision_record())")
+        return fingerprint_payload(self.semantic_payload())
 
 
 # --- pure verdict derivation algebra --------------------------------------------------
@@ -1257,3 +1343,205 @@ def is_binding_admissible(
         return AdmissibilityResult(False, "INVALID_AUTHORITY")
 
     return AdmissibilityResult(True, None)
+
+
+# ================================================================================
+# M8-D: Deterministic Decision Kernel + Transitive Decision Commitments
+# ================================================================================
+
+def compute_input_fingerprint(
+    current_snapshot: DecisionSnapshot,
+    current_policy: DecisionPolicyContract,
+    predicate_results: Sequence[DecisionPredicateResult],
+    predicate_evidence_bindings: Sequence[PredicateEvidenceBinding],
+) -> str:
+    """Pure. The single semantic commitment for the complete validated
+    decision input set - snapshot identity, policy identity, every claim,
+    and every proof artifact - reusing fingerprint_payload() only (no second
+    hash implementation). Self-contained duplicate detection (defense in
+    depth: independently testable and safe even if a caller reaches this
+    function without going through evaluate_decision()'s own validation
+    sequence first). Order-independent by construction: canonical_json()
+    already sorts string tuples before hashing, so predicate_result_fingerprints/
+    binding_fingerprints need no manual pre-sort here."""
+    _require(isinstance(current_snapshot, DecisionSnapshot), "current_snapshot must be a DecisionSnapshot")
+    _require(isinstance(current_policy, DecisionPolicyContract), "current_policy must be a DecisionPolicyContract")
+    _require(isinstance(predicate_results, (list, tuple)), "predicate_results must be a list/tuple")
+    _require(isinstance(predicate_evidence_bindings, (list, tuple)), "predicate_evidence_bindings must be a list/tuple")
+
+    results = list(predicate_results)
+    for r in results:
+        _require(isinstance(r, DecisionPredicateResult), "predicate_results entries must be DecisionPredicateResult")
+    ids = [r.predicate_id for r in results]
+    _require(len(set(ids)) == len(ids), "predicate_results contains duplicate predicate_id")
+    result_fingerprints = [r.result_fingerprint for r in results]
+    _require(len(set(result_fingerprints)) == len(result_fingerprints), "predicate_results contains duplicate result_fingerprint")
+
+    bindings = list(predicate_evidence_bindings)
+    for b in bindings:
+        _require(isinstance(b, PredicateEvidenceBinding), "predicate_evidence_bindings entries must be PredicateEvidenceBinding")
+    binding_fingerprints = [b.binding_fingerprint for b in bindings]
+    _require(len(set(binding_fingerprints)) == len(binding_fingerprints), "predicate_evidence_bindings contains duplicate binding_fingerprint")
+
+    payload = {
+        "snapshot_fingerprint": current_snapshot.snapshot_fingerprint,
+        "policy_id": current_policy.policy_id,
+        "policy_version": current_policy.policy_version,
+        "predicate_result_fingerprints": tuple(result_fingerprints),
+        "binding_fingerprints": tuple(binding_fingerprints),
+    }
+    return fingerprint_payload(payload)
+
+
+def evaluate_decision(
+    current_snapshot: DecisionSnapshot,
+    current_policy: DecisionPolicyContract,
+    predicate_results: Sequence[DecisionPredicateResult],
+    predicate_evidence_bindings: Sequence[PredicateEvidenceBinding],
+    executor_ids: frozenset[str] = frozenset(),
+    *,
+    evaluation_id: str,
+    evaluated_at: str | None = None,
+) -> DecisionEvaluationContract:
+    """The pure Deterministic Decision Kernel (M8-D). No filesystem, Git,
+    network, environment, clock, UUID, or model call - evaluation_id/
+    evaluated_at are caller-supplied, never generated internally, exactly
+    matching build_decision_snapshot()'s own established captured_at idiom.
+
+    Validates the complete candidate input set (decision_type consistency,
+    duplicate identity, orphan bindings, per-binding admissibility, and the
+    new M8-D invariant that every supplied predicate_result - TRUE, FALSE,
+    UNKNOWN, or CONFLICT alike - has at least one admissible binding) BEFORE
+    calling derive_contract_verdict(), which remains the sole verdict
+    algebra, called with its existing signature, completely unmodified.
+    Every failure below raises DecisionValidationError; none is ever
+    translated into UNKNOWN/FALSE/ABSTAIN/REJECT - malformed or
+    inadmissible trust input means no evaluation is produced at all."""
+    _require(isinstance(current_snapshot, DecisionSnapshot), "current_snapshot must be a DecisionSnapshot")
+    _require(isinstance(current_policy, DecisionPolicyContract), "current_policy must be a DecisionPolicyContract")
+    _require(isinstance(predicate_results, (list, tuple)), "predicate_results must be a list/tuple")
+    _require(isinstance(predicate_evidence_bindings, (list, tuple)), "predicate_evidence_bindings must be a list/tuple")
+
+    results = list(predicate_results)
+    for r in results:
+        _require(isinstance(r, DecisionPredicateResult), "predicate_results entries must be DecisionPredicateResult")
+    bindings = list(predicate_evidence_bindings)
+    for b in bindings:
+        _require(isinstance(b, PredicateEvidenceBinding), "predicate_evidence_bindings entries must be PredicateEvidenceBinding")
+
+    # B. decision_type consistency between snapshot and policy.
+    _require(
+        current_snapshot.decision_type == current_policy.decision_type,
+        f"snapshot decision_type {current_snapshot.decision_type!r} does not match policy decision_type {current_policy.decision_type!r}",
+    )
+
+    # C/D. duplicate predicate_id / result_fingerprint (result_fingerprint
+    # duplication is structurally implied by predicate_id duplication - both
+    # checked explicitly per the fail-closed contract surface requirement).
+    ids = [r.predicate_id for r in results]
+    _require(len(set(ids)) == len(ids), "predicate_results contains duplicate predicate_id")
+    result_fingerprints = [r.result_fingerprint for r in results]
+    _require(len(set(result_fingerprints)) == len(result_fingerprints), "predicate_results contains duplicate result_fingerprint")
+
+    # E. duplicate binding_fingerprint.
+    binding_fingerprints = [b.binding_fingerprint for b in bindings]
+    _require(len(set(binding_fingerprints)) == len(binding_fingerprints), "predicate_evidence_bindings contains duplicate binding_fingerprint")
+
+    # F. exact result lookup by result_fingerprint.
+    results_by_fingerprint = {r.result_fingerprint: r for r in results}
+
+    # G. every supplied binding must match exactly one supplied result
+    # (else orphan binding) and must be admissible against it (else
+    # inadmissible binding) - both fail closed, neither silently dropped.
+    admitted_predicate_ids: set[str] = set()
+    for b in bindings:
+        matched_result = results_by_fingerprint.get(b.predicate_result_fingerprint)
+        _require(matched_result is not None, "predicate_evidence_bindings contains an orphan binding matching no supplied predicate_result")
+        admissibility = is_binding_admissible(
+            b,
+            predicate_result=matched_result,
+            current_snapshot=current_snapshot,
+            current_policy=current_policy,
+            executor_ids=executor_ids,
+        )
+        _require(admissibility.admissible, f"inadmissible binding supplied for predicate_id {matched_result.predicate_id!r}: {admissibility.reason_code}")
+        admitted_predicate_ids.add(matched_result.predicate_id)
+
+    # H. M8-D invariant (new, not a retroactive M8-C reinterpretation): every
+    # supplied result - TRUE/FALSE/UNKNOWN/CONFLICT alike - requires at least
+    # one binding. Since the loop above already guarantees every PRESENT
+    # binding is admissible (or the function already raised), this reduces to
+    # "at least one binding was present at all".
+    for r in results:
+        _require(r.predicate_id in admitted_predicate_ids, f"predicate_result {r.predicate_id!r} has no admissible PredicateEvidenceBinding (M8-D requires one for every truth value, including UNKNOWN/CONFLICT)")
+
+    # I. compute the input fingerprint only after full validation succeeds.
+    input_fingerprint = compute_input_fingerprint(current_snapshot, current_policy, results, bindings)
+
+    # J. the ONLY verdict engine - unmodified, existing signature.
+    algebra_result = derive_contract_verdict(results, policy_contract=current_policy)
+
+    # K. mechanical grouping by each result's own already-known truth_value -
+    # not aggregation, not a second algebra.
+    satisfied = tuple(r.predicate_id for r in results if r.truth_value == "TRUE")
+    failed = tuple(r.predicate_id for r in results if r.truth_value == "FALSE")
+    unknown = tuple(r.predicate_id for r in results if r.truth_value == "UNKNOWN")
+    conflicting = tuple(r.predicate_id for r in results if r.truth_value == "CONFLICT")
+
+    return DecisionEvaluationContract(
+        evaluation_id=evaluation_id,
+        request_id=current_snapshot.request_id,
+        decision_type=current_snapshot.decision_type,
+        scope=current_snapshot.scope,
+        policy_ref=current_policy.policy_id,
+        predicate_results=tuple(results),
+        satisfied_predicates=satisfied,
+        failed_predicates=failed,
+        unknown_predicates=unknown,
+        conflicting_predicates=conflicting,
+        blocking_reasons=algebra_result.blocking_reasons,
+        reason_codes=algebra_result.reason_codes,
+        verdict=algebra_result.verdict,
+        input_fingerprint=input_fingerprint,
+        evaluated_at=evaluated_at,
+    )
+
+
+def build_decision_record(
+    evaluation: DecisionEvaluationContract,
+    *,
+    decision_id: str,
+    created_at: str,
+    supersedes: str | None = None,
+) -> DecisionRecordContract:
+    """Pure builder. decision_id/created_at/supersedes are the only
+    caller-supplied fields - genuine correlation/persistence facts with no
+    derivable source. Every semantic or correlation fact already present on
+    `evaluation` is copied, never caller-overridable, so there is no
+    parameter through which a caller could contradict the evaluation. Does
+    not recompute the verdict - reads it from `evaluation` directly. Its
+    first action is obtaining `evaluation.evaluation_fingerprint`, which is
+    itself the fail-closed trust precondition: an unbound (legacy) evaluation
+    raises here, before any DecisionRecordContract is constructed - no record
+    may be emitted from an unbound evaluation. decision_hash/
+    previous_decision_hash are left at their defaults (None) - M8-D does not
+    own persistence/hash-chaining (M8-G territory)."""
+    _require(isinstance(evaluation, DecisionEvaluationContract), "evaluation must be a DecisionEvaluationContract")
+    evaluation_fingerprint = evaluation.evaluation_fingerprint  # raises if evaluation is unbound
+
+    return DecisionRecordContract(
+        decision_id=decision_id,
+        evaluation_id=evaluation.evaluation_id,
+        request_id=evaluation.request_id,
+        decision_type=evaluation.decision_type,
+        scope=evaluation.scope,
+        verdict=evaluation.verdict,
+        reason_codes=evaluation.reason_codes,
+        evaluation_ref=evaluation.evaluation_id,
+        policy_ref=evaluation.policy_ref,
+        created_at=created_at,
+        evaluation_fingerprint=evaluation_fingerprint,
+        engine_version=evaluation.engine_version,
+        schema_version=evaluation.schema_version,
+        supersedes=supersedes,
+    )

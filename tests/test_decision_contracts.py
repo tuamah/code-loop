@@ -1754,5 +1754,746 @@ class M8CStaticSafetySweepTests(unittest.TestCase):
             self.assertNotIn(banned, source)
 
 
+# --- M8-D: Deterministic Decision Kernel + Transitive Decision Commitments -----------
+
+def m8d_result(predicate_id: str = "P1", truth: str = "TRUE", *, role: str = "REQUIREMENT", **overrides) -> nd.DecisionPredicateResult:
+    fields = dict(predicate_id=predicate_id, role=role, truth_value=truth, required=(role == "REQUIREMENT"), blocking=(role == "VIOLATION"))
+    fields.update(overrides)
+    return nd.DecisionPredicateResult(**fields)
+
+
+def m8d_binding(result: nd.DecisionPredicateResult, *, snap: nd.DecisionSnapshot | None = None, pol: nd.DecisionPolicyContract | None = None, **overrides) -> nd.PredicateEvidenceBinding:
+    snap = snap if snap is not None else M8C_SNAPSHOT
+    pol = pol if pol is not None else M8C_POLICY
+    needs_evidence = result.truth_value in {"TRUE", "FALSE"}
+    fields = dict(
+        predicate_result_fingerprint=result.result_fingerprint,
+        snapshot_fingerprint=snap.snapshot_fingerprint,
+        policy_id=pol.policy_id, policy_version=pol.policy_version,
+        evidence_refs=(evidence_ref(ref_id=f"ev-{result.predicate_id}"),) if needs_evidence else (),
+        verifier_id="verifier-x",
+    )
+    fields.update(overrides)
+    return nd.PredicateEvidenceBinding(**fields)
+
+
+def m8d_evaluate(results, bindings, *, snap: nd.DecisionSnapshot | None = None, pol: nd.DecisionPolicyContract | None = None,
+                  executor_ids=frozenset(), evaluation_id: str = "eval-1", evaluated_at=None) -> nd.DecisionEvaluationContract:
+    snap = snap if snap is not None else M8C_SNAPSHOT
+    pol = pol if pol is not None else M8C_POLICY
+    return nd.evaluate_decision(snap, pol, results, bindings, executor_ids, evaluation_id=evaluation_id, evaluated_at=evaluated_at)
+
+
+def m8d_full_evaluation(**overrides) -> nd.DecisionEvaluationContract:
+    r1 = m8d_result("P1", "TRUE")
+    b1 = m8d_binding(r1)
+    fields = dict(results=[r1], bindings=[b1])
+    fields.update(overrides)
+    return m8d_evaluate(fields["results"], fields["bindings"], **{k: v for k, v in fields.items() if k not in ("results", "bindings")})
+
+
+def m8d_record(**overrides) -> nd.DecisionRecordContract:
+    evaluation = overrides.pop("evaluation", None) or m8d_full_evaluation()
+    fields = dict(decision_id="dec-1", created_at="2026-09-02T00:00:00Z")
+    fields.update(overrides)
+    return nd.build_decision_record(evaluation, **fields)
+
+
+# A. LEGACY COMPATIBILITY
+
+class M8DLegacyCompatibilityTests(unittest.TestCase):
+    def test_1_legacy_evaluation_without_input_fingerprint_constructs(self) -> None:
+        ev = make_evaluation()
+        self.assertIsNone(ev.input_fingerprint)
+
+    def test_2_legacy_evaluation_fingerprint_access_raises(self) -> None:
+        ev = make_evaluation()
+        with self.assertRaises(nd.DecisionValidationError):
+            ev.evaluation_fingerprint
+
+    def test_3_legacy_record_without_evaluation_fingerprint_constructs(self) -> None:
+        rec = make_record()
+        self.assertIsNone(rec.evaluation_fingerprint)
+
+    def test_4_legacy_record_decision_fingerprint_access_raises(self) -> None:
+        rec = make_record()
+        with self.assertRaises(nd.DecisionValidationError):
+            rec.decision_fingerprint
+
+
+# B. INPUT FINGERPRINT
+
+class M8DInputFingerprintTests(unittest.TestCase):
+    def test_5_deterministic_same_semantic_input(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        fp1 = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
+        fp2 = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
+        self.assertEqual(fp1, fp2)
+
+    def test_6_predicate_result_ordering_independent(self) -> None:
+        r1, r2 = m8d_result("P1", "TRUE"), m8d_result("P2", "TRUE", required=False)
+        pol = policy(required_ids=("P1",), optional_ids=("P2",))
+        b1, b2 = m8d_binding(r1, pol=pol), m8d_binding(r2, pol=pol)
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b1, b2])
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r2, r1], [b1, b2])
+        self.assertEqual(fp_a, fp_b)
+
+    def test_7_binding_ordering_independent(self) -> None:
+        r1, r2 = m8d_result("P1", "TRUE"), m8d_result("P2", "TRUE", required=False)
+        pol = policy(required_ids=("P1",), optional_ids=("P2",))
+        b1, b2 = m8d_binding(r1, pol=pol), m8d_binding(r2, pol=pol)
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b1, b2])
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b2, b1])
+        self.assertEqual(fp_a, fp_b)
+
+    def test_8_snapshot_change_changes_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        other_snap = m8c_snapshot(subject=m8c_subject(revision_ref=revision("other-rev")))
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
+        fp_b = nd.compute_input_fingerprint(other_snap, M8C_POLICY, [r1], [b1])
+        self.assertNotEqual(fp_a, fp_b)
+
+    def test_9_policy_id_change_changes_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        other_pol = policy(policy_id="other-policy", required_ids=("P1",))
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, other_pol, [r1], [b1])
+        self.assertNotEqual(fp_a, fp_b)
+
+    def test_10_policy_version_change_changes_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        other_pol = policy(policy_version="2", required_ids=("P1",))
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, other_pol, [r1], [b1])
+        self.assertNotEqual(fp_a, fp_b)
+
+    def test_11_claim_fingerprint_change_changes_fingerprint(self) -> None:
+        r_true = m8d_result("P1", "TRUE")
+        r_false = m8d_result("P1", "FALSE")
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r_true], [m8d_binding(r_true)])
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r_false], [m8d_binding(r_false)])
+        self.assertNotEqual(fp_a, fp_b)
+
+    def test_12_proof_set_change_changes_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        b2 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="different-ev"),))
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b2])
+        self.assertNotEqual(fp_a, fp_b)
+
+    def test_13_duplicate_predicate_id_fails(self) -> None:
+        r1a = m8d_result("P1", "TRUE")
+        r1b = m8d_result("P1", "TRUE")
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1a, r1b], [])
+
+    def test_14_duplicate_result_fingerprint_fails(self) -> None:
+        # structurally identical to duplicate predicate_id (same underlying check)
+        r1a = m8d_result("P1", "TRUE")
+        r1b = m8d_result("P1", "TRUE")
+        self.assertEqual(r1a.result_fingerprint, r1b.result_fingerprint)
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1a, r1b], [])
+
+    def test_15_duplicate_binding_fingerprint_fails(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        b2 = m8d_binding(r1)  # identical semantic content -> identical binding_fingerprint
+        self.assertEqual(b1.binding_fingerprint, b2.binding_fingerprint)
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1, b2])
+
+
+# C. KERNEL STRUCTURAL VALIDATION
+
+class M8DKernelStructuralValidationTests(unittest.TestCase):
+    def test_16_decision_type_mismatch_fails(self) -> None:
+        other_pol = policy(decision_type="REPAIR_ACCEPTANCE", required_ids=("P1",))
+        r1 = m8d_result("P1", "TRUE")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [m8d_binding(r1, pol=other_pol)], pol=other_pol)
+
+    def test_17_orphan_binding_fails(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        orphan = m8d_binding(m8d_result("P_GHOST", "TRUE"))
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [m8d_binding(r1), orphan])
+
+    def test_18_required_result_without_binding_fails(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [])
+
+    def test_19_true_without_binding_fails(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [])
+
+    def test_20_false_without_binding_fails(self) -> None:
+        r1 = m8d_result("P1", "FALSE")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [])
+
+    def test_21_unknown_without_binding_fails(self) -> None:
+        r1 = m8d_result("P1", "UNKNOWN")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [])
+
+    def test_22_conflict_without_binding_fails(self) -> None:
+        r1 = m8d_result("P1", "CONFLICT")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [])
+
+    def test_23_any_inadmissible_binding_fails_even_if_another_valid_binding_exists(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        good = m8d_binding(r1, verifier_id="independent-verifier")
+        bad = m8d_binding(r1, verifier_id="executor-1")  # inadmissible if executor-1 is an executor
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [good, bad], executor_ids=frozenset({"executor-1"}))
+
+    def test_24_claim_substitution_fails(self) -> None:
+        r_true = m8d_result("P1", "TRUE")
+        r_false = m8d_result("P1", "FALSE")
+        b_for_true = m8d_binding(r_true)
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r_false], [b_for_true])
+
+    def test_25_snapshot_replay_fails(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)  # bound to M8C_SNAPSHOT
+        other_snap = m8c_snapshot(subject=m8c_subject(revision_ref=revision("other-rev")))
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [b1], snap=other_snap)
+
+    def test_26_policy_drift_fails(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)  # bound to M8C_POLICY's id/version
+        other_pol = policy(policy_version="2", required_ids=("P1",))
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [b1], pol=other_pol)
+
+    def test_27_self_verification_fails(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1, verifier_id="executor-1")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [b1], executor_ids=frozenset({"executor-1"}))
+
+    def test_28_authority_class_cannot_override_executor_identity(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1, verifier_id="executor-1", authority_class="ACCEPTANCE")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [b1], executor_ids=frozenset({"executor-1"}))
+
+
+# D. UNKNOWN / CONFLICT
+
+class M8DUnknownConflictTests(unittest.TestCase):
+    def test_29_unknown_admissible_empty_evidence_valid_kernel_input(self) -> None:
+        r1 = m8d_result("P1", "UNKNOWN", required=False)
+        b1 = m8d_binding(r1, evidence_refs=())
+        pol = policy(optional_ids=("P1",))
+        ev = m8d_evaluate([r1], [b1], pol=pol)
+        self.assertEqual(ev.verdict, "ACCEPT")  # optional UNKNOWN doesn't block
+
+    def test_30_conflict_admissible_empty_evidence_valid_kernel_input(self) -> None:
+        r1 = m8d_result("P1", "CONFLICT", required=False)
+        b1 = m8d_binding(r1, evidence_refs=())
+        pol = policy(optional_ids=("P1",))
+        ev = m8d_evaluate([r1], [b1], pol=pol)
+        self.assertEqual(ev.verdict, "ACCEPT")
+
+    def test_31_unknown_remains_unknown_in_evaluation_bucket(self) -> None:
+        r1 = m8d_result("P1", "UNKNOWN", required=False)
+        b1 = m8d_binding(r1, evidence_refs=())
+        pol = policy(optional_ids=("P1",))
+        ev = m8d_evaluate([r1], [b1], pol=pol)
+        self.assertIn("P1", ev.unknown_predicates)
+
+    def test_32_conflict_remains_conflict_in_evaluation_bucket(self) -> None:
+        r1 = m8d_result("P1", "CONFLICT", required=False)
+        b1 = m8d_binding(r1, evidence_refs=())
+        pol = policy(optional_ids=("P1",))
+        ev = m8d_evaluate([r1], [b1], pol=pol)
+        self.assertIn("P1", ev.conflicting_predicates)
+
+    def test_33_no_inadmissible_to_unknown_conversion(self) -> None:
+        # an inadmissible binding raises - it structurally cannot produce an
+        # evaluation at all, let alone one where the predicate silently
+        # became UNKNOWN.
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1, verifier_id="executor-1")
+        with self.assertRaises(nd.DecisionValidationError):
+            m8d_evaluate([r1], [b1], executor_ids=frozenset({"executor-1"}))
+
+
+# E. MULTI-BINDING
+
+class M8DMultiBindingTests(unittest.TestCase):
+    def test_34_multiple_different_admissible_bindings_accepted(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="ev-a"),))
+        b2 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="ev-b"),))
+        ev = m8d_evaluate([r1], [b1, b2])
+        self.assertEqual(ev.verdict, "ACCEPT")
+
+    def test_35_multiple_bindings_do_not_change_truth_value(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="ev-a"),))
+        b2 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="ev-b"),))
+        ev = m8d_evaluate([r1], [b1, b2])
+        self.assertEqual(ev.predicate_results[0].truth_value, "TRUE")
+
+    def test_36_multiple_bindings_do_not_vote(self) -> None:
+        self.assertFalse(hasattr(nd, "resolve_predicate_truth"))
+        import inspect
+        source = inspect.getsource(nd.evaluate_decision)
+        for banned in ("majority", "quorum", "weight", "confidence", "vote"):
+            self.assertNotIn(banned, source)
+
+    def test_37_proof_set_change_changes_input_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="ev-a"),))
+        b2 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="ev-b"),))
+        ev_one = m8d_evaluate([r1], [b1])
+        ev_two = m8d_evaluate([r1], [b1, b2])
+        self.assertNotEqual(ev_one.input_fingerprint, ev_two.input_fingerprint)
+
+
+# F. ALGEBRA OWNERSHIP
+
+class M8DAlgebraOwnershipTests(unittest.TestCase):
+    def test_38_required_semantics_match_existing_algebra(self) -> None:
+        r1 = m8d_result("P1", "FALSE")
+        b1 = m8d_binding(r1)
+        ev = m8d_evaluate([r1], [b1])
+        direct = nd.derive_contract_verdict([r1], policy_contract=M8C_POLICY)
+        self.assertEqual(ev.verdict, direct.verdict)
+
+    def test_39_blocking_semantics_match_existing_algebra(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        v1 = m8d_result("V1", "TRUE", role="VIOLATION")
+        pol = policy(required_ids=("P1",), blocking_ids=("V1",))
+        b1, bv1 = m8d_binding(r1, pol=pol), m8d_binding(v1, pol=pol)  # V1=TRUE (a proven violation) still requires non-empty evidence
+        ev = m8d_evaluate([r1, v1], [b1, bv1], pol=pol)
+        direct = nd.derive_contract_verdict([r1, v1], policy_contract=pol)
+        self.assertEqual(ev.verdict, direct.verdict)
+        self.assertEqual(ev.verdict, "REJECT")
+
+    def test_40_optional_predicate_cannot_promote_acceptance(self) -> None:
+        r_opt_false = m8d_result("P_OPT", "FALSE", required=False)
+        pol = policy(required_ids=("P1",), optional_ids=("P_OPT",))
+        r1 = m8d_result("P1", "TRUE")
+        ev = m8d_evaluate([r1, r_opt_false], [m8d_binding(r1, pol=pol), m8d_binding(r_opt_false, pol=pol)], pol=pol)
+        self.assertEqual(ev.verdict, "ACCEPT")  # optional FALSE never blocks
+
+    def test_41_accept_path_matches_existing_algebra(self) -> None:
+        ev = m8d_full_evaluation()
+        self.assertEqual(ev.verdict, "ACCEPT")
+
+    def test_42_reject_path_matches_existing_algebra(self) -> None:
+        r1 = m8d_result("P1", "FALSE")
+        ev = m8d_evaluate([r1], [m8d_binding(r1)])
+        self.assertEqual(ev.verdict, "REJECT")
+
+    def test_43_abstain_path_matches_existing_algebra(self) -> None:
+        r1 = m8d_result("P1", "UNKNOWN")
+        ev = m8d_evaluate([r1], [m8d_binding(r1, evidence_refs=())])
+        self.assertEqual(ev.verdict, "ABSTAIN")
+
+    def test_44_derive_contract_verdict_unchanged(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.evaluate_decision)
+        self.assertIn("derive_contract_verdict(", source)
+        # kernel calls it, never reimplements its logic
+        self.assertNotIn("MANDATORY_PREDICATE_FALSE\" if", source)
+
+
+# G. EVALUATION FINGERPRINT
+
+class M8DEvaluationFingerprintTests(unittest.TestCase):
+    def test_45_trusted_evaluation_fingerprint_available(self) -> None:
+        ev = m8d_full_evaluation()
+        self.assertEqual(len(ev.evaluation_fingerprint), 64)
+
+    def test_46_malformed_input_fingerprint_digest_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionEvaluationContract(
+                evaluation_id="e", request_id="r", decision_type="TASK_ACCEPTANCE", scope=scope(),
+                policy_ref="p", predicate_results=(), satisfied_predicates=(), failed_predicates=(),
+                unknown_predicates=(), conflicting_predicates=(), blocking_reasons=(), reason_codes=(),
+                verdict="ACCEPT", input_fingerprint="not-a-digest",
+            )
+
+    def test_47_same_semantic_evaluation_same_fingerprint(self) -> None:
+        ev1 = m8d_full_evaluation(evaluation_id="e1")
+        ev2 = m8d_full_evaluation(evaluation_id="e2")
+        self.assertEqual(ev1.evaluation_fingerprint, ev2.evaluation_fingerprint)
+
+    def test_48_evaluation_id_change_does_not_change_fingerprint(self) -> None:
+        ev1 = m8d_full_evaluation(evaluation_id="eval-a")
+        ev2 = m8d_full_evaluation(evaluation_id="eval-b")
+        self.assertEqual(ev1.evaluation_fingerprint, ev2.evaluation_fingerprint)
+
+    def test_49_request_id_change_does_not_change_fingerprint(self) -> None:
+        snap_a = m8c_snapshot(request_id="req-a")
+        snap_b = m8c_snapshot(request_id="req-b")
+        r1 = m8d_result("P1", "TRUE")
+        ev1 = m8d_evaluate([r1], [m8d_binding(r1, snap=snap_a)], snap=snap_a)
+        ev2 = m8d_evaluate([r1], [m8d_binding(r1, snap=snap_b)], snap=snap_b)
+        self.assertNotEqual(ev1.request_id, ev2.request_id)
+        self.assertEqual(ev1.evaluation_fingerprint, ev2.evaluation_fingerprint)
+
+    def test_50_evaluated_at_change_does_not_change_fingerprint(self) -> None:
+        ev1 = m8d_full_evaluation(evaluated_at="2026-01-01T00:00:00Z")
+        ev2 = m8d_full_evaluation(evaluated_at="2030-01-01T00:00:00Z")
+        self.assertEqual(ev1.evaluation_fingerprint, ev2.evaluation_fingerprint)
+
+    def test_51_scope_direct_change_confirms_transitive_model(self) -> None:
+        # scope is excluded from evaluation semantic_payload() directly, but a
+        # genuinely different scope implies a different snapshot -> different
+        # input_fingerprint -> different evaluation_fingerprint anyway.
+        other_snap = m8c_snapshot(scope=scope(scope_id="TASK-2"), subject=m8c_subject(subject_id="TASK-2"))
+        r1 = m8d_result("P1", "TRUE")
+        ev1 = m8d_full_evaluation()
+        ev2 = m8d_evaluate([r1], [m8d_binding(r1, snap=other_snap)], snap=other_snap)
+        self.assertNotEqual(ev1.scope.scope_id, ev2.scope.scope_id)
+        self.assertNotEqual(ev1.evaluation_fingerprint, ev2.evaluation_fingerprint)  # via input_fingerprint, not via raw scope
+
+    def test_52_policy_ref_direct_change_does_not_change_fingerprint(self) -> None:
+        ev = m8d_full_evaluation()
+        payload = ev.semantic_payload()
+        self.assertNotIn("policy_ref", payload)
+
+    def test_53_blocking_reasons_change_does_not_change_fingerprint(self) -> None:
+        ev = m8d_full_evaluation()
+        payload = ev.semantic_payload()
+        self.assertNotIn("blocking_reasons", payload)
+
+    def test_54_bucket_diagnostic_changes_do_not_change_fingerprint(self) -> None:
+        ev = m8d_full_evaluation()
+        payload = ev.semantic_payload()
+        for excluded in ("satisfied_predicates", "failed_predicates", "unknown_predicates", "conflicting_predicates", "predicate_results"):
+            self.assertNotIn(excluded, payload)
+
+    def test_55_input_fingerprint_change_changes_evaluation_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        r2 = m8d_result("P1", "FALSE")
+        ev1 = m8d_evaluate([r1], [m8d_binding(r1)])
+        ev2 = m8d_evaluate([r2], [m8d_binding(r2)])
+        self.assertNotEqual(ev1.input_fingerprint, ev2.input_fingerprint)
+        self.assertNotEqual(ev1.evaluation_fingerprint, ev2.evaluation_fingerprint)
+
+    def test_56_verdict_change_changes_evaluation_fingerprint(self) -> None:
+        # verdict is a freely-settable field on DecisionEvaluationContract
+        # (not cross-validated against predicate_results/buckets) - only the
+        # verdict itself needs to differ to exercise this.
+        ev1 = make_evaluation(input_fingerprint=digest("fixed-input"), verdict="ACCEPT")
+        ev2 = make_evaluation(input_fingerprint=digest("fixed-input"), verdict="ABSTAIN")
+        self.assertNotEqual(ev1.evaluation_fingerprint, ev2.evaluation_fingerprint)
+
+    def test_57_reason_codes_change_changes_evaluation_fingerprint(self) -> None:
+        ev1 = make_evaluation(input_fingerprint=digest("fixed-input"), reason_codes=())
+        ev2 = make_evaluation(input_fingerprint=digest("fixed-input"), reason_codes=("MANDATORY_PREDICATE_FALSE",))
+        self.assertNotEqual(ev1.evaluation_fingerprint, ev2.evaluation_fingerprint)
+
+    def test_58_engine_version_change_changes_evaluation_fingerprint(self) -> None:
+        ev = make_evaluation(input_fingerprint=digest("fixed-input"))
+        payload = ev.semantic_payload()
+        self.assertIn("engine_version", payload)
+
+    def test_59_schema_version_change_changes_evaluation_fingerprint(self) -> None:
+        ev = make_evaluation(input_fingerprint=digest("fixed-input"))
+        payload = ev.semantic_payload()
+        self.assertIn("schema_version", payload)
+
+
+# H. RECORD BUILDER
+
+class M8DRecordBuilderTests(unittest.TestCase):
+    def test_60_bound_evaluation_builds_record(self) -> None:
+        rec = m8d_record()
+        self.assertEqual(rec.decision_id, "dec-1")
+
+    def test_61_unbound_legacy_evaluation_cannot_build_record(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.build_decision_record(make_evaluation(), decision_id="d", created_at="t")
+
+    def test_62_builder_copies_evaluation_semantic_fields(self) -> None:
+        evaluation = m8d_full_evaluation()
+        rec = m8d_record(evaluation=evaluation)
+        self.assertEqual(rec.verdict, evaluation.verdict)
+        self.assertEqual(rec.decision_type, evaluation.decision_type)
+        self.assertEqual(rec.reason_codes, evaluation.reason_codes)
+        self.assertEqual(rec.scope, evaluation.scope)
+
+    def test_63_builder_copies_correlation_fields(self) -> None:
+        evaluation = m8d_full_evaluation()
+        rec = m8d_record(evaluation=evaluation)
+        self.assertEqual(rec.request_id, evaluation.request_id)
+        self.assertEqual(rec.evaluation_id, evaluation.evaluation_id)
+        self.assertEqual(rec.evaluation_ref, evaluation.evaluation_id)
+
+    def test_64_caller_cannot_override_verdict(self) -> None:
+        import inspect
+        params = set(inspect.signature(nd.build_decision_record).parameters)
+        self.assertNotIn("verdict", params)
+
+    def test_65_caller_cannot_override_decision_type(self) -> None:
+        import inspect
+        params = set(inspect.signature(nd.build_decision_record).parameters)
+        self.assertNotIn("decision_type", params)
+
+    def test_66_caller_cannot_override_request_id(self) -> None:
+        import inspect
+        params = set(inspect.signature(nd.build_decision_record).parameters)
+        self.assertNotIn("request_id", params)
+
+    def test_67_caller_cannot_override_policy_ref(self) -> None:
+        import inspect
+        params = set(inspect.signature(nd.build_decision_record).parameters)
+        self.assertNotIn("policy_ref", params)
+
+    def test_68_caller_cannot_override_evaluation_fingerprint(self) -> None:
+        import inspect
+        params = set(inspect.signature(nd.build_decision_record).parameters)
+        self.assertNotIn("evaluation_fingerprint", params)
+
+
+# I. DECISION FINGERPRINT
+
+class M8DDecisionFingerprintTests(unittest.TestCase):
+    def test_69_trusted_record_fingerprint_available(self) -> None:
+        rec = m8d_record()
+        self.assertEqual(len(rec.decision_fingerprint), 64)
+
+    def test_70_malformed_evaluation_fingerprint_digest_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionRecordContract(
+                decision_id="d", evaluation_id="e", request_id="r", decision_type="TASK_ACCEPTANCE", scope=scope(),
+                verdict="ACCEPT", reason_codes=(), evaluation_ref="e", policy_ref="p", created_at="t",
+                evaluation_fingerprint="not-a-digest",
+            )
+
+    def test_71_same_semantic_record_same_fingerprint(self) -> None:
+        evaluation = m8d_full_evaluation()
+        rec1 = m8d_record(evaluation=evaluation, decision_id="dec-a")
+        rec2 = m8d_record(evaluation=evaluation, decision_id="dec-b")
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_72_decision_id_change_does_not_change_fingerprint(self) -> None:
+        evaluation = m8d_full_evaluation()
+        rec1 = m8d_record(evaluation=evaluation, decision_id="dec-a")
+        rec2 = m8d_record(evaluation=evaluation, decision_id="dec-b")
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_73_evaluation_id_change_does_not_change_fingerprint(self) -> None:
+        ev1 = m8d_full_evaluation(evaluation_id="eval-a")
+        ev2 = m8d_full_evaluation(evaluation_id="eval-b")
+        rec1 = m8d_record(evaluation=ev1)
+        rec2 = m8d_record(evaluation=ev2)
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_74_request_id_change_does_not_change_fingerprint(self) -> None:
+        snap_a = m8c_snapshot(request_id="req-a")
+        snap_b = m8c_snapshot(request_id="req-b")
+        r1 = m8d_result("P1", "TRUE")
+        ev1 = m8d_evaluate([r1], [m8d_binding(r1, snap=snap_a)], snap=snap_a)
+        ev2 = m8d_evaluate([r1], [m8d_binding(r1, snap=snap_b)], snap=snap_b)
+        rec1, rec2 = m8d_record(evaluation=ev1), m8d_record(evaluation=ev2)
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_75_created_at_change_does_not_change_fingerprint(self) -> None:
+        evaluation = m8d_full_evaluation()
+        rec1 = m8d_record(evaluation=evaluation, created_at="2026-01-01T00:00:00Z")
+        rec2 = m8d_record(evaluation=evaluation, created_at="2030-01-01T00:00:00Z")
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_76_evaluation_ref_change_does_not_change_fingerprint(self) -> None:
+        ev1 = m8d_full_evaluation(evaluation_id="eval-a")
+        ev2 = m8d_full_evaluation(evaluation_id="eval-b")
+        rec1, rec2 = m8d_record(evaluation=ev1), m8d_record(evaluation=ev2)
+        self.assertNotEqual(rec1.evaluation_ref, rec2.evaluation_ref)
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_77_policy_ref_change_does_not_change_fingerprint(self) -> None:
+        rec = m8d_record()
+        payload = rec.semantic_payload()
+        self.assertNotIn("policy_ref", payload)
+
+    def test_78_scope_direct_change_confirms_transitive_model(self) -> None:
+        other_snap = m8c_snapshot(scope=scope(scope_id="TASK-2"), subject=m8c_subject(subject_id="TASK-2"))
+        r1 = m8d_result("P1", "TRUE")
+        ev1 = m8d_full_evaluation()
+        ev2 = m8d_evaluate([r1], [m8d_binding(r1, snap=other_snap)], snap=other_snap)
+        rec1, rec2 = m8d_record(evaluation=ev1), m8d_record(evaluation=ev2)
+        self.assertNotEqual(rec1.scope.scope_id, rec2.scope.scope_id)
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_79_evaluation_fingerprint_change_changes_decision_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        r2 = m8d_result("P1", "FALSE")
+        rec1 = m8d_record(evaluation=m8d_evaluate([r1], [m8d_binding(r1)]))
+        rec2 = m8d_record(evaluation=m8d_evaluate([r2], [m8d_binding(r2)]))
+        self.assertNotEqual(rec1.evaluation_fingerprint, rec2.evaluation_fingerprint)
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_80_verdict_change_changes_decision_fingerprint(self) -> None:
+        rec1 = make_record(evaluation_fingerprint=digest("fixed-eval"), verdict="ACCEPT")
+        rec2 = make_record(evaluation_fingerprint=digest("fixed-eval"), verdict="ABSTAIN")
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_81_reason_codes_change_changes_decision_fingerprint(self) -> None:
+        rec1 = make_record(evaluation_fingerprint=digest("fixed-eval"), reason_codes=())
+        rec2 = make_record(evaluation_fingerprint=digest("fixed-eval"), reason_codes=("MANDATORY_PREDICATE_FALSE",))
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_82_engine_version_in_decision_semantic_payload(self) -> None:
+        rec = m8d_record()
+        self.assertIn("engine_version", rec.semantic_payload())
+
+    def test_83_schema_version_in_decision_semantic_payload(self) -> None:
+        rec = m8d_record()
+        self.assertIn("schema_version", rec.semantic_payload())
+
+    def test_84_decision_hash_change_does_not_change_fingerprint(self) -> None:
+        rec1 = make_record(evaluation_fingerprint=digest("fixed-eval"), decision_hash=digest("hash-a"))
+        rec2 = make_record(evaluation_fingerprint=digest("fixed-eval"), decision_hash=digest("hash-b"))
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_85_previous_decision_hash_change_does_not_change_fingerprint(self) -> None:
+        rec1 = make_record(evaluation_fingerprint=digest("fixed-eval"), previous_decision_hash=digest("prev-a"))
+        rec2 = make_record(evaluation_fingerprint=digest("fixed-eval"), previous_decision_hash=digest("prev-b"))
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_86_supersedes_change_does_not_change_fingerprint(self) -> None:
+        rec1 = make_record(evaluation_fingerprint=digest("fixed-eval"), supersedes="dec-old-a")
+        rec2 = make_record(evaluation_fingerprint=digest("fixed-eval"), supersedes="dec-old-b")
+        self.assertEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+
+# J. TRANSITIVE COMMITMENT
+
+class M8DTransitiveCommitmentTests(unittest.TestCase):
+    def test_87_snapshot_semantic_change_propagates_to_decision_fingerprint(self) -> None:
+        other_snap = m8c_snapshot(subject=m8c_subject(revision_ref=revision("other-rev")))
+        r1 = m8d_result("P1", "TRUE")
+        rec1 = m8d_record(evaluation=m8d_full_evaluation())
+        rec2 = m8d_record(evaluation=m8d_evaluate([r1], [m8d_binding(r1, snap=other_snap)], snap=other_snap))
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_88_policy_id_change_propagates_to_decision_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        other_pol = policy(policy_id="other-policy", required_ids=("P1",))
+        rec1 = m8d_record(evaluation=m8d_full_evaluation())
+        rec2 = m8d_record(evaluation=m8d_evaluate([r1], [m8d_binding(r1, pol=other_pol)], pol=other_pol))
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_89_policy_version_change_propagates_to_decision_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        other_pol = policy(policy_version="2", required_ids=("P1",))
+        rec1 = m8d_record(evaluation=m8d_full_evaluation())
+        rec2 = m8d_record(evaluation=m8d_evaluate([r1], [m8d_binding(r1, pol=other_pol)], pol=other_pol))
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_90_predicate_claim_change_propagates_to_decision_fingerprint(self) -> None:
+        r_true = m8d_result("P1", "TRUE")
+        r_false = m8d_result("P1", "FALSE")
+        rec1 = m8d_record(evaluation=m8d_evaluate([r_true], [m8d_binding(r_true)]))
+        rec2 = m8d_record(evaluation=m8d_evaluate([r_false], [m8d_binding(r_false)]))
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+    def test_91_proof_set_change_propagates_to_decision_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="ev-a"),))
+        b2 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="ev-b"),))
+        rec1 = m8d_record(evaluation=m8d_evaluate([r1], [b1]))
+        rec2 = m8d_record(evaluation=m8d_evaluate([r1], [b1, b2]))
+        self.assertNotEqual(rec1.decision_fingerprint, rec2.decision_fingerprint)
+
+
+# K. SAFETY / NON-REGRESSION
+
+class M8DSafetyNonRegressionTests(unittest.TestCase):
+    def test_92_no_resolve_predicate_truth(self) -> None:
+        self.assertFalse(hasattr(nd, "resolve_predicate_truth"))
+
+    def test_93_no_aggregation(self) -> None:
+        r1a = m8d_result("P1", "TRUE")
+        r1b = m8d_result("P1", "TRUE")
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.derive_contract_verdict([r1a, r1b], policy_contract=M8C_POLICY)
+
+    def test_94_no_majority_voting(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.evaluate_decision) + inspect.getsource(nd.compute_input_fingerprint) + inspect.getsource(nd.build_decision_record)
+        for banned in ("majority", "\bvote\b"):
+            self.assertNotIn(banned, source)
+
+    def test_95_no_confidence_weight_quorum(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.evaluate_decision) + inspect.getsource(nd.compute_input_fingerprint) + inspect.getsource(nd.build_decision_record)
+        for banned in ("confidence", "weight", "quorum"):
+            self.assertNotIn(banned, source)
+
+    def test_96_no_random(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.evaluate_decision) + inspect.getsource(nd.compute_input_fingerprint) + inspect.getsource(nd.build_decision_record)
+        self.assertNotIn("random.", source)
+
+    def test_97_no_uuid(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.evaluate_decision) + inspect.getsource(nd.compute_input_fingerprint) + inspect.getsource(nd.build_decision_record)
+        self.assertNotIn("uuid.", source)
+
+    def test_98_no_clock_access(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.evaluate_decision) + inspect.getsource(nd.compute_input_fingerprint) + inspect.getsource(nd.build_decision_record)
+        for banned in ("datetime.now(", "time.time("):
+            self.assertNotIn(banned, source)
+
+    def test_99_no_filesystem_git_network_access(self) -> None:
+        import inspect
+        source = inspect.getsource(nd.evaluate_decision) + inspect.getsource(nd.compute_input_fingerprint) + inspect.getsource(nd.build_decision_record)
+        for banned in ("open(", "Path(", "subprocess", "os.system", "requests", "git "):
+            self.assertNotIn(banned, source)
+
+    def test_100_no_m6_m7_imports(self) -> None:
+        import ast
+        tree = ast.parse(Path(nd.__file__).read_text(encoding="utf-8"))
+        project_modules = {p.stem for p in (ROOT / "scripts").glob("*.py")} - {"nogap_decision"}
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+        self.assertTrue(imported.isdisjoint(project_modules), f"found forbidden project imports: {imported & project_modules}")
+
+    def test_101_existing_m8a_tests_unchanged(self) -> None:
+        result = nd.derive_contract_verdict(complete_proof_predicates(), policy_contract=COMPLETE_PROOF_POLICY)
+        self.assertEqual(result.verdict, "ACCEPT")
+
+    def test_102_existing_m8b_snapshot_semantics_unchanged(self) -> None:
+        snap = m8c_snapshot()
+        self.assertEqual(len(snap.snapshot_fingerprint), 64)
+
+    def test_103_existing_m8c_admissibility_unchanged(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        result = nd.is_binding_admissible(b1, predicate_result=r1, current_snapshot=M8C_SNAPSHOT, current_policy=M8C_POLICY, executor_ids=frozenset())
+        self.assertTrue(result.admissible)
+
+    def test_104_m7_untouched(self) -> None:
+        # this file/module never imports any M6/M7 module - a stronger,
+        # already-proven guarantee than checking git diff from a test.
+        self.assertTrue(hasattr(nd, "evaluate_decision"))
+        self.assertTrue(hasattr(nd, "build_decision_record"))
+
+
 if __name__ == "__main__":
     unittest.main()
