@@ -812,6 +812,8 @@ OWNER_COMPONENTS = {
     "nogap_memory.py",
     "nogap_research.py",
     "nogap_research.py:assess_claim",
+    "nogap_lifecycle.py",
+    "nogap_lifecycle.py:evaluate_release_readiness",
 }
 
 

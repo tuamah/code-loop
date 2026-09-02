@@ -2272,6 +2272,175 @@ def cmd_research(args: argparse.Namespace) -> None:
     _print(record)
 
 
+def cmd_lifecycle(args: argparse.Namespace) -> None:
+    """Thin CLI dispatcher only: every action calls straight into
+    nogap_lifecycle.py's engine API - entity-specific structured fields travel
+    through --fields-json, matching cmd_research's own convention. No trust logic
+    is duplicated here."""
+    import nogap_lifecycle as nlc
+    from nogap_methodology import MethodologyValidationError as _MethodologyValidationError
+
+    project = Path(args.path)
+    fields = json.loads(args.fields_json) if args.fields_json else {}
+    refs = args.ref or []
+
+    def _print(record: Any) -> None:
+        print(json.dumps(record, indent=2, sort_keys=True, default=str))
+
+    try:
+        if args.entity == "candidate":
+            if args.action == "create":
+                record = nlc.create_release_candidate(
+                    project, version=fields.get("version"), candidate_ref=fields.get("candidate_ref"), actor=args.actor,
+                    reason=args.reason, code_revision=fields.get("code_revision"), branch=fields.get("branch"),
+                    included_task_refs=fields.get("included_task_refs", []), included_requirement_refs=fields.get("included_requirement_refs", []),
+                    artifact_refs=fields.get("artifact_refs", []), evidence_refs=fields.get("evidence_refs", []),
+                    verification_refs=fields.get("verification_refs", []), research_refs=fields.get("research_refs", []),
+                    decision_refs=fields.get("decision_refs", []), known_failures=fields.get("known_failures", []),
+                    known_limitations=fields.get("known_limitations", []), known_risks=fields.get("known_risks", []),
+                )
+            elif args.action == "freeze":
+                record = nlc.freeze_release_candidate(project, args.id, actor=args.actor, reason=args.reason)
+            elif args.action == "invalidate":
+                record = nlc.invalidate_release_candidate(project, args.id, actor=args.actor, reason=args.reason)
+            elif args.action == "current":
+                _print(nlc.get_current_release_candidate(project))
+                return
+            elif args.action == "list":
+                _print(nlc.list_release_candidates(project))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown lifecycle candidate action {args.action!r}")
+        elif args.entity == "readiness":
+            if args.action == "evaluate":
+                record = nlc.evaluate_release_readiness(
+                    project, args.candidate_id, actor=args.actor, reason=args.reason,
+                    deployment_plan_ref=fields.get("deployment_plan_ref"), rollback_plan_ref=fields.get("rollback_plan_ref"),
+                    observability_plan_ref=fields.get("observability_plan_ref"), decision_refs=fields.get("decision_refs", []),
+                )
+            elif args.action == "current":
+                _print(nlc.get_current_release_readiness(project, args.candidate_id))
+                return
+            elif args.action == "list":
+                _print(nlc.list_release_readiness(project, release_candidate_id=args.candidate_id))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown lifecycle readiness action {args.action!r}")
+        elif args.entity == "deployment":
+            if args.action == "create":
+                record = nlc.create_deployment(
+                    project, release_candidate_id=args.candidate_id, readiness_id=args.readiness_id,
+                    environment=fields.get("environment"), deployment_target=fields.get("deployment_target"),
+                    actor=args.actor, reason=args.reason, decision_refs=fields.get("decision_refs", []),
+                    execution_refs=refs, artifact_refs=fields.get("artifact_refs", []), evidence_refs=fields.get("evidence_refs", []),
+                )
+            elif args.action == "result":
+                if not args.status:
+                    raise SystemExit("FAIL: lifecycle deployment result requires --status")
+                record = nlc.record_deployment_result(
+                    project, args.id, status=args.status, actor=args.actor, reason=args.reason,
+                    execution_refs=refs, evidence_refs=fields.get("evidence_refs", []),
+                    observed_effect=fields.get("observed_effect"), rollback_ref=fields.get("rollback_ref"),
+                )
+            elif args.action == "list":
+                _print(nlc.list_deployments(project, release_candidate_id=args.candidate_id))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown lifecycle deployment action {args.action!r}")
+        elif args.entity == "observation":
+            if args.action == "record":
+                record = nlc.record_operational_observation(
+                    project, deployment_id=args.deployment_id, signal_type=fields.get("signal_type"),
+                    metric_name=fields.get("metric_name"), metric_value=fields.get("metric_value"), actor=args.actor,
+                    reason=args.reason, unit=fields.get("unit"), window=fields.get("window"), baseline_ref=fields.get("baseline_ref"),
+                    severity=fields.get("severity"), evidence_refs=refs, notes=fields.get("notes"),
+                )
+            elif args.action == "health":
+                _print(nlc.get_operational_status(project, args.deployment_id, health_criteria=fields.get("health_criteria")))
+                return
+            elif args.action == "list":
+                _print(nlc.list_operational_observations(project, deployment_id=args.deployment_id))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown lifecycle observation action {args.action!r}")
+        elif args.entity == "incident":
+            if args.action == "create":
+                record = nlc.create_incident(
+                    project, deployment_id=args.deployment_id, summary=fields.get("summary"), severity=fields.get("severity"),
+                    actor=args.actor, reason=args.reason, observation_refs=fields.get("observation_refs", []), evidence_refs=refs,
+                )
+            elif args.action == "link-failure":
+                if not args.failure_id:
+                    raise SystemExit("FAIL: lifecycle incident link-failure requires --failure-id")
+                record = nlc.link_incident_failure(project, args.id, args.failure_id, actor=args.actor, reason=args.reason)
+            elif args.action == "status":
+                if not args.status:
+                    raise SystemExit("FAIL: lifecycle incident status requires --status")
+                record = nlc.set_incident_status(project, args.id, args.status, actor=args.actor, reason=args.reason)
+            elif args.action == "list":
+                _print(nlc.list_incidents(project, deployment_id=args.deployment_id))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown lifecycle incident action {args.action!r}")
+        elif args.entity == "improvement":
+            if args.action == "create":
+                record = nlc.create_improvement(
+                    project, problem_or_opportunity=fields.get("problem_or_opportunity"), proposed_change=fields.get("proposed_change"),
+                    source_type=fields.get("source_type"), actor=args.actor, reason=args.reason, category=fields.get("category"),
+                    source_refs=fields.get("source_refs", []), expected_value=fields.get("expected_value"), risk=fields.get("risk"),
+                    cost_estimate=fields.get("cost_estimate"), evidence_refs=fields.get("evidence_refs", []),
+                    research_refs=fields.get("research_refs", []), failure_refs=fields.get("failure_refs", []),
+                    operation_refs=fields.get("operation_refs", []),
+                )
+            elif args.action == "select":
+                record = nlc.select_improvement(project, args.id, actor=args.actor, reason=args.reason)
+            elif args.action == "reenter":
+                if not args.target_phase:
+                    raise SystemExit("FAIL: lifecycle improvement reenter requires --target-phase")
+                record = nlc.reenter_for_improvement(
+                    project, args.id, args.target_phase, actor=args.actor, reason=args.reason,
+                    evidence_refs=fields.get("evidence_refs", []), artifact_refs=fields.get("artifact_refs", []),
+                )
+            elif args.action == "status":
+                if not args.status:
+                    raise SystemExit("FAIL: lifecycle improvement status requires --status")
+                record = nlc.set_improvement_status(project, args.id, args.status, actor=args.actor, reason=args.reason)
+            elif args.action == "list":
+                _print(nlc.list_improvements(project))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown lifecycle improvement action {args.action!r}")
+        elif args.entity == "decision":
+            if args.action == "create":
+                if not args.outcome:
+                    raise SystemExit("FAIL: lifecycle decision create requires --outcome")
+                record = nlc.create_lifecycle_decision(
+                    project, outcome=args.outcome, rationale=fields.get("rationale", args.reason), actor=args.actor,
+                    reason=args.reason, authority=args.authority, evidence_refs=fields.get("evidence_refs", []),
+                    decision_refs=fields.get("decision_refs", []), failure_refs=fields.get("failure_refs", []),
+                    research_refs=fields.get("research_refs", []), operation_refs=fields.get("operation_refs", []),
+                    improvement_refs=fields.get("improvement_refs", []), current_project_state=fields.get("current_project_state"),
+                    constraints=fields.get("constraints", []), next_phase=fields.get("next_phase"),
+                )
+            elif args.action == "current":
+                _print(nlc.get_current_lifecycle_decision(project))
+                return
+            elif args.action == "list":
+                _print(nlc.list_lifecycle_decisions(project))
+                return
+            else:
+                raise SystemExit(f"FAIL: unknown lifecycle decision action {args.action!r}")
+        elif args.entity == "query":
+            _print(nlc.query_lifecycle(project, args.kind, args.id))
+            return
+        else:
+            raise SystemExit(f"FAIL: unknown lifecycle entity {args.entity!r}")
+    except _MethodologyValidationError as exc:
+        raise SystemExit(f"FAIL: {exc}") from exc
+
+    _print(record)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
@@ -2487,6 +2656,26 @@ def main() -> None:
     research.add_argument("--kind", help="query: which record kind to list/load (questions|hypotheses|protocols|experiments|observations|claims|assessments)")
     research.add_argument("--fields-json", help="entity-specific structured fields (title/statement/objective/criteria/... depending on entity+action)")
     research.set_defaults(func=cmd_research)
+
+    lifecycle = sub.add_parser("lifecycle")
+    lifecycle.add_argument("entity", choices=["candidate", "readiness", "deployment", "observation", "incident", "improvement", "decision", "query"])
+    lifecycle.add_argument("action", choices=["create", "freeze", "invalidate", "evaluate", "result", "record", "health", "link-failure", "select", "reenter", "status", "current", "list", "query"], nargs="?", default="create")
+    lifecycle.add_argument("path", nargs="?", default=".")
+    lifecycle.add_argument("--actor", default="nogap lifecycle")
+    lifecycle.add_argument("--reason", help="required for most state-changing actions")
+    lifecycle.add_argument("--id", help="target record id for freeze/invalidate/result/link-failure/select/reenter/status/query")
+    lifecycle.add_argument("--candidate-id", help="release_candidate_id, for readiness/deployment/list scoping")
+    lifecycle.add_argument("--readiness-id", help="deployment create: which readiness evaluation to deploy against")
+    lifecycle.add_argument("--deployment-id", help="observation/incident: parent deployment")
+    lifecycle.add_argument("--failure-id", help="incident link-failure: M7-H failure_id to link")
+    lifecycle.add_argument("--status", help="deployment result / incident status / improvement status: target value")
+    lifecycle.add_argument("--target-phase", help="improvement reenter: destination phase")
+    lifecycle.add_argument("--outcome", help="lifecycle decision create: outcome value")
+    lifecycle.add_argument("--authority", default="human", help="lifecycle decision create: authority class")
+    lifecycle.add_argument("--ref", action="append", help="repeatable; execution_refs/evidence_refs depending on entity")
+    lifecycle.add_argument("--kind", help="query: which record kind to list/load")
+    lifecycle.add_argument("--fields-json", help="entity-specific structured fields")
+    lifecycle.set_defaults(func=cmd_lifecycle)
 
     argv = sys.argv[1:]
     worktree_command: list[str] = []
