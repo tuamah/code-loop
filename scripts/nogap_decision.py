@@ -431,8 +431,14 @@ class DecisionPolicyContract:
         object.__setattr__(self, "profile_constraints", _require_str_tuple(self.profile_constraints, "profile_constraints"))
 
         _require(isinstance(self.metadata, dict), "metadata must be a dict")
-        _require_json_compatible(dict(self.metadata), "metadata")
-        object.__setattr__(self, "metadata", dict(self.metadata))
+        _require_json_compatible(self.metadata, "metadata")  # validated on the plain input, before freezing
+        # M8-A-H1 hardening: a shallow dict(...) copy only protects the top
+        # level - nested dict/list values remained the SAME mutable objects
+        # the caller could still reach and mutate (an aliasing attack),
+        # exactly the gap M8-B's DecisionSnapshot.metadata had before its own
+        # hardening fix. Reuses that SAME _deep_freeze() primitive - no
+        # second, competing deep-freeze implementation exists in this module.
+        object.__setattr__(self, "metadata", _deep_freeze(self.metadata))
 
 
 # --- DecisionRequestContract --------------------------------------------------------

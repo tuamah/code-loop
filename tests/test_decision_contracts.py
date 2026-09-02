@@ -17,6 +17,7 @@ import dataclasses
 import itertools
 import json
 import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -403,6 +404,130 @@ class DecisionPolicyContractTests(unittest.TestCase):
     def test_unsupported_schema_version_rejected(self) -> None:
         with self.assertRaises(nd.DecisionValidationError):
             policy(schema_version="99")
+
+
+# --- DecisionPolicyContractDeepImmutabilityTests (M8-A-H1 hardening) ------------------
+
+class DecisionPolicyContractDeepImmutabilityTests(unittest.TestCase):
+    """DecisionPolicyContract.metadata had the identical shallow-copy /
+    caller-aliasing weakness M8-B's DecisionSnapshot.metadata had before its
+    own hardening fix (a plain `dict(self.metadata)` copy protects only the
+    top level, leaving nested dict/list values as the SAME mutable objects
+    the caller could still reach). Fixed by reusing nogap_decision.py's
+    existing `_deep_freeze()` primitive verbatim - there is no second,
+    competing deep-freeze implementation anywhere in the module."""
+
+    # 1. Top-level mutation.
+    def test_1_top_level_metadata_assignment_rejected(self) -> None:
+        p = policy(metadata={"x": 1})
+        with self.assertRaises(TypeError):
+            p.metadata["x"] = 2
+        self.assertEqual(p.metadata["x"], 1)
+
+    # 2. Nested dict mutation.
+    def test_2_nested_metadata_dict_mutation_rejected(self) -> None:
+        p = policy(metadata={"nested": {"x": 1}})
+        with self.assertRaises(TypeError):
+            p.metadata["nested"]["x"] = 2
+        self.assertEqual(p.metadata["nested"]["x"], 1)
+
+    # 3. Nested list mutation.
+    def test_3_nested_metadata_list_append_rejected(self) -> None:
+        p = policy(metadata={"items": [1, 2]})
+        with self.assertRaises(AttributeError):
+            p.metadata["items"].append(3)
+        self.assertEqual(p.metadata["items"], (1, 2))
+
+    # 4. Caller aliasing after construction - exact scenario from the brief.
+    def test_4_caller_aliasing_after_construction_defeated(self) -> None:
+        original = {"a": [1, {"b": 2}]}
+        p = policy(metadata=original)
+        original["a"].append(3)
+        original["a"][1]["b"] = 999
+        self.assertEqual(len(p.metadata["a"]), 2)
+        self.assertEqual(p.metadata["a"][0], 1)
+        self.assertEqual(p.metadata["a"][1]["b"], 2)
+
+    def test_4b_arbitrary_post_construction_mutation_of_original_cannot_modify_policy(self) -> None:
+        original = {"nested": {"x": 1}, "items": [1, 2]}
+        p = policy(metadata=original)
+        original["nested"]["x"] = 999
+        original["items"].append(3)
+        original["new_top_level_key"] = "injected"
+        self.assertEqual(p.metadata["nested"]["x"], 1)
+        self.assertEqual(p.metadata["items"], (1, 2))
+        self.assertNotIn("new_top_level_key", p.metadata)
+
+    # 5. Failed mutation attempts have no effect on policy identity fields.
+    def test_5_failed_mutation_attempts_do_not_affect_policy_identity(self) -> None:
+        p = policy(metadata={"nested": {"x": 1}})
+        with self.assertRaises(TypeError):
+            p.metadata["nested"]["x"] = 2
+        self.assertEqual(p.policy_id, "policy-1")
+        self.assertEqual(p.policy_version, "1")
+        self.assertEqual(p.required_predicate_ids, ())
+
+    # 6. Serialization remains JSON-compatible after freezing.
+    def test_6_frozen_metadata_still_json_serializable_via_canonical_json(self) -> None:
+        p = policy(metadata={"nested": {"x": 1}, "items": [1, 2]})
+        serialized = nd.canonical_json(p)
+        parsed = json.loads(serialized)
+        self.assertIn("metadata", parsed)
+
+    # 7. Deterministic canonicalization still works with frozen mappings.
+    def test_7_canonicalization_deterministic_with_frozen_metadata(self) -> None:
+        p1 = policy(metadata={"nested": {"x": 1}, "items": [1, 2]})
+        p2 = policy(metadata={"nested": {"x": 1}, "items": [1, 2]})
+        self.assertEqual(nd.canonical_json(p1), nd.canonical_json(p2))
+
+    def test_metadata_representation_is_mappingproxy(self) -> None:
+        p = policy(metadata={"x": 1})
+        self.assertIsInstance(p.metadata, types.MappingProxyType)
+
+    def test_nested_metadata_dict_is_mappingproxy(self) -> None:
+        p = policy(metadata={"nested": {"x": 1}})
+        self.assertIsInstance(p.metadata["nested"], types.MappingProxyType)
+
+    def test_nested_metadata_list_is_tuple(self) -> None:
+        p = policy(metadata={"items": [1, 2, 3]})
+        self.assertIsInstance(p.metadata["items"], tuple)
+
+    def test_metadata_not_the_same_object_as_caller_input(self) -> None:
+        original = {"x": 1}
+        p = policy(metadata=original)
+        self.assertIsNot(p.metadata, original)
+
+    def test_metadata_must_still_be_json_compatible_before_freezing(self) -> None:
+        # Validation still happens BEFORE freezing - an un-JSON-serializable
+        # value fails closed exactly as before, not silently accepted because
+        # freezing might otherwise succeed on arbitrary Python objects.
+        with self.assertRaises(nd.DecisionValidationError):
+            policy(metadata={"bad": object()})
+
+    def test_reuses_same_deep_freeze_primitive_as_decision_snapshot(self) -> None:
+        # No second, competing deep-freeze implementation exists - both
+        # DecisionPolicyContract and DecisionSnapshot route metadata through
+        # the exact same module-level _deep_freeze() function.
+        import inspect
+        policy_source = inspect.getsource(nd.DecisionPolicyContract.__post_init__)
+        self.assertIn("_deep_freeze(self.metadata)", policy_source)
+        self.assertTrue(hasattr(nd, "_deep_freeze"))
+        source = inspect.getsource(nd)
+        self.assertEqual(source.count("def _deep_freeze"), 1)  # exactly one implementation in the whole module
+
+    def test_no_effect_on_decision_snapshot_behavior(self) -> None:
+        # Cross-contract consistency check: fixing DecisionPolicyContract does
+        # not alter DecisionSnapshot's own already-hardened metadata behavior.
+        scope_obj = nd.DecisionScope(scope_type="TASK", scope_id="TASK-1", project_id="proj-1")
+        subject_obj = nd.DecisionSubject(subject_type="TASK", subject_id="TASK-1", project_id="proj-1", revision_ref="a" * 40)
+        policy_reference = nd.SnapshotReference(ref_kind="POLICY", ref_id="policy-1", fingerprint="b" * 64)
+        snap = nd.build_decision_snapshot(
+            request_id="r1", decision_type="TASK_ACCEPTANCE", scope=scope_obj, subject=subject_obj,
+            policy_ref=policy_reference, metadata={"nested": {"x": 1}},
+        )
+        with self.assertRaises(TypeError):
+            snap.metadata["nested"]["x"] = 2
+        self.assertEqual(snap.metadata["nested"]["x"], 1)
 
 
 # --- DecisionRequestContractTests ---------------------------------------------------
