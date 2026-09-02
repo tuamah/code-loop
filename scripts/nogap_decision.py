@@ -387,6 +387,39 @@ class DecisionPredicateResult:
         if self.freshness_status == "STALE":
             _require(self.truth_value != "TRUE", "S4 violation: STALE evidence cannot prove a predicate TRUE")
 
+    def semantic_payload(self) -> dict[str, Any]:
+        """M8-C trust-binding hardening: the explicit, audited subset of
+        fields that define WHAT is being claimed - predicate_id (which
+        predicate), role (how truth_value is interpreted: REQUIREMENT vs.
+        VIOLATION), and truth_value (the claim itself). Nothing else.
+
+        required/blocking/scope_ref/freshness_status are deliberately
+        excluded here - NOT because they are non-authoritative, but because
+        each already has its own independent, live enforcement mechanism
+        elsewhere (required/blocking are cross-validated against the
+        policy's own classification inside derive_contract_verdict();
+        scope_ref is checked live via S7 in that same function;
+        freshness_status is constrained at construction time by S4, above).
+        Folding an already-independently-enforced field into this fingerprint
+        too would create a second, potentially-divergent source of truth for
+        the same fact - exactly what this fingerprint exists to avoid, not
+        what it exists to add. reason_codes/details are narrative/non-
+        authoritative (details is explicitly documented as such; reason_codes
+        is never read by derive_contract_verdict(), only ever produced by
+        it). source_refs/authority_refs are provenance (who/what backs this,
+        not what is claimed) - source_refs' deeper semantics remain
+        AMBIGUOUS CURRENT CONTRACT, deliberately not resolved here."""
+        return {"predicate_id": self.predicate_id, "role": self.role, "truth_value": self.truth_value}
+
+    @property
+    def result_fingerprint(self) -> str:
+        """Computed, never caller-supplied - same rationale as
+        DecisionSnapshot.snapshot_fingerprint: a stored/settable fingerprint
+        field would let a caller claim an identity its own content doesn't
+        match. Same predicate_id+role+truth_value -> same result_fingerprint,
+        independent of every other field on this object."""
+        return fingerprint_payload(self.semantic_payload())
+
 
 # --- DecisionPolicyContract --------------------------------------------------------
 
@@ -1056,3 +1089,171 @@ def build_decision_snapshot(
         metadata=dict(metadata or {}),
         snapshot_id=snapshot_id,
     )
+
+
+# ================================================================================
+# M8-C: Predicate Evidence Binding
+# ================================================================================
+
+@dataclasses.dataclass(frozen=True)
+class PredicateEvidenceBinding:
+    """Immutable PROOF/CONTEXT that makes a DecisionPredicateResult claim
+    admissible - deliberately a SEPARATE object from DecisionPredicateResult
+    itself (the CLAIM). Binding this proof to the exact claim it supports is
+    done via `predicate_result_fingerprint`, never a raw `predicate_id`
+    field - there is no such field on this class. A binding whose fingerprint
+    was computed from a TRUE claim cannot be silently reused against a FALSE
+    (or UNKNOWN, or role-differing) claim sharing the same predicate_id: the
+    fingerprint comparison in is_binding_admissible() fails, because
+    result_fingerprint already commits to predicate_id AND role AND
+    truth_value together. Grouping/indexing by predicate_id is explicitly
+    NOT this object's responsibility - a caller that needs to group bindings
+    by predicate must do so via the associated DecisionPredicateResult, not
+    via this binding.
+
+    Capturing a reference here does not prove it valid, fresh, independent,
+    or authoritative - it is a provenance BINDING, never a truth claim
+    (Principle 7, carried over from M8-B). Whether a given binding actually
+    APPLIES to a given claim/snapshot/policy is answered by
+    is_binding_admissible(), not by this class's own construction."""
+
+    predicate_result_fingerprint: str
+    snapshot_fingerprint: str
+    policy_id: str
+    policy_version: str
+    evidence_refs: tuple[SnapshotReference, ...]
+    verifier_id: str
+    authority_class: str | None = None
+    execution_run_id: str | None = None
+    evaluation_id: str | None = None
+    evaluated_at: str | None = None
+
+    def __post_init__(self) -> None:
+        _require_valid_digest(self.predicate_result_fingerprint, "predicate_result_fingerprint")
+        _require_valid_digest(self.snapshot_fingerprint, "snapshot_fingerprint")
+        _require_nonempty_str(self.policy_id, "policy_id")
+        _require_nonempty_str(self.policy_version, "policy_version")
+        _require_nonempty_str(self.verifier_id, "verifier_id")
+
+        object.__setattr__(self, "evidence_refs", _validate_reference_set(self.evidence_refs, "evidence_refs"))
+
+        if self.authority_class is not None:
+            # Structural validation ONLY - membership in AUTHORITY_CLASSES
+            # never grants admissibility by itself (see is_binding_admissible()
+            # check 6, which never reads this field at all).
+            _require(self.authority_class in AUTHORITY_CLASSES, f"unknown authority_class: {self.authority_class!r}")
+        if self.execution_run_id is not None:
+            _require_nonempty_str(self.execution_run_id, "execution_run_id")
+        if self.evaluation_id is not None:
+            _require_nonempty_str(self.evaluation_id, "evaluation_id")
+        if self.evaluated_at is not None:
+            _require_nonempty_str(self.evaluated_at, "evaluated_at")
+
+    def semantic_payload(self) -> dict[str, Any]:
+        """Excludes verifier_id, authority_class, execution_run_id,
+        evaluation_id, evaluated_at - all provenance/correlation, per the
+        same non-semantic reasoning DecisionSnapshot already established for
+        request_id/captured_at/snapshot_id."""
+        return {
+            "predicate_result_fingerprint": self.predicate_result_fingerprint,
+            "snapshot_fingerprint": self.snapshot_fingerprint,
+            "policy_id": self.policy_id,
+            "policy_version": self.policy_version,
+            "evidence_refs": self.evidence_refs,
+        }
+
+    @property
+    def binding_fingerprint(self) -> str:
+        """Computed, never caller-supplied - same rationale as
+        DecisionSnapshot.snapshot_fingerprint and
+        DecisionPredicateResult.result_fingerprint."""
+        return fingerprint_payload(self.semantic_payload())
+
+
+@dataclasses.dataclass(frozen=True)
+class AdmissibilityResult:
+    """The smallest immutable shape sufficient for is_binding_admissible()'s
+    verdict. Deliberately carries no `details`/`metadata` - the reason_code
+    alone, drawn from the existing DECISION_REASON_CODES vocabulary, is
+    sufficient; the caller already holds the binding/predicate_result/
+    snapshot/policy objects needed to reconstruct exactly what mismatched."""
+
+    admissible: bool
+    reason_code: str | None = None
+
+    def __post_init__(self) -> None:
+        _require(isinstance(self.admissible, bool), "admissible must be an explicit bool")
+        if self.admissible:
+            _require(self.reason_code is None, "an admissible result must not carry a reason_code")
+        else:
+            _require(self.reason_code is not None, "an inadmissible result must carry a reason_code")
+            _require(self.reason_code in DECISION_REASON_CODES, f"unknown reason code: {self.reason_code!r}")
+
+
+def is_binding_admissible(
+    binding: PredicateEvidenceBinding,
+    *,
+    predicate_result: DecisionPredicateResult,
+    current_snapshot: DecisionSnapshot,
+    current_policy: DecisionPolicyContract,
+    executor_ids: frozenset[str] = frozenset(),
+) -> AdmissibilityResult:
+    """Pure function. No I/O, no Git, no clock, no project imports, no model
+    call, no mutable state - operates only on already-formed contract objects
+    supplied by the caller, exactly like derive_contract_verdict().
+
+    Checks run in a fixed order; the first failure wins (fail closed, no
+    silent fallback, never a default admissible). A binding that fails here
+    is INADMISSIBLE, not UNKNOWN - those are kept strictly distinct
+    throughout this module: UNKNOWN is a DecisionTruthValue meaning "the
+    predicate could not be established"; INADMISSIBLE means "this proof
+    context does not apply to this evaluation" and is never converted into a
+    predicate truth value by this function or any other code in this module.
+
+    authority_class is NEVER consulted here (see check 6) - class membership
+    never grants a permission this module is responsible for enforcing;
+    verifier independence is checked by identity comparison only, exactly
+    mirroring nogap.py's acceptability()/nogap_verify_binding.py's
+    reviewer_is_independent() precedent."""
+    _require(isinstance(binding, PredicateEvidenceBinding), "binding must be a PredicateEvidenceBinding")
+    _require(isinstance(predicate_result, DecisionPredicateResult), "predicate_result must be a DecisionPredicateResult")
+    _require(isinstance(current_snapshot, DecisionSnapshot), "current_snapshot must be a DecisionSnapshot")
+    _require(isinstance(current_policy, DecisionPolicyContract), "current_policy must be a DecisionPolicyContract")
+
+    # 1. Claim-substitution defense: the binding's committed fingerprint must
+    # match the EXACT claim (predicate_id + role + truth_value together) it
+    # is being checked against - not merely a matching predicate_id.
+    if binding.predicate_result_fingerprint != predicate_result.result_fingerprint:
+        return AdmissibilityResult(False, "INPUT_INVALID")
+
+    # 2. Snapshot replay defense: revision-bound, never snapshot_id-based.
+    if binding.snapshot_fingerprint != current_snapshot.snapshot_fingerprint:
+        return AdmissibilityResult(False, "STALE_REQUIRED_EVIDENCE")
+
+    # 3-4. Policy drift defense: exact (policy_id, policy_version) match,
+    # no compatibility inference, no latest-version fallback.
+    if binding.policy_id != current_policy.policy_id:
+        return AdmissibilityResult(False, "DECISION_POLICY_INVALID")
+    if binding.policy_version != current_policy.policy_version:
+        return AdmissibilityResult(False, "DECISION_POLICY_INVALID")
+
+    # 5. TRUE/FALSE claims require actual admitted evidence; UNKNOWN may
+    # legitimately have none. CONFLICT is never produced here - M8-C does not
+    # aggregate multiple evaluations (see resolve_predicate_truth() - not
+    # implemented; deferred).
+    if predicate_result.truth_value in {"TRUE", "FALSE"} and not binding.evidence_refs:
+        return AdmissibilityResult(False, "MISSING_REQUIRED_EVIDENCE")
+
+    # 6. Execution Authority != Acceptance Authority, identity-based only.
+    # authority_class is deliberately NEVER read in this check - an
+    # authority_class of "ACCEPTANCE" (or any other value) cannot override
+    # self-verification rejection; only the actual verifier_id/executor_ids
+    # identity comparison decides this.
+    is_acceptance_critical = (
+        predicate_result.predicate_id in current_policy.required_predicate_ids
+        or predicate_result.predicate_id in current_policy.blocking_predicate_ids
+    )
+    if is_acceptance_critical and binding.verifier_id in executor_ids:
+        return AdmissibilityResult(False, "INVALID_AUTHORITY")
+
+    return AdmissibilityResult(True, None)
