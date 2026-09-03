@@ -14,8 +14,17 @@ M8-E2 adds pure, in-memory, multi-entry behavior on top of E1's frozen
 single-entry contract: verify_decision_journal() (structural chain
 verification of a caller-presented Sequence[DecisionJournalEntry]) and
 append_decision_entry() (pure construction of the next DecisionJournalEntry
-from a verified history and a trusted DecisionRecordContract). Still no
-checkpoint, no persistence, no replay - those are M8-E3/E4/E5.
+from a verified history and a trusted DecisionRecordContract).
+
+M8-E3 adds an immutable checkpoint contract (DecisionJournalCheckpoint),
+a pure creation helper (create_journal_checkpoint), and a pure verification
+helper (verify_journal_checkpoint) that answers one narrow question: is a
+presented, structurally valid journal CONSISTENT WITH a retained historical
+position, not whether that history is globally unique, tamper-proof, or
+externally anchored. STRUCTURAL JOURNAL VALIDITY (E2) != CHECKPOINT
+CONSISTENCY (E3) != EXTERNAL ANCHORING (out of scope through at least E5).
+Still no persistence, no replay, no signing/witnessing/Merkle structures -
+those remain M8-E4/E5 or later, unstarted.
 
 Dependency direction is one-way: this module imports frozen primitives from
 nogap_decision.py (DecisionValidationError, DecisionRecordContract,
@@ -335,3 +344,271 @@ def append_decision_entry(
         record_ref=record_ref,
         recorded_at=recorded_at,
     )
+
+
+# ================================================================================
+# M8-E3: Checkpoint Contract - Consistency With a Retained Historical Position
+# ================================================================================
+
+# Success/failure status vocabulary for verify_journal_checkpoint(). Distinct
+# from JOURNAL_REASON_CODES (E2's structural-chain vocabulary) - a checkpoint
+# result answers a different question (consistency with a retained position,
+# not internal chain coherence) and must never be flattened into or confused
+# with it. CHECKPOINT_SUCCESS/FAILURE_STATUSES together are the exhaustive,
+# closed outcome space of verify_journal_checkpoint(); nothing outside this
+# set may ever be returned as `status`.
+CHECKPOINT_SUCCESS_STATUSES = frozenset({
+    "AT_CHECKPOINT",
+    "AHEAD_OF_CHECKPOINT",
+})
+
+CHECKPOINT_FAILURE_STATUSES = frozenset({
+    "BEHIND_CHECKPOINT",
+    "CHECKPOINT_MISMATCH",
+    "JOURNAL_INVALID",
+    "JOURNAL_ID_MISMATCH",
+})
+
+# Reason codes for the three CHECKPOINT-LEVEL failure statuses only.
+# JOURNAL_INVALID deliberately has NO code of its own here: its reason_code
+# is instead the underlying JournalVerificationResult.reason_code, drawn from
+# JOURNAL_REASON_CODES and passed through verbatim (see
+# CheckpointVerificationResult.__post_init__) - flattening it into a generic
+# checkpoint reason would destroy exactly the diagnostic precision E2 exists
+# to provide. For the other three statuses, reason_code always equals status
+# (no finer-grained reason exists below "the journal is behind" / "the
+# historical entry doesn't match" / "the checkpoint's own journal_id doesn't
+# match" - each IS its own complete explanation).
+CHECKPOINT_REASON_CODES = frozenset({
+    "BEHIND_CHECKPOINT",
+    "CHECKPOINT_MISMATCH",
+    "JOURNAL_ID_MISMATCH",
+})
+
+
+@dataclasses.dataclass(frozen=True)
+class DecisionJournalCheckpoint:
+    """Immutable commitment to one previously observed journal head.
+
+    Deliberately minimal: journal_id/head_sequence/head_entry_fingerprint/
+    schema_version only. No checkpoint_id/created_at/source_ref/entry_count/
+    path/signature/public_key/metadata - none of those have a strong
+    architectural reason at this milestone (entry_count in particular would
+    be pure redundant derivation of head_sequence + 1, exactly the kind of
+    second, competing representation of the same fact this engine has never
+    permitted at any prior layer). If correlation fields are ever added
+    later, they must be explicitly non-semantic, mirroring
+    DecisionJournalEntry.record_ref/recorded_at's exclusion from identity.
+
+    journal_id/head_sequence/head_entry_fingerprint are the SAME domain
+    separator, position, and content-commitment concepts DecisionJournalEntry
+    already establishes - this checkpoint does not invent a parallel vocabulary,
+    it names one specific, previously-verified entry's position and identity.
+    """
+
+    journal_id: str
+    head_sequence: int
+    head_entry_fingerprint: str
+    schema_version: str = M8_DECISION_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        _require_nonempty_str(self.journal_id, "journal_id")
+
+        # Same bool-vs-int discipline as DecisionJournalEntry.sequence.
+        _require(isinstance(self.head_sequence, int) and not isinstance(self.head_sequence, bool), "head_sequence must be an int, not bool")
+        _require(self.head_sequence >= 0, "head_sequence must be >= 0")
+
+        _require_valid_digest(self.head_entry_fingerprint, "head_entry_fingerprint")
+
+        _require_supported_schema_version(self.schema_version)
+
+    def semantic_payload(self) -> dict[str, Any]:
+        """The explicit, audited subset of fields that define this
+        checkpoint's identity - all four constructor fields; there are no
+        correlation-only fields to exclude in E3."""
+        return {
+            "journal_id": self.journal_id,
+            "head_sequence": self.head_sequence,
+            "head_entry_fingerprint": self.head_entry_fingerprint,
+            "schema_version": self.schema_version,
+        }
+
+    @property
+    def checkpoint_fingerprint(self) -> str:
+        """Computed, never caller-supplied - reuses fingerprint_payload()
+        only, no second hashing implementation. Unlike
+        DecisionEvaluationContract.evaluation_fingerprint/
+        DecisionRecordContract.decision_fingerprint, this needs no
+        fail-closed guard: every constructor field here is required and
+        always validated at construction, so there is no legacy-unbound
+        state possible.
+
+        This is SEMANTIC IDENTITY ONLY. It is NOT a digital signature, NOT
+        an external trust anchor, NOT a guarantee of persistence, and NOT a
+        guarantee that this checkpoint itself has not been replaced. A
+        future layer may sign, witness, or externally anchor this single
+        value without ever needing to redesign the checkpoint body - but no
+        such layer exists yet."""
+        return fingerprint_payload(self.semantic_payload())
+
+
+@dataclasses.dataclass(frozen=True)
+class CheckpointVerificationResult:
+    """The result of verify_journal_checkpoint(). Deliberately NOT a reuse of
+    DecisionTruthValue/DecisionVerdict/ACCEPT/REJECT/ABSTAIN/UNKNOWN/
+    CONFLICT - checkpoint consistency is a structural historical-position
+    question, not decision algebra, and must never be read as one.
+
+    `reason_code`'s required vocabulary depends on `status`: when
+    status == "JOURNAL_INVALID", reason_code is the underlying E2
+    JournalVerificationResult.reason_code (JOURNAL_REASON_CODES) passed
+    through verbatim; for every other checkpoint-level failure status,
+    reason_code is drawn from CHECKPOINT_REASON_CODES (and in practice
+    always equals status - see CHECKPOINT_REASON_CODES's own docstring)."""
+
+    verified: bool
+    status: str
+    reason_code: str | None = None
+
+    def __post_init__(self) -> None:
+        _require(isinstance(self.verified, bool), "verified must be an explicit bool")
+        if self.verified:
+            _require(self.status in CHECKPOINT_SUCCESS_STATUSES, f"unknown success status: {self.status!r}")
+            _require(self.reason_code is None, "a verified result must not carry a reason_code")
+        else:
+            _require(self.status in CHECKPOINT_FAILURE_STATUSES, f"unknown failure status: {self.status!r}")
+            _require(self.reason_code is not None, "an unverified result must carry a reason_code")
+            if self.status == "JOURNAL_INVALID":
+                _require(self.reason_code in JOURNAL_REASON_CODES, f"unknown journal reason code: {self.reason_code!r}")
+            else:
+                _require(self.reason_code in CHECKPOINT_REASON_CODES, f"unknown checkpoint reason code: {self.reason_code!r}")
+
+
+def create_journal_checkpoint(
+    entries: Sequence[DecisionJournalEntry],
+    *,
+    journal_id: str,
+) -> DecisionJournalCheckpoint:
+    """Pure construction of a checkpoint at the current head of a verified
+    journal. No I/O, no filesystem, no Git, no clock, no UUID, no
+    persistence, no sorting, no mutation of `entries`, no repair.
+
+    Trust model mirrors append_decision_entry(): the FULL supplied `entries`
+    is structurally verified first; head_sequence/head_entry_fingerprint are
+    always DERIVED from that verified tail, never caller-supplied - no raw
+    trust-bearing head injection at this boundary either.
+
+    An empty journal is structurally VALID under E2 (verify_decision_journal
+    does not reinterpret that), but a checkpoint represents an actually
+    observed journal head - there is no head to checkpoint in zero entries,
+    so this raises DecisionValidationError for an empty journal even though
+    verification alone would not."""
+    _require_nonempty_str(journal_id, "journal_id")
+
+    verification = verify_decision_journal(entries, journal_id=journal_id)
+    _require(verification.valid, f"cannot create a checkpoint from an invalid journal: {verification.reason_code}")
+    _require(len(entries) > 0, "cannot create a checkpoint from an empty journal - there is no observed head to checkpoint")
+
+    head = entries[-1]
+    return DecisionJournalCheckpoint(
+        journal_id=journal_id,
+        head_sequence=head.sequence,
+        head_entry_fingerprint=head.entry_fingerprint,
+    )
+
+
+def verify_journal_checkpoint(
+    entries: Sequence[DecisionJournalEntry],
+    checkpoint: DecisionJournalCheckpoint,
+    *,
+    journal_id: str | None = None,
+) -> CheckpointVerificationResult:
+    """Pure verification that a presented, structurally valid journal is
+    CONSISTENT WITH a retained historical position - not whether that
+    history is globally unique, tamper-proof, or externally anchored. No
+    I/O, no clock, no UUID, no sorting, no reconstruction, no mutation.
+
+    journal_id pin: `expected_journal_id` is the caller-supplied `journal_id`
+    when given, else `checkpoint.journal_id` itself. Either way,
+    verify_decision_journal() below is ALWAYS called with an explicit,
+    non-None journal_id - this checkpoint is never reconciled against an
+    unpinned, self-derived journal identity, so a fully valid journal from a
+    different domain can never satisfy a checkpoint from journal A merely by
+    being internally self-consistent. checkpoint.journal_id must equal
+    expected_journal_id or this short-circuits with JOURNAL_ID_MISMATCH
+    before entries are examined at all.
+
+    STRUCTURAL JOURNAL VALIDITY != CHECKPOINT CONSISTENCY: an invalid
+    presented journal fails as JOURNAL_INVALID, with the underlying E2
+    JournalVerificationResult.reason_code preserved verbatim (never
+    flattened into a generic checkpoint reason).
+
+    BEHIND_CHECKPOINT means ONLY "the presented journal does not reach the
+    retained checkpointed historical position" - never a claim of rollback,
+    attack, or malicious intent, and never distinguishable here from benign
+    truncation. An empty presented journal is classified BEHIND_CHECKPOINT
+    directly (no current_head_sequence = -1 is ever synthesized as an
+    authoritative fact - there is no head, so this is a consistency
+    classification only, made explicit rather than derived from a fake
+    position).
+
+    Exact-entry match is load-bearing: because a valid, non-empty
+    verify_decision_journal() result already guarantees entries[i].sequence
+    == i for every i, entries[checkpoint.head_sequence] is always a safe,
+    direct index once the journal reaches or passes that position - never a
+    scan. The comparison against checkpoint.head_entry_fingerprint at
+    EXACTLY that position (not merely "current head is past
+    checkpoint.head_sequence") is what makes AHEAD_OF_CHECKPOINT a real
+    consistency guarantee: LONGER JOURNAL != CONSISTENT EXTENSION. This same
+    mechanism is what lets E3 detect a fully self-consistent rewritten
+    chain: E2 alone cannot distinguish an original E0->E1->E2->E3 from a
+    fully rewritten E0'->E1'->E2'->E3'->E4' (both may verify valid=True),
+    but a checkpoint retained from before the rewrite will not match the
+    rewritten entry at its exact retained sequence, producing
+    CHECKPOINT_MISMATCH.
+
+    PERMANENT, EXPLICIT LIMITATIONS - do not weaken these claims:
+    CHECKPOINT CONSISTENCY != EXTERNAL ANCHORING. If both the presented
+    journal AND the retained checkpoint are replaced together inside the
+    same trust domain, this function - a pure function over whatever it is
+    handed, with no independent retention mechanism of its own - cannot
+    detect that. A hidden fork is not detectable either: two branches that
+    each independently extend the same retained checkpoint (e.g.
+    E0->E1->E2A and E0->E1->E2B, checkpointed at E1) will each,
+    verified separately, correctly return AHEAD_OF_CHECKPOINT/verified=True
+    - this function only ever reasons about the single `entries` list it is
+    given, with no cross-branch or cross-call comparison. Fork/gossip/
+    witness comparison remains out of scope. This function also does not
+    prove the underlying DecisionRecord referenced by any entry's
+    decision_fingerprint exists or is semantically valid - identical to
+    verify_decision_journal()'s own boundary, unchanged here."""
+    _require(isinstance(checkpoint, DecisionJournalCheckpoint), "checkpoint must be a DecisionJournalCheckpoint")
+
+    if journal_id is not None:
+        _require_nonempty_str(journal_id, "journal_id")
+
+    expected_journal_id = journal_id if journal_id is not None else checkpoint.journal_id
+
+    if checkpoint.journal_id != expected_journal_id:
+        return CheckpointVerificationResult(verified=False, status="JOURNAL_ID_MISMATCH", reason_code="JOURNAL_ID_MISMATCH")
+
+    journal_result = verify_decision_journal(entries, journal_id=expected_journal_id)
+    if not journal_result.valid:
+        return CheckpointVerificationResult(verified=False, status="JOURNAL_INVALID", reason_code=journal_result.reason_code)
+
+    if len(entries) == 0:
+        return CheckpointVerificationResult(verified=False, status="BEHIND_CHECKPOINT", reason_code="BEHIND_CHECKPOINT")
+
+    current_head_sequence = entries[-1].sequence
+
+    if current_head_sequence < checkpoint.head_sequence:
+        return CheckpointVerificationResult(verified=False, status="BEHIND_CHECKPOINT", reason_code="BEHIND_CHECKPOINT")
+
+    checkpoint_entry = entries[checkpoint.head_sequence]
+    if checkpoint_entry.entry_fingerprint != checkpoint.head_entry_fingerprint:
+        return CheckpointVerificationResult(verified=False, status="CHECKPOINT_MISMATCH", reason_code="CHECKPOINT_MISMATCH")
+
+    if current_head_sequence == checkpoint.head_sequence:
+        return CheckpointVerificationResult(verified=True, status="AT_CHECKPOINT")
+
+    return CheckpointVerificationResult(verified=True, status="AHEAD_OF_CHECKPOINT")
