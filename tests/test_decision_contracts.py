@@ -1256,7 +1256,11 @@ class DecisionAuthoritySeparationTests(unittest.TestCase):
 class DecisionVersioningTests(unittest.TestCase):
     def test_schema_and_engine_version_constants_are_simple_strings(self) -> None:
         self.assertEqual(nd.M8_DECISION_SCHEMA_VERSION, "1")
-        self.assertEqual(nd.M8_DECISION_ENGINE_VERSION, "1")
+        # M8-E4-A bumped engine_version (algorithmic input_fingerprint change:
+        # behavioral_context_fingerprint added to compute_input_fingerprint's
+        # payload) - schema_version is unchanged (no dataclass field-list
+        # change anywhere), exactly the distinction the M8-E4 design froze.
+        self.assertEqual(nd.M8_DECISION_ENGINE_VERSION, "2")
 
     def test_unsupported_schema_version_fails_closed_on_request(self) -> None:
         with self.assertRaises(nd.DecisionValidationError):
@@ -1267,8 +1271,10 @@ class DecisionVersioningTests(unittest.TestCase):
             make_evaluation(schema_version="2")
 
     def test_unsupported_engine_version_fails_closed_on_record(self) -> None:
+        # "2" is now the real, supported M8_DECISION_ENGINE_VERSION (M8-E4-A) -
+        # probe with the next sequential value, still genuinely unsupported.
         with self.assertRaises(nd.DecisionValidationError):
-            make_record(engine_version="2")
+            make_record(engine_version="3")
 
     def test_unsupported_schema_version_fails_closed_on_record(self) -> None:
         with self.assertRaises(nd.DecisionValidationError):
@@ -1827,70 +1833,70 @@ class M8DInputFingerprintTests(unittest.TestCase):
     def test_5_deterministic_same_semantic_input(self) -> None:
         r1 = m8d_result("P1", "TRUE")
         b1 = m8d_binding(r1)
-        fp1 = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
-        fp2 = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
+        fp1 = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset())
+        fp2 = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset())
         self.assertEqual(fp1, fp2)
 
     def test_6_predicate_result_ordering_independent(self) -> None:
         r1, r2 = m8d_result("P1", "TRUE"), m8d_result("P2", "TRUE", required=False)
         pol = policy(required_ids=("P1",), optional_ids=("P2",))
         b1, b2 = m8d_binding(r1, pol=pol), m8d_binding(r2, pol=pol)
-        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b1, b2])
-        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r2, r1], [b1, b2])
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b1, b2], frozenset())
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r2, r1], [b1, b2], frozenset())
         self.assertEqual(fp_a, fp_b)
 
     def test_7_binding_ordering_independent(self) -> None:
         r1, r2 = m8d_result("P1", "TRUE"), m8d_result("P2", "TRUE", required=False)
         pol = policy(required_ids=("P1",), optional_ids=("P2",))
         b1, b2 = m8d_binding(r1, pol=pol), m8d_binding(r2, pol=pol)
-        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b1, b2])
-        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b2, b1])
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b1, b2], frozenset())
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol, [r1, r2], [b2, b1], frozenset())
         self.assertEqual(fp_a, fp_b)
 
     def test_8_snapshot_change_changes_fingerprint(self) -> None:
         r1 = m8d_result("P1", "TRUE")
         b1 = m8d_binding(r1)
         other_snap = m8c_snapshot(subject=m8c_subject(revision_ref=revision("other-rev")))
-        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
-        fp_b = nd.compute_input_fingerprint(other_snap, M8C_POLICY, [r1], [b1])
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset())
+        fp_b = nd.compute_input_fingerprint(other_snap, M8C_POLICY, [r1], [b1], frozenset())
         self.assertNotEqual(fp_a, fp_b)
 
     def test_9_policy_id_change_changes_fingerprint(self) -> None:
         r1 = m8d_result("P1", "TRUE")
         b1 = m8d_binding(r1)
         other_pol = policy(policy_id="other-policy", required_ids=("P1",))
-        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
-        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, other_pol, [r1], [b1])
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset())
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, other_pol, [r1], [b1], frozenset())
         self.assertNotEqual(fp_a, fp_b)
 
     def test_10_policy_version_change_changes_fingerprint(self) -> None:
         r1 = m8d_result("P1", "TRUE")
         b1 = m8d_binding(r1)
         other_pol = policy(policy_version="2", required_ids=("P1",))
-        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
-        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, other_pol, [r1], [b1])
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset())
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, other_pol, [r1], [b1], frozenset())
         self.assertNotEqual(fp_a, fp_b)
 
     def test_11_claim_fingerprint_change_changes_fingerprint(self) -> None:
         r_true = m8d_result("P1", "TRUE")
         r_false = m8d_result("P1", "FALSE")
-        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r_true], [m8d_binding(r_true)])
-        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r_false], [m8d_binding(r_false)])
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r_true], [m8d_binding(r_true)], frozenset())
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r_false], [m8d_binding(r_false)], frozenset())
         self.assertNotEqual(fp_a, fp_b)
 
     def test_12_proof_set_change_changes_fingerprint(self) -> None:
         r1 = m8d_result("P1", "TRUE")
         b1 = m8d_binding(r1)
         b2 = m8d_binding(r1, evidence_refs=(evidence_ref(ref_id="different-ev"),))
-        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])
-        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b2])
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset())
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b2], frozenset())
         self.assertNotEqual(fp_a, fp_b)
 
     def test_13_duplicate_predicate_id_fails(self) -> None:
         r1a = m8d_result("P1", "TRUE")
         r1b = m8d_result("P1", "TRUE")
         with self.assertRaises(nd.DecisionValidationError):
-            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1a, r1b], [])
+            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1a, r1b], [], frozenset())
 
     def test_14_duplicate_result_fingerprint_fails(self) -> None:
         # structurally identical to duplicate predicate_id (same underlying check)
@@ -1898,7 +1904,7 @@ class M8DInputFingerprintTests(unittest.TestCase):
         r1b = m8d_result("P1", "TRUE")
         self.assertEqual(r1a.result_fingerprint, r1b.result_fingerprint)
         with self.assertRaises(nd.DecisionValidationError):
-            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1a, r1b], [])
+            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1a, r1b], [], frozenset())
 
     def test_15_duplicate_binding_fingerprint_fails(self) -> None:
         r1 = m8d_result("P1", "TRUE")
@@ -1906,7 +1912,377 @@ class M8DInputFingerprintTests(unittest.TestCase):
         b2 = m8d_binding(r1)  # identical semantic content -> identical binding_fingerprint
         self.assertEqual(b1.binding_fingerprint, b2.binding_fingerprint)
         with self.assertRaises(nd.DecisionValidationError):
-            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1, b2])
+            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1, b2], frozenset())
+
+
+# B2. M8-E4-A: DECISION BEHAVIORAL CONTEXT ---------------------------------------------
+
+def dbc_binding(binding_fingerprint: str, verifier_id: str) -> nd.PredicateEvidenceBinding:
+    """A binding whose own binding_fingerprint is deterministically driven
+    by binding_fingerprint (via predicate_result_fingerprint), used only to
+    exercise build_decision_behavioral_context() directly against controlled
+    (binding_fingerprint, verifier_id) pairs without needing a full,
+    independently-admissible evaluation around it."""
+    return nd.PredicateEvidenceBinding(
+        predicate_result_fingerprint=binding_fingerprint, snapshot_fingerprint=M8C_SNAPSHOT.snapshot_fingerprint,
+        policy_id=M8C_POLICY.policy_id, policy_version=M8C_POLICY.policy_version,
+        evidence_refs=(evidence_ref(ref_id=f"ev-{binding_fingerprint[:8]}"),), verifier_id=verifier_id,
+    )
+
+
+class DecisionBehavioralContextContractTests(unittest.TestCase):
+    def test_dbc_1_frozen_dataclass(self) -> None:
+        self.assertTrue(nd.DecisionBehavioralContext.__dataclass_params__.frozen)
+
+    def test_dbc_2_valid_construction(self) -> None:
+        ctx = nd.DecisionBehavioralContext(required_predicate_ids=("P1",), blocking_predicate_ids=(), binding_authority=((digest("b1"), "V1"),), executor_ids=("E1",))
+        self.assertEqual(ctx.required_predicate_ids, ("P1",))
+
+    def test_dbc_3_semantic_payload_exact_key_set(self) -> None:
+        ctx = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(), executor_ids=())
+        self.assertEqual(set(ctx.semantic_payload()), {"required_predicate_ids", "blocking_predicate_ids", "binding_authority", "executor_ids"})
+
+    def test_dbc_4_deterministic_fingerprint(self) -> None:
+        ctx_a = nd.DecisionBehavioralContext(required_predicate_ids=("P1",), blocking_predicate_ids=(), binding_authority=((digest("b1"), "V1"),), executor_ids=("E1",))
+        ctx_b = nd.DecisionBehavioralContext(required_predicate_ids=("P1",), blocking_predicate_ids=(), binding_authority=((digest("b1"), "V1"),), executor_ids=("E1",))
+        self.assertEqual(ctx_a.behavioral_context_fingerprint, ctx_b.behavioral_context_fingerprint)
+
+    def test_dbc_5_uses_existing_fingerprint_payload(self) -> None:
+        ctx = nd.DecisionBehavioralContext(required_predicate_ids=("P1",), blocking_predicate_ids=(), binding_authority=(), executor_ids=())
+        self.assertEqual(ctx.behavioral_context_fingerprint, nd.fingerprint_payload(ctx.semantic_payload()))
+
+    def test_dbc_6_empty_context_valid(self) -> None:
+        ctx = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(), executor_ids=())
+        self.assertIsInstance(ctx.behavioral_context_fingerprint, str)
+
+    # order invariance (Section 29)
+
+    def test_dbc_7_required_predicate_ids_order_invariant(self) -> None:
+        a = nd.DecisionBehavioralContext(required_predicate_ids=("P1", "P2"), blocking_predicate_ids=(), binding_authority=(), executor_ids=())
+        b = nd.DecisionBehavioralContext(required_predicate_ids=("P2", "P1"), blocking_predicate_ids=(), binding_authority=(), executor_ids=())
+        self.assertEqual(a.behavioral_context_fingerprint, b.behavioral_context_fingerprint)
+
+    def test_dbc_8_blocking_predicate_ids_order_invariant(self) -> None:
+        a = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=("P1", "P2"), binding_authority=(), executor_ids=())
+        b = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=("P2", "P1"), binding_authority=(), executor_ids=())
+        self.assertEqual(a.behavioral_context_fingerprint, b.behavioral_context_fingerprint)
+
+    def test_dbc_9_executor_ids_order_invariant(self) -> None:
+        a = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(), executor_ids=("E1", "E2"))
+        b = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(), executor_ids=("E2", "E1"))
+        self.assertEqual(a.behavioral_context_fingerprint, b.behavioral_context_fingerprint)
+
+    def test_dbc_10_binding_authority_order_invariant(self) -> None:
+        a = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=((digest("b1"), "V1"), (digest("b2"), "V2")), executor_ids=())
+        b = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=((digest("b2"), "V2"), (digest("b1"), "V1")), executor_ids=())
+        self.assertEqual(a.behavioral_context_fingerprint, b.behavioral_context_fingerprint)
+
+    # required vs blocking kept semantically separate (not merged into one set)
+
+    def test_dbc_11_required_and_blocking_are_not_merged(self) -> None:
+        a = nd.DecisionBehavioralContext(required_predicate_ids=("P1",), blocking_predicate_ids=("P2",), binding_authority=(), executor_ids=())
+        b = nd.DecisionBehavioralContext(required_predicate_ids=("P2",), blocking_predicate_ids=("P1",), binding_authority=(), executor_ids=())
+        self.assertNotEqual(a.behavioral_context_fingerprint, b.behavioral_context_fingerprint)
+
+    # duplicate / malformed (Section 30) - fail closed, never silently repaired
+
+    def test_dbc_12_duplicate_required_predicate_id_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=("P1", "P1"), blocking_predicate_ids=(), binding_authority=(), executor_ids=())
+
+    def test_dbc_13_duplicate_blocking_predicate_id_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=("P1", "P1"), binding_authority=(), executor_ids=())
+
+    def test_dbc_14_duplicate_executor_identity_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(), executor_ids=("E1", "E1"))
+
+    def test_dbc_15_duplicate_binding_association_same_verifier_rejected(self) -> None:
+        bf = digest("b1")
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=((bf, "V1"), (bf, "V1")), executor_ids=())
+
+    def test_dbc_16_same_binding_mapped_to_two_verifiers_rejected(self) -> None:
+        bf = digest("b1")
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=((bf, "V1"), (bf, "V2")), executor_ids=())
+
+    def test_dbc_17_empty_verifier_identity_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=((digest("b1"), ""),), executor_ids=())
+
+    def test_dbc_18_empty_binding_fingerprint_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(("", "V1"),), executor_ids=())
+
+    def test_dbc_19_malformed_binding_fingerprint_shape_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(("not-a-digest", "V1"),), executor_ids=())
+
+    def test_dbc_20_empty_required_predicate_id_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=("",), blocking_predicate_ids=(), binding_authority=(), executor_ids=())
+
+    def test_dbc_21_empty_executor_identity_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(), executor_ids=("",))
+
+    def test_dbc_22_frozen_instance_mutation_rejected(self) -> None:
+        ctx = nd.DecisionBehavioralContext(required_predicate_ids=(), blocking_predicate_ids=(), binding_authority=(), executor_ids=())
+        with self.assertRaises(dataclasses.FrozenInstanceError):
+            ctx.executor_ids = ("E1",)
+
+
+class BuildDecisionBehavioralContextTests(unittest.TestCase):
+    def test_build_1_derives_required_blocking_from_policy(self) -> None:
+        pol = policy(required_ids=("P1",), blocking_ids=("P2",))
+        ctx = nd.build_decision_behavioral_context(pol, [], frozenset())
+        self.assertEqual(ctx.required_predicate_ids, ("P1",))
+        self.assertEqual(ctx.blocking_predicate_ids, ("P2",))
+
+    def test_build_2_derives_binding_authority_from_bindings(self) -> None:
+        b1 = dbc_binding(digest("r1"), "V1")
+        ctx = nd.build_decision_behavioral_context(M8C_POLICY, [b1], frozenset())
+        self.assertEqual(ctx.binding_authority, ((b1.binding_fingerprint, "V1"),))
+
+    def test_build_3_derives_executor_ids_verbatim(self) -> None:
+        ctx = nd.build_decision_behavioral_context(M8C_POLICY, [], frozenset({"E1", "E2"}))
+        self.assertEqual(set(ctx.executor_ids), {"E1", "E2"})
+
+    def test_build_4_empty_executor_set_permitted(self) -> None:
+        # evaluate_decision's own executor_ids default is frozenset() - the
+        # new context must faithfully represent that, not invent a new
+        # "at least one executor" requirement current source never had.
+        ctx = nd.build_decision_behavioral_context(M8C_POLICY, [], frozenset())
+        self.assertEqual(ctx.executor_ids, ())
+
+    def test_build_5_one_pair_per_supplied_binding_no_orphan_possible(self) -> None:
+        b1, b2 = dbc_binding(digest("r1"), "V1"), dbc_binding(digest("r2"), "V2")
+        ctx = nd.build_decision_behavioral_context(M8C_POLICY, [b1, b2], frozenset())
+        self.assertEqual(len(ctx.binding_authority), 2)
+        self.assertEqual(set(ctx.binding_authority), {(b1.binding_fingerprint, "V1"), (b2.binding_fingerprint, "V2")})
+
+
+class DecisionBehavioralContextSubstitutionTests(unittest.TestCase):
+    """Sections 25-28: the core permanent regression proofs that this
+    milestone exists to establish."""
+
+    def test_sub_1_policy_classification_substitution_changes_context_and_input_fingerprint(self) -> None:
+        r_x = m8d_result("X", "FALSE", required=False)
+        r_x_req = m8d_result("X", "FALSE", required=True)
+        pol_optional = policy(optional_ids=("X",))
+        pol_required = policy(required_ids=("X",))
+        ctx_optional = nd.build_decision_behavioral_context(pol_optional, [], frozenset())
+        ctx_required = nd.build_decision_behavioral_context(pol_required, [], frozenset())
+        self.assertNotEqual(ctx_optional.behavioral_context_fingerprint, ctx_required.behavioral_context_fingerprint)
+        fp_optional = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol_optional, [r_x], [], frozenset())
+        fp_required = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol_required, [r_x_req], [], frozenset())
+        self.assertNotEqual(fp_optional, fp_required)
+
+    def test_sub_2_blocking_classification_substitution_changes_context(self) -> None:
+        pol_a = policy(blocking_ids=("X",))
+        pol_b = policy(optional_ids=("X",))
+        ctx_a = nd.build_decision_behavioral_context(pol_a, [], frozenset())
+        ctx_b = nd.build_decision_behavioral_context(pol_b, [], frozenset())
+        self.assertNotEqual(ctx_a.behavioral_context_fingerprint, ctx_b.behavioral_context_fingerprint)
+
+    def test_sub_3_verifier_substitution_leaves_binding_fingerprint_unchanged_but_changes_context(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b_independent = m8d_binding(r1, verifier_id="independent-verifier")
+        b_self = m8d_binding(r1, verifier_id="the-executor")
+        self.assertEqual(b_independent.binding_fingerprint, b_self.binding_fingerprint)
+        ctx_independent = nd.build_decision_behavioral_context(M8C_POLICY, [b_independent], frozenset())
+        ctx_self = nd.build_decision_behavioral_context(M8C_POLICY, [b_self], frozenset())
+        self.assertNotEqual(ctx_independent.behavioral_context_fingerprint, ctx_self.behavioral_context_fingerprint)
+        fp_independent = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b_independent], frozenset())
+        fp_self = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b_self], frozenset())
+        self.assertNotEqual(fp_independent, fp_self)
+
+    def test_sub_4_executor_set_substitution_changes_context_and_input_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        ctx_a = nd.build_decision_behavioral_context(M8C_POLICY, [b1], frozenset({"E1"}))
+        ctx_b = nd.build_decision_behavioral_context(M8C_POLICY, [b1], frozenset({"E2"}))
+        self.assertNotEqual(ctx_a.behavioral_context_fingerprint, ctx_b.behavioral_context_fingerprint)
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset({"E1"}))
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset({"E2"}))
+        self.assertNotEqual(fp_a, fp_b)
+
+    def test_sub_5_binding_verifier_swap_detected_despite_identical_verifier_set(self) -> None:
+        b1 = dbc_binding(digest("r1"), "V1")
+        b2 = dbc_binding(digest("r2"), "V2")
+        b1_swapped = dbc_binding(digest("r1"), "V2")
+        b2_swapped = dbc_binding(digest("r2"), "V1")
+        ctx_original = nd.build_decision_behavioral_context(M8C_POLICY, [b1, b2], frozenset())
+        ctx_swapped = nd.build_decision_behavioral_context(M8C_POLICY, [b1_swapped, b2_swapped], frozenset())
+        # same verifier SET in both cases
+        self.assertEqual(
+            {v for _, v in ctx_original.binding_authority},
+            {v for _, v in ctx_swapped.binding_authority},
+        )
+        self.assertNotEqual(ctx_original.behavioral_context_fingerprint, ctx_swapped.behavioral_context_fingerprint)
+
+
+class DecisionBehavioralContextCorrelationTests(unittest.TestCase):
+    """Section 31: correlation fields must never influence the new context."""
+
+    def test_corr_1_execution_run_id_irrelevant(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b_a = m8d_binding(r1, execution_run_id="run-a")
+        b_b = m8d_binding(r1, execution_run_id="run-b")
+        ctx_a = nd.build_decision_behavioral_context(M8C_POLICY, [b_a], frozenset())
+        ctx_b = nd.build_decision_behavioral_context(M8C_POLICY, [b_b], frozenset())
+        self.assertEqual(ctx_a.behavioral_context_fingerprint, ctx_b.behavioral_context_fingerprint)
+
+    def test_corr_2_evaluation_id_irrelevant(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b_a = m8d_binding(r1, evaluation_id="eval-a")
+        b_b = m8d_binding(r1, evaluation_id="eval-b")
+        ctx_a = nd.build_decision_behavioral_context(M8C_POLICY, [b_a], frozenset())
+        ctx_b = nd.build_decision_behavioral_context(M8C_POLICY, [b_b], frozenset())
+        self.assertEqual(ctx_a.behavioral_context_fingerprint, ctx_b.behavioral_context_fingerprint)
+
+    def test_corr_3_evaluated_at_irrelevant(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b_a = m8d_binding(r1, evaluated_at="2020-01-01T00:00:00Z")
+        b_b = m8d_binding(r1, evaluated_at="2030-01-01T00:00:00Z")
+        ctx_a = nd.build_decision_behavioral_context(M8C_POLICY, [b_a], frozenset())
+        ctx_b = nd.build_decision_behavioral_context(M8C_POLICY, [b_b], frozenset())
+        self.assertEqual(ctx_a.behavioral_context_fingerprint, ctx_b.behavioral_context_fingerprint)
+
+    def test_corr_4_authority_class_irrelevant_under_current_kernel(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b_a = m8d_binding(r1, authority_class="EXECUTION")
+        b_b = m8d_binding(r1, authority_class="ADVISORY")
+        ctx_a = nd.build_decision_behavioral_context(M8C_POLICY, [b_a], frozenset())
+        ctx_b = nd.build_decision_behavioral_context(M8C_POLICY, [b_b], frozenset())
+        self.assertEqual(ctx_a.behavioral_context_fingerprint, ctx_b.behavioral_context_fingerprint)
+
+
+class DecisionBehavioralContextProviderNeutralityTests(unittest.TestCase):
+    """Section 32: arbitrary non-empty authority tokens are treated
+    uniformly - no provider/model has privileged semantics anywhere in this
+    layer. Deliberately generic tokens only (never a real provider/model
+    name) to prove the commitment layer itself is agnostic."""
+
+    def test_neutral_1_arbitrary_tokens_produce_a_valid_context(self) -> None:
+        ctx = nd.build_decision_behavioral_context(M8C_POLICY, [dbc_binding(digest("r1"), "authority-alpha")], frozenset({"authority-beta"}))
+        self.assertIsInstance(ctx.behavioral_context_fingerprint, str)
+
+    def test_neutral_2_two_distinct_arbitrary_tokens_change_context_identically_to_any_other_pair(self) -> None:
+        ctx_1 = nd.build_decision_behavioral_context(M8C_POLICY, [dbc_binding(digest("r1"), "token-one")], frozenset())
+        ctx_2 = nd.build_decision_behavioral_context(M8C_POLICY, [dbc_binding(digest("r1"), "token-two")], frozenset())
+        self.assertNotEqual(ctx_1.behavioral_context_fingerprint, ctx_2.behavioral_context_fingerprint)
+
+
+class InputFingerprintBehavioralContextIntegrationTests(unittest.TestCase):
+    """Sections 19-20, 44-45: behavioral_context_fingerprint enters
+    compute_input_fingerprint exactly once, and the strengthening propagates
+    transitively without any downstream semantic_payload() change."""
+
+    def test_int_1_input_fingerprint_changes_when_only_behavioral_context_changes(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset({"E1"}))
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1], frozenset({"E2"}))
+        self.assertNotEqual(fp_a, fp_b)
+
+    def test_int_2_transitive_propagation_to_evaluation_and_decision_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        ev_a = m8d_evaluate([r1], [b1], executor_ids=frozenset({"E1"}))
+        ev_b = m8d_evaluate([r1], [b1], executor_ids=frozenset({"E2"}))
+        self.assertNotEqual(ev_a.input_fingerprint, ev_b.input_fingerprint)
+        self.assertNotEqual(ev_a.evaluation_fingerprint, ev_b.evaluation_fingerprint)
+        rec_a = nd.build_decision_record(ev_a, decision_id="dec-a", created_at="2026-09-03T00:00:00Z")
+        rec_b = nd.build_decision_record(ev_b, decision_id="dec-b", created_at="2026-09-03T00:00:00Z")
+        self.assertNotEqual(rec_a.decision_fingerprint, rec_b.decision_fingerprint)
+
+    def test_int_3_downstream_semantic_payload_key_sets_unchanged(self) -> None:
+        # M8-E4-A must not touch DecisionEvaluationContract/DecisionRecordContract
+        # field lists - the strengthening propagates purely through the
+        # already-opaque input_fingerprint/evaluation_fingerprint values.
+        ev = m8d_full_evaluation()
+        self.assertEqual(set(ev.semantic_payload()), {"decision_type", "verdict", "reason_codes", "input_fingerprint", "engine_version", "schema_version"})
+        rec = m8d_record()
+        self.assertEqual(set(rec.semantic_payload()), {"decision_type", "verdict", "reason_codes", "evaluation_fingerprint", "engine_version", "schema_version"})
+
+    def test_int_4_old_semantic_gap_regression_policy_classification(self) -> None:
+        # This is the exact scenario the M8-E4 forensic review used to prove
+        # the historical gap: two policy objects sharing policy_id/version
+        # but differing classification, evaluated against results that were
+        # each individually compatible, previously produced an IDENTICAL
+        # input_fingerprint despite genuinely different verdict-relevant
+        # content. It must no longer be possible.
+        r_x = m8d_result("X", "FALSE", required=False)
+        r_x_req = m8d_result("X", "FALSE", required=True)
+        pol_optional = policy(policy_id="pol-1", policy_version="v1", optional_ids=("X",))
+        pol_required = policy(policy_id="pol-1", policy_version="v1", required_ids=("X",))
+        fp_a = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol_optional, [r_x], [], frozenset())
+        fp_b = nd.compute_input_fingerprint(M8C_SNAPSHOT, pol_required, [r_x_req], [], frozenset())
+        self.assertNotEqual(fp_a, fp_b)
+
+    def test_int_5_old_semantic_gap_regression_authority_context(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b_independent = m8d_binding(r1, verifier_id="independent-verifier")
+        b_self = m8d_binding(r1, verifier_id="the-executor")
+        fp_independent = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b_independent], frozenset())
+        fp_self = nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b_self], frozenset())
+        self.assertNotEqual(fp_independent, fp_self)
+
+
+class M8DKernelExistingIdentityNonRegressionTests(unittest.TestCase):
+    """Sections 23-24: the new behavioral context must never be achieved by
+    weakening M8-C's own frozen result_fingerprint/binding_fingerprint
+    identities - it closes the gap ELSEWHERE, never at the claim/evidence
+    layer. These duplicate the intent of the pre-existing
+    test_5/test_6/test_32/test_33 (which this task must not touch) as an
+    explicit M8-E4-A-scoped regression guard."""
+
+    def test_existing_1_required_change_still_does_not_change_result_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE", required=True)
+        b = requirement("P1", "TRUE", required=False)
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_existing_2_blocking_change_still_does_not_change_result_fingerprint(self) -> None:
+        a = requirement("P1", "TRUE", blocking=False)
+        b = requirement("P1", "TRUE", blocking=True)
+        self.assertEqual(a.result_fingerprint, b.result_fingerprint)
+
+    def test_existing_3_verifier_id_change_still_does_not_change_binding_fingerprint(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b_a = m8d_binding(r1, verifier_id="V1")
+        b_b = m8d_binding(r1, verifier_id="V2")
+        self.assertEqual(b_a.binding_fingerprint, b_b.binding_fingerprint)
+
+
+class ComputeInputFingerprintApiTests(unittest.TestCase):
+    """Section 43: executor_ids is a required parameter - no silent default
+    that would let a caller omit behaviorally relevant context."""
+
+    def test_api_1_executor_ids_has_no_default(self) -> None:
+        import inspect
+        params = inspect.signature(nd.compute_input_fingerprint).parameters
+        self.assertEqual(params["executor_ids"].default, inspect.Parameter.empty)
+
+    def test_api_2_missing_executor_ids_raises_type_error(self) -> None:
+        r1 = m8d_result("P1", "TRUE")
+        b1 = m8d_binding(r1)
+        with self.assertRaises(TypeError):
+            nd.compute_input_fingerprint(M8C_SNAPSHOT, M8C_POLICY, [r1], [b1])  # type: ignore[call-arg]
+
+    def test_api_3_evaluate_decision_signature_unchanged(self) -> None:
+        # M8-E4-A must not add a new caller-facing parameter to
+        # evaluate_decision() - executor_ids already existed.
+        import inspect
+        params = list(inspect.signature(nd.evaluate_decision).parameters)
+        self.assertEqual(params, ["current_snapshot", "current_policy", "predicate_results", "predicate_evidence_bindings", "executor_ids", "evaluation_id", "evaluated_at"])
+
+    def test_api_4_build_decision_record_signature_unchanged(self) -> None:
+        import inspect
+        params = list(inspect.signature(nd.build_decision_record).parameters)
+        self.assertEqual(params, ["evaluation", "decision_id", "created_at", "supersedes"])
 
 
 # C. KERNEL STRUCTURAL VALIDATION

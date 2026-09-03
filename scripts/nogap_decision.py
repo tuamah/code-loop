@@ -139,7 +139,7 @@ from typing import Any, Mapping, Sequence
 # --- versioning ---------------------------------------------------------------
 
 M8_DECISION_SCHEMA_VERSION = "1"
-M8_DECISION_ENGINE_VERSION = "1"
+M8_DECISION_ENGINE_VERSION = "2"
 _SUPPORTED_SCHEMA_VERSIONS = {M8_DECISION_SCHEMA_VERSION}
 _SUPPORTED_ENGINE_VERSIONS = {M8_DECISION_ENGINE_VERSION}
 
@@ -1349,21 +1349,165 @@ def is_binding_admissible(
 # M8-D: Deterministic Decision Kernel + Transitive Decision Commitments
 # ================================================================================
 
+# M8-E4-A: Decision Behavioral Context - closes the historical-replay gap the
+# M8-E4 forensic review proved: input_fingerprint committed policy_id/
+# policy_version (names) but not the policy's actual required/blocking
+# classification content, and committed binding_fingerprint/result_fingerprint
+# without the verifier/executor identities that is_binding_admissible()
+# actually uses for its independence check (check 6). required/blocking on
+# DecisionPredicateResult are deliberately NOT part of this context and
+# remain untouched - proven derivable from policy classification once that
+# classification is itself committed, so committing them a second time here
+# would be a competing representation of the same fact. verifier_id is
+# deliberately NOT added to binding_fingerprint, and required/blocking are
+# deliberately NOT added to result_fingerprint - M8-C's own frozen claim/
+# evidence identities are unchanged; this is a NEW, separate commitment for
+# evaluation-time context those identities never claimed to cover.
+@dataclasses.dataclass(frozen=True)
+class DecisionBehavioralContext:
+    """Immutable commitment to the evaluation-time behavioral context that
+    compute_input_fingerprint() previously left uncommitted: which
+    predicate_ids the policy actually classified required/blocking, which
+    verifier authority vouched for which specific binding (an association,
+    not a bare set - swapping which binding a verifier vouched for must
+    change this commitment even when the verifier SET is unchanged), and
+    which executor authority identities applied to this evaluation.
+
+    BEHAVIORAL CONTEXT COMMITMENT != AUTHORITY AUTHENTICATION. The
+    verifier_id/executor_id strings recorded here are trusted runtime inputs,
+    supplied by the controlling caller/Trust Runtime context for logical
+    independence enforcement (is_binding_admissible() check 6) - they are
+    NOT cryptographically verified, NOT externally authenticated, and must
+    never be treated as an agent's own self-assertion of who it is. This
+    class commits WHAT authority assignment was historically used; it does
+    not, and cannot, prove that assignment was itself correct or genuine.
+
+    optional_predicate_ids/required_authority_classes/profile_constraints/
+    metadata/authority_class/execution_run_id/evaluation_id/evaluated_at are
+    deliberately excluded - each is either never read by
+    derive_contract_verdict()/is_binding_admissible() at all (confirmed by
+    direct trace of both functions), or already correlation-only under the
+    same reasoning established at every prior M8 layer."""
+
+    required_predicate_ids: tuple[str, ...]
+    blocking_predicate_ids: tuple[str, ...]
+    binding_authority: tuple[tuple[str, str], ...]
+    executor_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "required_predicate_ids", _require_str_tuple(self.required_predicate_ids, "required_predicate_ids"))
+        object.__setattr__(self, "blocking_predicate_ids", _require_str_tuple(self.blocking_predicate_ids, "blocking_predicate_ids"))
+        object.__setattr__(self, "executor_ids", _require_str_tuple(self.executor_ids, "executor_ids"))
+
+        _require(isinstance(self.binding_authority, (tuple, list)), "binding_authority must be a tuple/list of (binding_fingerprint, verifier_id) pairs")
+        pairs = tuple(self.binding_authority)
+        seen_binding_fingerprints: set[str] = set()
+        for pair in pairs:
+            _require(isinstance(pair, tuple) and len(pair) == 2, "binding_authority entries must be exactly (binding_fingerprint, verifier_id) pairs")
+            binding_fingerprint, verifier_id = pair
+            _require_valid_digest(binding_fingerprint, "binding_authority binding_fingerprint")
+            _require_nonempty_str(verifier_id, "binding_authority verifier_id")
+            # No silent last-wins/first-wins resolution - a repeated
+            # binding_fingerprint (whether mapped to the same or a different
+            # verifier_id) is fail-closed ambiguity, never deduplicated.
+            _require(binding_fingerprint not in seen_binding_fingerprints, f"binding_authority contains duplicate binding_fingerprint: {binding_fingerprint!r}")
+            seen_binding_fingerprints.add(binding_fingerprint)
+        object.__setattr__(self, "binding_authority", pairs)
+
+    def semantic_payload(self) -> dict[str, Any]:
+        """Exactly the four fields that define this context's identity - no
+        correlation field exists on this class to exclude.
+
+        binding_authority pairs are rendered as {"binding_fingerprint": ...,
+        "verifier_id": ...} dicts here (not the stored raw tuple-of-tuples
+        shape) specifically so _canonicalize()'s EXISTING sorted-list-of-
+        dicts branch (already how every SnapshotReference collection
+        canonicalizes) makes the outer collection's order irrelevant to
+        behavioral_context_fingerprint - a bare tuple-of-tuples has no
+        matching canonicalization branch (_canonicalize only special-cases
+        lists of str or lists of dict) and would otherwise leak presentation
+        order into the fingerprint. The stored field itself stays the
+        lighter, already-fully-immutable tuple-of-tuples shape - only this
+        hashing-time rendering differs, no second canonicalizer is added."""
+        return {
+            "required_predicate_ids": self.required_predicate_ids,
+            "blocking_predicate_ids": self.blocking_predicate_ids,
+            "binding_authority": tuple(
+                {"binding_fingerprint": binding_fingerprint, "verifier_id": verifier_id}
+                for binding_fingerprint, verifier_id in self.binding_authority
+            ),
+            "executor_ids": self.executor_ids,
+        }
+
+    @property
+    def behavioral_context_fingerprint(self) -> str:
+        """Computed, never caller-supplied - reuses fingerprint_payload()
+        only, no second hashing implementation. No fail-closed guard needed:
+        every field here is required and always validated at construction,
+        exactly like DecisionJournalCheckpoint.checkpoint_fingerprint - there
+        is no legacy-unbound state possible on this contract."""
+        return fingerprint_payload(self.semantic_payload())
+
+
+def build_decision_behavioral_context(
+    current_policy: DecisionPolicyContract,
+    predicate_evidence_bindings: Sequence[PredicateEvidenceBinding],
+    executor_ids: frozenset[str],
+) -> DecisionBehavioralContext:
+    """Pure. Derives the behavioral context from the SAME live objects a
+    caller is about to evaluate - never accepts a precomputed, independently
+    caller-supplied context. This is the only sanctioned construction path
+    for live evaluation: HISTORICAL COMMITMENT != RETROACTIVE CONTEXT
+    SUPPLY - a caller must never be able to hash decision inputs A together
+    with a behavioral context describing different inputs B. binding_authority
+    is derived as exactly one (binding_fingerprint, verifier_id) pair per
+    supplied binding, so an orphan or missing association is structurally
+    impossible through this path - every supplied binding maps to exactly
+    one historical verifier_id, no more, no fewer, by construction."""
+    _require(isinstance(current_policy, DecisionPolicyContract), "current_policy must be a DecisionPolicyContract")
+    _require(isinstance(predicate_evidence_bindings, (list, tuple)), "predicate_evidence_bindings must be a list/tuple")
+    bindings = list(predicate_evidence_bindings)
+    for b in bindings:
+        _require(isinstance(b, PredicateEvidenceBinding), "predicate_evidence_bindings entries must be PredicateEvidenceBinding")
+    _require(isinstance(executor_ids, (frozenset, set, tuple, list)), "executor_ids must be a frozenset/set/tuple/list of str")
+
+    return DecisionBehavioralContext(
+        required_predicate_ids=current_policy.required_predicate_ids,
+        blocking_predicate_ids=current_policy.blocking_predicate_ids,
+        binding_authority=tuple((b.binding_fingerprint, b.verifier_id) for b in bindings),
+        executor_ids=tuple(executor_ids),
+    )
+
+
 def compute_input_fingerprint(
     current_snapshot: DecisionSnapshot,
     current_policy: DecisionPolicyContract,
     predicate_results: Sequence[DecisionPredicateResult],
     predicate_evidence_bindings: Sequence[PredicateEvidenceBinding],
+    executor_ids: frozenset[str],
 ) -> str:
     """Pure. The single semantic commitment for the complete validated
     decision input set - snapshot identity, policy identity, every claim,
-    and every proof artifact - reusing fingerprint_payload() only (no second
-    hash implementation). Self-contained duplicate detection (defense in
-    depth: independently testable and safe even if a caller reaches this
-    function without going through evaluate_decision()'s own validation
-    sequence first). Order-independent by construction: canonical_json()
-    already sorts string tuples before hashing, so predicate_result_fingerprints/
-    binding_fingerprints need no manual pre-sort here."""
+    every proof artifact, AND (M8-E4-A) the behavioral context those alone
+    never committed - reusing fingerprint_payload() only (no second hash
+    implementation). Self-contained duplicate detection (defense in depth:
+    independently testable and safe even if a caller reaches this function
+    without going through evaluate_decision()'s own validation sequence
+    first). Order-independent by construction: canonical_json() already
+    sorts string tuples before hashing, so predicate_result_fingerprints/
+    binding_fingerprints need no manual pre-sort here.
+
+    executor_ids is required, not defaulted - a caller must always state the
+    evaluation-time executor authority set explicitly; a convenience default
+    of frozenset() would let a caller silently omit behaviorally relevant
+    context, exactly the gap this function exists to close.
+
+    behavioral_context is ALWAYS derived internally via
+    build_decision_behavioral_context() from current_policy/
+    predicate_evidence_bindings/executor_ids - the same live inputs this
+    function is already fingerprinting - never accepted as a precomputed
+    fingerprint from the caller (see build_decision_behavioral_context()'s
+    own docstring)."""
     _require(isinstance(current_snapshot, DecisionSnapshot), "current_snapshot must be a DecisionSnapshot")
     _require(isinstance(current_policy, DecisionPolicyContract), "current_policy must be a DecisionPolicyContract")
     _require(isinstance(predicate_results, (list, tuple)), "predicate_results must be a list/tuple")
@@ -1383,12 +1527,15 @@ def compute_input_fingerprint(
     binding_fingerprints = [b.binding_fingerprint for b in bindings]
     _require(len(set(binding_fingerprints)) == len(binding_fingerprints), "predicate_evidence_bindings contains duplicate binding_fingerprint")
 
+    behavioral_context = build_decision_behavioral_context(current_policy, bindings, executor_ids)
+
     payload = {
         "snapshot_fingerprint": current_snapshot.snapshot_fingerprint,
         "policy_id": current_policy.policy_id,
         "policy_version": current_policy.policy_version,
         "predicate_result_fingerprints": tuple(result_fingerprints),
         "binding_fingerprints": tuple(binding_fingerprints),
+        "behavioral_context_fingerprint": behavioral_context.behavioral_context_fingerprint,
     }
     return fingerprint_payload(payload)
 
@@ -1476,7 +1623,10 @@ def evaluate_decision(
         _require(r.predicate_id in admitted_predicate_ids, f"predicate_result {r.predicate_id!r} has no admissible PredicateEvidenceBinding (M8-D requires one for every truth value, including UNKNOWN/CONFLICT)")
 
     # I. compute the input fingerprint only after full validation succeeds.
-    input_fingerprint = compute_input_fingerprint(current_snapshot, current_policy, results, bindings)
+    # M8-E4-A: executor_ids is forwarded verbatim - this is the same
+    # parameter evaluate_decision() already receives, not a new caller-facing
+    # input; evaluate_decision()'s own external contract is unchanged.
+    input_fingerprint = compute_input_fingerprint(current_snapshot, current_policy, results, bindings, executor_ids)
 
     # J. the ONLY verdict engine - unmodified, existing signature.
     algebra_result = derive_contract_verdict(results, policy_contract=current_policy)
