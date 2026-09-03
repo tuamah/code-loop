@@ -911,8 +911,15 @@ class SchemaVersionE2RegressionTests(unittest.TestCase):
 # --- 16. Non-scope / safety (item 38 + static safety sweep) ------------------------------
 
 class E2NonScopeSafetyTests(unittest.TestCase):
-    def test_e2_38a_no_checkpoint_symbols(self) -> None:
-        for name in ("JournalCheckpoint", "DecisionJournalCheckpoint", "CheckpointVerificationResult", "verify_checkpoint", "verify_journal_against_checkpoint"):
+    def test_e2_38a_no_unauthorized_checkpoint_symbols(self) -> None:
+        # M8-E3 legitimately adds DecisionJournalCheckpoint and
+        # CheckpointVerificationResult (removed from this ban list below,
+        # not weakened - they now have their own E3 contract tests). Names
+        # that were never authorized by any milestone remain banned: the
+        # unqualified "JournalCheckpoint" (the actual class is
+        # "DecisionJournalCheckpoint") and speculative helper names that
+        # were never adopted.
+        for name in ("JournalCheckpoint", "verify_checkpoint", "verify_journal_against_checkpoint"):
             self.assertFalse(hasattr(ndj, name))
 
     def test_e2_38b_no_replay_symbols(self) -> None:
@@ -923,11 +930,24 @@ class E2NonScopeSafetyTests(unittest.TestCase):
         for name in ("write_journal", "save_journal", "load_journal", "read_journal", "JournalManager", "append_journal_file"):
             self.assertFalse(hasattr(ndj, name))
 
-    def test_e2_38d_no_e3_e4_e5_terms_in_executable_code(self) -> None:
+    def test_e2_38d_no_e4_e5_terms_in_executable_code(self) -> None:
+        # M8-E3 legitimately introduces "checkpoint"/"Checkpoint"/
+        # "CheckpointVerificationResult" as real executable identifiers -
+        # removed from this ban list, not weakened (E3 has its own dedicated
+        # non-scope sweep below asserting no signing/persistence/replay
+        # leaked INTO the checkpoint contract itself). "JournalCheckpoint"
+        # is intentionally NOT substring-banned here: it is a substring of
+        # the legitimately authorized "DecisionJournalCheckpoint" and would
+        # be a false positive - its exact-attribute absence is already
+        # precisely covered by test_e2_38a's hasattr() check.
+        # "verify_journal_against_checkpoint" remains banned - it is not a
+        # substring of the authorized "verify_journal_checkpoint". Everything
+        # genuinely E4/E5 territory (replay, persistence, cryptography,
+        # transparency-log concepts) remains banned exactly as before.
         source = _executable_code_only(ndj)
         for banned in (
-            "JournalCheckpoint", "CheckpointVerificationResult", "verify_journal_against_checkpoint",
-            "checkpoint", "replay", "manifest", "witness", "signing", "Merkle", "blockchain",
+            "verify_journal_against_checkpoint",
+            "replay", "manifest", "witness", "signing", "Merkle", "blockchain",
             "transparency", "JSONL", "sqlite", "fsync",
         ):
             self.assertNotIn(banned, source)
@@ -972,6 +992,493 @@ class E2NonScopeSafetyTests(unittest.TestCase):
             elif isinstance(node, ast.ImportFrom) and node.module:
                 imported.add(node.module)
         self.assertNotIn("nogap_decision_journal", imported)
+
+
+# ================================================================================
+# M8-E3: Checkpoint Contract - Consistency With a Retained Historical Position
+# ================================================================================
+
+def _checkpoint_src() -> str:
+    """The executable-code-only source, sliced to the E3 section onward, so
+    E3-scoped static checks never accidentally pass merely because an E1/E2
+    ban happened to hold - each layer's static safety is its own claim."""
+    source = _executable_code_only(ndj)
+    return source[source.index("CHECKPOINT_SUCCESS_STATUSES"):]
+
+
+# --- CHECKPOINT CONTRACT (items 1-13) --------------------------------------------------
+
+class CheckpointContractTests(unittest.TestCase):
+    def test_e3_1_frozen_dataclass(self) -> None:
+        self.assertTrue(ndj.DecisionJournalCheckpoint.__dataclass_params__.frozen)
+
+    def test_e3_2_valid_construction(self) -> None:
+        cp = ndj.DecisionJournalCheckpoint(journal_id="journal-1", head_sequence=0, head_entry_fingerprint=digest("h0"))
+        self.assertEqual(cp.head_sequence, 0)
+
+    def test_e3_3_empty_journal_id_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.DecisionJournalCheckpoint(journal_id="", head_sequence=0, head_entry_fingerprint=digest("h0"))
+
+    def test_e3_4_bool_head_sequence_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=True, head_entry_fingerprint=digest("h0"))
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=False, head_entry_fingerprint=digest("h0"))
+
+    def test_e3_5_negative_head_sequence_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=-1, head_entry_fingerprint=digest("h0"))
+
+    def test_e3_6_invalid_digest_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=0, head_entry_fingerprint="not-a-digest")
+
+    def test_e3_7_unsupported_schema_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=0, head_entry_fingerprint=digest("h0"), schema_version="totally-bogus-version-xyz")
+
+    def test_e3_8_semantic_payload_exact_key_set(self) -> None:
+        cp = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=2, head_entry_fingerprint=digest("h2"))
+        self.assertEqual(set(cp.semantic_payload()), {"journal_id", "head_sequence", "head_entry_fingerprint", "schema_version"})
+
+    def test_e3_9_checkpoint_fingerprint_stable(self) -> None:
+        a = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=2, head_entry_fingerprint=digest("h2"))
+        b = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=2, head_entry_fingerprint=digest("h2"))
+        self.assertEqual(a.checkpoint_fingerprint, b.checkpoint_fingerprint)
+
+    def test_e3_10_journal_id_change_changes_fingerprint(self) -> None:
+        a = ndj.DecisionJournalCheckpoint(journal_id="j1", head_sequence=2, head_entry_fingerprint=digest("h2"))
+        b = ndj.DecisionJournalCheckpoint(journal_id="j2", head_sequence=2, head_entry_fingerprint=digest("h2"))
+        self.assertNotEqual(a.checkpoint_fingerprint, b.checkpoint_fingerprint)
+
+    def test_e3_11_head_sequence_change_changes_fingerprint(self) -> None:
+        a = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=2, head_entry_fingerprint=digest("h2"))
+        b = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=3, head_entry_fingerprint=digest("h2"))
+        self.assertNotEqual(a.checkpoint_fingerprint, b.checkpoint_fingerprint)
+
+    def test_e3_12_head_fingerprint_change_changes_fingerprint(self) -> None:
+        a = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=2, head_entry_fingerprint=digest("h2a"))
+        b = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=2, head_entry_fingerprint=digest("h2b"))
+        self.assertNotEqual(a.checkpoint_fingerprint, b.checkpoint_fingerprint)
+
+    def test_e3_13_schema_version_participates_in_fingerprint(self) -> None:
+        # Only one schema version is currently supported (mirrors E1's own
+        # test_51) - no fake unsupported version is constructed live; the
+        # payload-level dict mutation alone proves schema_version is
+        # committed by fingerprint_payload().
+        a = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=2, head_entry_fingerprint=digest("h2"))
+        payload_b = dict(a.semantic_payload())
+        payload_b["schema_version"] = "99"
+        self.assertNotEqual(nd.fingerprint_payload(a.semantic_payload()), nd.fingerprint_payload(payload_b))
+
+
+# --- CHECKPOINT CREATION (items 14-22) --------------------------------------------------
+
+class CheckpointCreationTests(unittest.TestCase):
+    def test_e3_14_genesis_journal(self) -> None:
+        c = chain(1)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        self.assertEqual(cp.head_sequence, 0)
+        self.assertEqual(cp.head_entry_fingerprint, c[0].entry_fingerprint)
+
+    def test_e3_15_multi_entry_journal(self) -> None:
+        c = chain(4)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        self.assertEqual(cp.head_sequence, 3)
+        self.assertEqual(cp.head_entry_fingerprint, c[3].entry_fingerprint)
+
+    def test_e3_16_invalid_journal_rejected(self) -> None:
+        c = chain(2)
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.create_journal_checkpoint((c[1], c[0]), journal_id="journal-1")
+
+    def test_e3_17_wrong_journal_id_rejected(self) -> None:
+        c = chain(2, journal_id="B")
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.create_journal_checkpoint(c, journal_id="A")
+
+    def test_e3_18_empty_journal_rejected(self) -> None:
+        # E2's own valid=True for empty journals is unchanged and unweakened
+        # (test_e2_4 still passes) - creation adds ITS OWN additional
+        # rejection on top, because a checkpoint needs an observed head.
+        self.assertTrue(ndj.verify_decision_journal(()).valid)
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.create_journal_checkpoint((), journal_id="journal-1")
+
+    def test_e3_19_caller_cannot_inject_head_sequence(self) -> None:
+        params = inspect.signature(ndj.create_journal_checkpoint).parameters
+        self.assertNotIn("head_sequence", params)
+
+    def test_e3_20_caller_cannot_inject_head_entry_fingerprint(self) -> None:
+        params = inspect.signature(ndj.create_journal_checkpoint).parameters
+        self.assertNotIn("head_entry_fingerprint", params)
+
+    def test_e3_21_no_input_mutation(self) -> None:
+        c = list(chain(3))
+        snapshot = list(c)
+        ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        self.assertEqual(c, snapshot)
+
+    def test_e3_22_created_head_exactly_equals_verified_journal_head(self) -> None:
+        c = chain(5)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        self.assertEqual(cp.head_sequence, c[-1].sequence)
+        self.assertEqual(cp.head_entry_fingerprint, c[-1].entry_fingerprint)
+
+
+# --- VERIFICATION RESULT CONTRACT (items 23-26) ------------------------------------------
+
+class CheckpointVerificationResultInvariantTests(unittest.TestCase):
+    def test_e3_23_verified_success_constructs(self) -> None:
+        r = ndj.CheckpointVerificationResult(verified=True, status="AT_CHECKPOINT")
+        self.assertIsNone(r.reason_code)
+
+    def test_e3_23b_verified_with_reason_code_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.CheckpointVerificationResult(verified=True, status="AT_CHECKPOINT", reason_code="BEHIND_CHECKPOINT")
+
+    def test_e3_24_unverified_with_failure_status_and_matching_reason_constructs(self) -> None:
+        r = ndj.CheckpointVerificationResult(verified=False, status="BEHIND_CHECKPOINT", reason_code="BEHIND_CHECKPOINT")
+        self.assertEqual(r.status, "BEHIND_CHECKPOINT")
+
+    def test_e3_24b_unverified_with_success_status_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.CheckpointVerificationResult(verified=False, status="AT_CHECKPOINT", reason_code="BEHIND_CHECKPOINT")
+
+    def test_e3_25_failure_without_reason_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.CheckpointVerificationResult(verified=False, status="BEHIND_CHECKPOINT")
+
+    def test_e3_26_unknown_status_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.CheckpointVerificationResult(verified=True, status="TOTALLY_BOGUS_STATUS")
+
+    def test_e3_26b_journal_invalid_with_checkpoint_reason_rejected(self) -> None:
+        # status=JOURNAL_INVALID must draw reason_code from
+        # JOURNAL_REASON_CODES, not CHECKPOINT_REASON_CODES.
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.CheckpointVerificationResult(verified=False, status="JOURNAL_INVALID", reason_code="CHECKPOINT_MISMATCH")
+
+    def test_e3_26c_journal_invalid_with_journal_reason_accepted(self) -> None:
+        r = ndj.CheckpointVerificationResult(verified=False, status="JOURNAL_INVALID", reason_code="PRESENTATION_ORDER_INVALID")
+        self.assertEqual(r.reason_code, "PRESENTATION_ORDER_INVALID")
+
+    def test_e3_26d_checkpoint_level_status_rejects_journal_reason(self) -> None:
+        # The reverse direction: a checkpoint-level failure status must not
+        # accept a JOURNAL_REASON_CODES value as its reason_code.
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.CheckpointVerificationResult(verified=False, status="CHECKPOINT_MISMATCH", reason_code="PRESENTATION_ORDER_INVALID")
+
+
+# --- CHECKPOINT VERIFY (items 27-42) ------------------------------------------------------
+
+class VerifyJournalCheckpointStatusTests(unittest.TestCase):
+    def test_e3_27_at_checkpoint(self) -> None:
+        c = chain(3)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint(c, cp)
+        self.assertEqual(r, ndj.CheckpointVerificationResult(verified=True, status="AT_CHECKPOINT"))
+
+    def test_e3_28_ahead_of_checkpoint(self) -> None:
+        c = chain(4)
+        cp = ndj.create_journal_checkpoint(c[:2], journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint(c, cp)
+        self.assertEqual(r, ndj.CheckpointVerificationResult(verified=True, status="AHEAD_OF_CHECKPOINT"))
+
+    def test_e3_29_behind_checkpoint(self) -> None:
+        c = chain(4)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint(c[:2], cp)
+        self.assertEqual(r, ndj.CheckpointVerificationResult(verified=False, status="BEHIND_CHECKPOINT", reason_code="BEHIND_CHECKPOINT"))
+
+    def test_e3_30_checkpoint_mismatch(self) -> None:
+        c = chain(3)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        rewritten_2 = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=2, decision_fingerprint=digest("rewritten"), previous_entry_fingerprint=c[1].entry_fingerprint)
+        r = ndj.verify_journal_checkpoint((c[0], c[1], rewritten_2), cp)
+        self.assertEqual(r, ndj.CheckpointVerificationResult(verified=False, status="CHECKPOINT_MISMATCH", reason_code="CHECKPOINT_MISMATCH"))
+
+    def test_e3_31_journal_invalid(self) -> None:
+        c = chain(2)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint((c[1], c[0]), cp)
+        self.assertEqual(r.status, "JOURNAL_INVALID")
+        self.assertFalse(r.verified)
+
+    def test_e3_32_journal_id_mismatch(self) -> None:
+        c = chain(2, journal_id="B")
+        cp = ndj.create_journal_checkpoint(c, journal_id="B")
+        r = ndj.verify_journal_checkpoint(c, cp, journal_id="A")
+        self.assertEqual(r, ndj.CheckpointVerificationResult(verified=False, status="JOURNAL_ID_MISMATCH", reason_code="JOURNAL_ID_MISMATCH"))
+
+    def test_e3_33_empty_presented_journal_behind(self) -> None:
+        c = chain(2)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint((), cp)
+        self.assertEqual(r, ndj.CheckpointVerificationResult(verified=False, status="BEHIND_CHECKPOINT", reason_code="BEHIND_CHECKPOINT"))
+
+    def test_e3_34_order_invalid_pass_through(self) -> None:
+        c = chain(3)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint((c[0], c[2], c[1]), cp)
+        self.assertEqual(r.status, "JOURNAL_INVALID")
+        self.assertEqual(r.reason_code, "PRESENTATION_ORDER_INVALID")
+
+    def test_e3_35_sequence_invalid_pass_through(self) -> None:
+        c = chain(2)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        e_bad = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=3, decision_fingerprint=digest("d3"), previous_entry_fingerprint=c[1].entry_fingerprint)
+        r = ndj.verify_journal_checkpoint(c + (e_bad,), cp)
+        self.assertEqual(r.status, "JOURNAL_INVALID")
+        self.assertEqual(r.reason_code, "SEQUENCE_INVALID")
+
+    def test_e3_36_predecessor_invalid_pass_through(self) -> None:
+        c = chain(3)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        e1_alt = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=1, decision_fingerprint=digest("alt"), previous_entry_fingerprint=c[0].entry_fingerprint)
+        r = ndj.verify_journal_checkpoint((c[0], e1_alt, c[2]), cp)
+        self.assertEqual(r.status, "JOURNAL_INVALID")
+        self.assertEqual(r.reason_code, "PREDECESSOR_MISMATCH")
+
+    def test_e3_37_longer_rewritten_chain_mismatch(self) -> None:
+        # Full-chain-rewrite threat model: original E0->E1->E2->E3,
+        # checkpoint retained at E3. A fully rewritten, internally
+        # self-consistent E0'->E1'->E2'->E3'->E4' (which E2 alone would
+        # accept as valid=True) must be caught here.
+        original = chain(4)
+        cp = ndj.create_journal_checkpoint(original, journal_id="journal-1")
+        rewritten: list[ndj.DecisionJournalEntry] = []
+        for i in range(5):
+            rec = bound_record(decision_id=f"rewritten-{i}", evaluation_fingerprint=digest(f"rewritten-eval-{i}"))
+            rewritten.append(ndj.append_decision_entry(tuple(rewritten), rec, journal_id="journal-1"))
+        self.assertTrue(ndj.verify_decision_journal(tuple(rewritten), journal_id="journal-1").valid)
+        r = ndj.verify_journal_checkpoint(tuple(rewritten), cp)
+        self.assertEqual(r, ndj.CheckpointVerificationResult(verified=False, status="CHECKPOINT_MISMATCH", reason_code="CHECKPOINT_MISMATCH"))
+
+    def test_e3_38_exact_historical_entry_required_not_just_longer(self) -> None:
+        # LONGER JOURNAL != CONSISTENT EXTENSION: a journal that reaches past
+        # checkpoint.head_sequence must still fail if the exact entry at
+        # that position doesn't match - never silently accepted as "ahead".
+        c = chain(3)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        substituted_2 = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=2, decision_fingerprint=digest("substituted"), previous_entry_fingerprint=c[1].entry_fingerprint)
+        e3 = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=3, decision_fingerprint=digest("d3"), previous_entry_fingerprint=substituted_2.entry_fingerprint)
+        r = ndj.verify_journal_checkpoint((c[0], c[1], substituted_2, e3), cp)
+        self.assertEqual(r.status, "CHECKPOINT_MISMATCH")
+        self.assertNotEqual(r.status, "AHEAD_OF_CHECKPOINT")
+
+    def test_e3_39_valid_prefix_behind(self) -> None:
+        full = chain(4)
+        cp = ndj.create_journal_checkpoint(full, journal_id="journal-1")
+        prefix = full[:2]
+        r = ndj.verify_journal_checkpoint(prefix, cp)
+        self.assertEqual(r.status, "BEHIND_CHECKPOINT")
+
+    def test_e3_40_hidden_fork_branch_a_independently_ahead(self) -> None:
+        c = chain(2)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        rec_a = bound_record(decision_id="branch-a", evaluation_fingerprint=digest("branch-a-eval"))
+        branch_a = ndj.append_decision_entry(c, rec_a, journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint(c + (branch_a,), cp)
+        self.assertEqual(r.status, "AHEAD_OF_CHECKPOINT")
+        self.assertTrue(r.verified)
+
+    def test_e3_41_hidden_fork_branch_b_independently_ahead(self) -> None:
+        c = chain(2)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        rec_b = bound_record(decision_id="branch-b", evaluation_fingerprint=digest("branch-b-eval"))
+        branch_b = ndj.append_decision_entry(c, rec_b, journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint(c + (branch_b,), cp)
+        self.assertEqual(r.status, "AHEAD_OF_CHECKPOINT")
+        self.assertTrue(r.verified)
+
+    def test_e3_42_hidden_fork_limitation_explicit(self) -> None:
+        # Both branches independently verified True proves E3 cannot and
+        # does not claim to detect a hidden fork - this test documents the
+        # limitation by construction; it must never be "fixed".
+        c = chain(2)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        rec_a = bound_record(decision_id="branch-a2", evaluation_fingerprint=digest("branch-a2-eval"))
+        branch_a = ndj.append_decision_entry(c, rec_a, journal_id="journal-1")
+        rec_b = bound_record(decision_id="branch-b2", evaluation_fingerprint=digest("branch-b2-eval"))
+        branch_b = ndj.append_decision_entry(c, rec_b, journal_id="journal-1")
+        result_a = ndj.verify_journal_checkpoint(c + (branch_a,), cp)
+        result_b = ndj.verify_journal_checkpoint(c + (branch_b,), cp)
+        self.assertTrue(result_a.verified and result_b.verified)
+        self.assertNotEqual(branch_a.entry_fingerprint, branch_b.entry_fingerprint)
+
+
+# --- IDENTITY / TRUST LIMITS (items 43-49) -------------------------------------------------
+
+class CheckpointIdentityTrustLimitTests(unittest.TestCase):
+    def test_e3_43_same_semantic_state_same_fingerprint(self) -> None:
+        a = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=1, head_entry_fingerprint=digest("h1"))
+        b = ndj.DecisionJournalCheckpoint(journal_id="j", head_sequence=1, head_entry_fingerprint=digest("h1"))
+        self.assertEqual(a.checkpoint_fingerprint, b.checkpoint_fingerprint)
+
+    def test_e3_44_no_timestamp_or_uuid_identity_field(self) -> None:
+        field_names = {f.name for f in dataclasses.fields(ndj.DecisionJournalCheckpoint)}
+        self.assertEqual(field_names, {"journal_id", "head_sequence", "head_entry_fingerprint", "schema_version"})
+
+    def test_e3_45_no_signature_field(self) -> None:
+        field_names = {f.name for f in dataclasses.fields(ndj.DecisionJournalCheckpoint)}
+        self.assertNotIn("signature", field_names)
+        self.assertNotIn("public_key", field_names)
+
+    def test_e3_46_no_persistence_field(self) -> None:
+        field_names = {f.name for f in dataclasses.fields(ndj.DecisionJournalCheckpoint)}
+        for name in ("path", "source_ref", "checkpoint_id", "created_at"):
+            self.assertNotIn(name, field_names)
+
+    def test_e3_47_no_merkle_field(self) -> None:
+        field_names = {f.name for f in dataclasses.fields(ndj.DecisionJournalCheckpoint)}
+        for name in ("merkle_root", "inclusion_proof", "consistency_proof"):
+            self.assertNotIn(name, field_names)
+
+    def test_e3_48_no_replay_behavior(self) -> None:
+        for name in ("replay_decision_journal", "load_decision_record", "reconstruct_evaluation"):
+            self.assertFalse(hasattr(ndj, name))
+
+    def test_e3_49_no_legacy_placeholder_interaction(self) -> None:
+        checkpoint_src = _checkpoint_src()
+        for banned in ("decision_hash", "previous_decision_hash", "supersedes"):
+            self.assertNotIn(banned, checkpoint_src)
+
+
+# --- STATIC SAFETY (items 50-59) ------------------------------------------------------------
+
+class E3StaticSafetyTests(unittest.TestCase):
+    def test_e3_50_no_sorting(self) -> None:
+        checkpoint_src = _checkpoint_src()
+        self.assertNotIn("sorted(", checkpoint_src)
+        self.assertNotIn(".sort(", checkpoint_src)
+
+    def test_e3_51_no_io(self) -> None:
+        checkpoint_src = _checkpoint_src()
+        for banned in ("open(", "Path(", "subprocess", "requests", "os.system", "socket"):
+            self.assertNotIn(banned, checkpoint_src)
+
+    def test_e3_52_no_datetime(self) -> None:
+        checkpoint_src = _checkpoint_src()
+        self.assertNotIn("datetime.now(", checkpoint_src)
+        self.assertNotIn("time.time(", checkpoint_src)
+
+    def test_e3_53_no_uuid(self) -> None:
+        checkpoint_src = _checkpoint_src()
+        self.assertNotIn("uuid.", checkpoint_src)
+
+    def test_e3_54_no_hashlib_second_path(self) -> None:
+        checkpoint_src = _checkpoint_src()
+        self.assertNotIn("hashlib", checkpoint_src)
+        self.assertNotIn("hash(", checkpoint_src)
+
+    def test_e3_55_no_checkpoint_persistence(self) -> None:
+        for name in ("write_checkpoint", "save_checkpoint", "load_checkpoint", "read_checkpoint", "advance_journal_checkpoint", "update_checkpoint", "replace_checkpoint"):
+            self.assertFalse(hasattr(ndj, name))
+
+    def test_e3_56_no_merkle_signature_witness_code(self) -> None:
+        checkpoint_src = _checkpoint_src()
+        for banned in ("Merkle", "signature", "witness", "Ed25519", "public_key", "private_key", "PKI", "Sigstore", "Rekor"):
+            self.assertNotIn(banned, checkpoint_src)
+
+    def test_e3_57_e1_semantic_payload_unchanged(self) -> None:
+        e = genesis_entry()
+        self.assertEqual(set(e.semantic_payload()), {"journal_id", "sequence", "decision_fingerprint", "previous_entry_fingerprint", "schema_version"})
+
+    def test_e3_58_verify_decision_journal_unchanged(self) -> None:
+        self.assertEqual(ndj.JOURNAL_REASON_CODES, frozenset({"JOURNAL_ID_MISMATCH", "SEQUENCE_INVALID", "PRESENTATION_ORDER_INVALID", "PREDECESSOR_MISMATCH"}))
+        self.assertTrue(ndj.verify_decision_journal(()).valid)
+
+    def test_e3_59_append_decision_entry_unchanged(self) -> None:
+        params = inspect.signature(ndj.append_decision_entry).parameters
+        self.assertEqual(list(params), ["history", "decision_record", "journal_id", "record_ref", "recorded_at"])
+
+
+# --- SUPPLEMENTAL (items 60-63) --------------------------------------------------------------
+
+class E3SupplementalTests(unittest.TestCase):
+    def test_e3_60_verify_always_pins_journal_id_into_e2(self) -> None:
+        c = chain(2)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        calls: list[str | None] = []
+        original = ndj.verify_decision_journal
+
+        def spy(entries, *, journal_id=None):
+            calls.append(journal_id)
+            return original(entries, journal_id=journal_id)
+
+        with mock.patch.object(ndj, "verify_decision_journal", spy):
+            ndj.verify_journal_checkpoint(c, cp)
+
+        self.assertEqual(calls, ["journal-1"])
+        self.assertNotIn(None, calls)
+
+    def test_e3_61_checkpoint_level_vs_journal_level_id_mismatch_distinguished(self) -> None:
+        c = chain(2, journal_id="B")
+        cp = ndj.create_journal_checkpoint(c, journal_id="B")
+        checkpoint_level = ndj.verify_journal_checkpoint(c, cp, journal_id="A")
+        self.assertEqual(checkpoint_level.status, "JOURNAL_ID_MISMATCH")
+
+        e0 = genesis_entry(journal_id="X")
+        e1_wrong = ndj.DecisionJournalEntry(journal_id="Y", sequence=1, decision_fingerprint=digest("d1"), previous_entry_fingerprint=e0.entry_fingerprint)
+        cp_x = ndj.DecisionJournalCheckpoint(journal_id="X", head_sequence=0, head_entry_fingerprint=e0.entry_fingerprint)
+        journal_level = ndj.verify_journal_checkpoint((e0, e1_wrong), cp_x)
+        self.assertEqual(journal_level.status, "JOURNAL_INVALID")
+        self.assertEqual(journal_level.reason_code, "JOURNAL_ID_MISMATCH")
+        self.assertNotEqual(checkpoint_level.status, journal_level.status)
+
+    def test_e3_62_exact_head_boundary_no_index_error(self) -> None:
+        c = chain(3)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")  # head_sequence == len(c) - 1
+        r = ndj.verify_journal_checkpoint(c, cp)
+        self.assertEqual(r.status, "AT_CHECKPOINT")
+
+    def test_e3_63_create_then_verify_round_trip_at_checkpoint(self) -> None:
+        c = chain(4)
+        cp = ndj.create_journal_checkpoint(c, journal_id="journal-1")
+        r = ndj.verify_journal_checkpoint(c, cp)
+        self.assertEqual(r, ndj.CheckpointVerificationResult(verified=True, status="AT_CHECKPOINT"))
+
+    def test_e3_64_joint_journal_and_checkpoint_replacement_is_not_detected(self) -> None:
+        # E3 detects rewritten history relative to a retained checkpoint,
+        # but cannot detect coordinated replacement of both the journal and
+        # the checkpoint inside the same trust domain.
+        original = []
+        for i in range(4):
+            rec = bound_record(decision_id=f"original-{i}", evaluation_fingerprint=digest(f"original-eval-{i}"))
+            original.append(ndj.append_decision_entry(tuple(original), rec, journal_id="journal-1"))
+        original = tuple(original)
+        original_checkpoint = ndj.create_journal_checkpoint(original, journal_id="journal-1")
+        self.assertEqual(
+            ndj.verify_journal_checkpoint(original, original_checkpoint),
+            ndj.CheckpointVerificationResult(verified=True, status="AT_CHECKPOINT"),
+        )
+
+        replacement = []
+        for i in range(5):
+            rec = bound_record(decision_id=f"replacement-{i}", evaluation_fingerprint=digest(f"replacement-eval-{i}"))
+            replacement.append(ndj.append_decision_entry(tuple(replacement), rec, journal_id="journal-1"))
+        replacement = tuple(replacement)
+        self.assertTrue(ndj.verify_decision_journal(replacement, journal_id="journal-1").valid)
+        replacement_checkpoint = ndj.create_journal_checkpoint(replacement, journal_id="journal-1")
+
+        # CORE: a self-consistent replacement journal plus a checkpoint
+        # derived from that SAME replacement journal is locally consistent -
+        # this is the limitation, demonstrated directly, not merely claimed.
+        replacement_result = ndj.verify_journal_checkpoint(replacement, replacement_checkpoint)
+        self.assertTrue(replacement_result.verified)
+        self.assertEqual(replacement_result.status, "AT_CHECKPOINT")
+        self.assertIsNone(replacement_result.reason_code)
+
+        # CONTROL: the OLD retained checkpoint still detects the same
+        # replacement journal as inconsistent - proving E3 does real work
+        # whenever the checkpoint itself was not also replaced.
+        control_result = ndj.verify_journal_checkpoint(replacement, original_checkpoint)
+        self.assertEqual(
+            control_result,
+            ndj.CheckpointVerificationResult(verified=False, status="CHECKPOINT_MISMATCH", reason_code="CHECKPOINT_MISMATCH"),
+        )
 
 
 if __name__ == "__main__":
