@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""M8-E1: Decision Journal Entry - regression suite.
+"""M8-E1/M8-E2: Decision Journal Entry + pure append/verification - regression
+suite.
 
-Covers ONLY DecisionJournalEntry (construction, validation, semantic
-identity, immutability, and scope safety). No append/verification/
-checkpoint/persistence behavior is implemented or tested here - those
-belong to M8-E2/E3/E4/E5.
+M8-E1 section covers DecisionJournalEntry (construction, validation,
+semantic identity, immutability, scope safety). M8-E2 section covers
+verify_decision_journal() (structural chain verification) and
+append_decision_entry() (pure next-entry construction). No checkpoint/
+persistence/replay behavior is implemented or tested here - those belong to
+M8-E3/E4/E5.
 """
 
 from __future__ import annotations
@@ -15,6 +18,7 @@ import inspect
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -39,6 +43,50 @@ def non_genesis_entry(**overrides) -> ndj.DecisionJournalEntry:
     fields = dict(journal_id="journal-1", sequence=1, decision_fingerprint=digest("decision-b"), previous_entry_fingerprint=digest("predecessor"))
     fields.update(overrides)
     return ndj.DecisionJournalEntry(**fields)
+
+
+# --- M8-E2 shared builders -----------------------------------------------------------
+
+def scope(**overrides) -> nd.DecisionScope:
+    fields = dict(scope_type="TASK", scope_id="TASK-1", project_id="proj-1")
+    fields.update(overrides)
+    return nd.DecisionScope(**fields)
+
+
+def bound_record(**overrides) -> nd.DecisionRecordContract:
+    """A trust-identifiable DecisionRecordContract - evaluation_fingerprint
+    is supplied, so .decision_fingerprint succeeds. Mirrors
+    test_decision_contracts.py's own make_record(evaluation_fingerprint=...)
+    pattern exactly - not a new construction idiom."""
+    fields = dict(
+        decision_id="dec-1", evaluation_id="eval-1", request_id="req-1", decision_type="TASK_ACCEPTANCE",
+        scope=scope(), verdict="ACCEPT", reason_codes=(), evaluation_ref="eval-1", policy_ref="policy-1",
+        created_at="2026-09-02T00:00:00Z", evaluation_fingerprint=digest("fixed-eval"),
+    )
+    fields.update(overrides)
+    return nd.DecisionRecordContract(**fields)
+
+
+def unbound_record(**overrides) -> nd.DecisionRecordContract:
+    """Legacy-constructible but NOT trust-identifiable: no
+    evaluation_fingerprint, so .decision_fingerprint raises."""
+    fields = dict(
+        decision_id="dec-1", evaluation_id="eval-1", request_id="req-1", decision_type="TASK_ACCEPTANCE",
+        scope=scope(), verdict="ACCEPT", reason_codes=(), evaluation_ref="eval-1", policy_ref="policy-1",
+        created_at="2026-09-02T00:00:00Z",
+    )
+    fields.update(overrides)
+    return nd.DecisionRecordContract(**fields)
+
+
+def chain(n: int, journal_id: str = "journal-1") -> tuple[ndj.DecisionJournalEntry, ...]:
+    """A valid linear n-entry chain, built via append_decision_entry itself
+    so every test chain is guaranteed internally coherent by construction."""
+    entries: list[ndj.DecisionJournalEntry] = []
+    for i in range(n):
+        record = bound_record(decision_id=f"dec-{i}", evaluation_fingerprint=digest(f"eval-{i}"))
+        entries.append(ndj.append_decision_entry(tuple(entries), record, journal_id=journal_id))
+    return tuple(entries)
 
 
 # --- A. VALID CONSTRUCTION -----------------------------------------------------------
@@ -397,21 +445,48 @@ class ImmutabilityTests(unittest.TestCase):
 
 # --- L. NON-SCOPE / SAFETY --------------------------------------------------------------
 
-def _code_body_without_module_docstring(module) -> str:
-    """Source with the module docstring stripped, so scope-safety checks scan
-    only executable code - not the module docstring's prose, which legitimately
-    names decision_hash/supersedes/decision-0001/etc. to document that this
-    module has NO relationship to them (see nogap_decision_journal.py's
-    FROZEN PLACEHOLDER ISOLATION / LEGACY ISOLATION sections)."""
+def _executable_code_only(module) -> str:
+    """Source with EVERY docstring stripped - module, class, and function/
+    method level - so scope-safety checks scan only executable code, never
+    prose. nogap_decision_journal.py's docstrings legitimately name
+    decision_hash/supersedes/decision-0001/checkpoint/replay/clock/lock/etc.
+    to document that this module has NO relationship to them (LEGACY
+    ISOLATION / FROZEN PLACEHOLDER ISOLATION sections, and the M8-E2
+    docstrings' own "no clock/no persistence/M8-E3 checkpoint territory"
+    deferral language) - stripping only the module docstring (as M8-E1's
+    version of this helper did) was insufficient once M8-E2 added
+    function-level docstrings using those same words; this generalized
+    version removes the leading string-literal Expr from every module/class/
+    function body in the AST, not just the top-level one."""
     import ast
+
+    class _DocstringStripper(ast.NodeTransformer):
+        def _strip(self, node):
+            self.generic_visit(node)
+            if (
+                node.body
+                and isinstance(node.body[0], ast.Expr)
+                and isinstance(node.body[0].value, ast.Constant)
+                and isinstance(node.body[0].value.value, str)
+            ):
+                node.body = node.body[1:] or [ast.Pass()]
+            return node
+
+        def visit_Module(self, node):
+            return self._strip(node)
+
+        def visit_ClassDef(self, node):
+            return self._strip(node)
+
+        def visit_FunctionDef(self, node):
+            return self._strip(node)
+
+        def visit_AsyncFunctionDef(self, node):
+            return self._strip(node)
+
     tree = ast.parse(inspect.getsource(module))
-    if (
-        tree.body
-        and isinstance(tree.body[0], ast.Expr)
-        and isinstance(tree.body[0].value, ast.Constant)
-        and isinstance(tree.body[0].value.value, str)
-    ):
-        tree.body = tree.body[1:]
+    tree = _DocstringStripper().visit(tree)
+    ast.fix_missing_locations(tree)
     return ast.unparse(tree)
 
 
@@ -420,11 +495,14 @@ class NonScopeSafetyTests(unittest.TestCase):
         field_names = {f.name for f in dataclasses.fields(ndj.DecisionJournalEntry)}
         self.assertNotIn("entry_fingerprint", field_names)
 
-    def test_66_module_exposes_no_append_decision_entry(self) -> None:
-        self.assertFalse(hasattr(ndj, "append_decision_entry"))
+    def test_66_module_exposes_append_decision_entry(self) -> None:
+        # E1 asserted this was ABSENT; M8-E2 legitimately adds it. Updated to
+        # a positive existence check now that it is in-scope and implemented.
+        self.assertTrue(callable(getattr(ndj, "append_decision_entry", None)))
 
-    def test_67_module_exposes_no_verify_decision_journal(self) -> None:
-        self.assertFalse(hasattr(ndj, "verify_decision_journal"))
+    def test_67_module_exposes_verify_decision_journal(self) -> None:
+        # Same evolution as test_66 - M8-E2 adds this function in-scope.
+        self.assertTrue(callable(getattr(ndj, "verify_decision_journal", None)))
 
     def test_68_module_exposes_no_journal_checkpoint(self) -> None:
         self.assertFalse(hasattr(ndj, "JournalCheckpoint"))
@@ -434,35 +512,457 @@ class NonScopeSafetyTests(unittest.TestCase):
             self.assertFalse(hasattr(ndj, name))
 
     def test_70_no_new_hash_implementation_in_module(self) -> None:
-        source = _code_body_without_module_docstring(ndj)
+        source = _executable_code_only(ndj)
         self.assertNotIn("hashlib", source)
         self.assertNotIn("hash(", source)
         self.assertEqual(source.count("def fingerprint_payload"), 0)  # imported, not redefined
 
     def test_71_no_random_uuid_clock_filesystem_network_subprocess_dependency(self) -> None:
-        source = _code_body_without_module_docstring(ndj)
+        source = _executable_code_only(ndj)
         for banned in ("random.", "uuid.", "time.time(", "datetime.now(", "open(", "Path(", "subprocess", "requests", "os.system", "socket"):
             self.assertNotIn(banned, source)
 
     def test_72_no_legacy_decision_runtime_import(self) -> None:
-        source = _code_body_without_module_docstring(ndj)
+        source = _executable_code_only(ndj)
         for banned in ("decision-0001", "cmd_decide", "runtime_root", "repair", "accept", "abstain"):
             self.assertNotIn(banned, source)
 
     def test_73_no_relationship_to_decision_hash(self) -> None:
-        source = _code_body_without_module_docstring(ndj)
+        source = _executable_code_only(ndj)
         self.assertNotIn("decision_hash", source)
 
     def test_74_no_relationship_to_previous_decision_hash(self) -> None:
-        source = _code_body_without_module_docstring(ndj)
+        source = _executable_code_only(ndj)
         self.assertNotIn("previous_decision_hash", source)
 
     def test_75_no_relationship_to_supersedes(self) -> None:
-        source = _code_body_without_module_docstring(ndj)
+        source = _executable_code_only(ndj)
         self.assertNotIn("supersedes", source)
 
     def test_dependency_direction_no_circular_import(self) -> None:
         # nogap_decision.py must know nothing about nogap_decision_journal.py
+        import ast
+        tree = ast.parse((ROOT / "scripts" / "nogap_decision.py").read_text(encoding="utf-8"))
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module)
+        self.assertNotIn("nogap_decision_journal", imported)
+
+
+# ================================================================================
+# M8-E2: Pure Append + Structural Journal Verification
+# ================================================================================
+
+# --- 1. JournalVerificationResult invariant (items 1-3) ------------------------------
+
+class JournalVerificationResultInvariantTests(unittest.TestCase):
+    def test_e2_1_valid_result_with_no_reason_code_constructs(self) -> None:
+        r = ndj.JournalVerificationResult(valid=True)
+        self.assertTrue(r.valid)
+        self.assertIsNone(r.reason_code)
+
+    def test_e2_1b_valid_result_with_reason_code_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.JournalVerificationResult(valid=True, reason_code="SEQUENCE_INVALID")
+
+    def test_e2_2_invalid_result_with_known_reason_code_constructs(self) -> None:
+        r = ndj.JournalVerificationResult(valid=False, reason_code="SEQUENCE_INVALID")
+        self.assertFalse(r.valid)
+        self.assertEqual(r.reason_code, "SEQUENCE_INVALID")
+
+    def test_e2_2b_invalid_result_without_reason_code_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.JournalVerificationResult(valid=False)
+
+    def test_e2_3_unknown_journal_reason_rejected(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.JournalVerificationResult(valid=False, reason_code="TOTALLY_BOGUS_REASON")
+
+    def test_e2_3b_decision_reason_code_not_accepted_for_journal_result(self) -> None:
+        # DECISION_REASON_CODES is a different domain's vocabulary entirely.
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.JournalVerificationResult(valid=False, reason_code="MANDATORY_PREDICATE_FALSE")
+
+
+# --- 2. Empty journal (items 4-5) -----------------------------------------------------
+
+class VerifyEmptyJournalTests(unittest.TestCase):
+    def test_e2_4_empty_journal_valid(self) -> None:
+        r = ndj.verify_decision_journal(())
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=True))
+
+    def test_e2_5_empty_journal_with_expected_journal_id_valid(self) -> None:
+        # The pin defines an expected domain, but there are no entries to
+        # contradict it - empty stays valid regardless of the pin.
+        r = ndj.verify_decision_journal((), journal_id="journal-1")
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=True))
+
+
+# --- 3. Valid chains (items 6-8) ------------------------------------------------------
+
+class VerifyValidChainTests(unittest.TestCase):
+    def test_e2_6_genesis_only_valid(self) -> None:
+        c = chain(1)
+        self.assertTrue(ndj.verify_decision_journal(c).valid)
+
+    def test_e2_7_valid_e0_e1(self) -> None:
+        c = chain(2)
+        self.assertTrue(ndj.verify_decision_journal(c).valid)
+
+    def test_e2_8_valid_e0_e1_e2(self) -> None:
+        c = chain(3)
+        self.assertTrue(ndj.verify_decision_journal(c).valid)
+
+
+# --- 4. journal_id consistency (items 9-10) --------------------------------------------
+
+class VerifyJournalIdConsistencyTests(unittest.TestCase):
+    def test_e2_9_mixed_journal_ids_rejected(self) -> None:
+        e0 = genesis_entry(journal_id="A")
+        e1 = ndj.DecisionJournalEntry(journal_id="B", sequence=1, decision_fingerprint=digest("d1"), previous_entry_fingerprint=e0.entry_fingerprint)
+        r = ndj.verify_decision_journal((e0, e1))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="JOURNAL_ID_MISMATCH"))
+
+    def test_e2_10_internally_consistent_wrong_journal_rejected_when_pinned(self) -> None:
+        c = chain(2, journal_id="B")
+        self.assertTrue(ndj.verify_decision_journal(c).valid)  # consistent on its own
+        r = ndj.verify_decision_journal(c, journal_id="A")
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="JOURNAL_ID_MISMATCH"))
+
+
+# --- 5. Sequence validity (items 11-15) ------------------------------------------------
+
+class VerifySequenceValidityTests(unittest.TestCase):
+    def test_e2_11_sequence_gap_rejected(self) -> None:
+        c = chain(2)
+        e3 = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=3, decision_fingerprint=digest("d3"), previous_entry_fingerprint=c[1].entry_fingerprint)
+        r = ndj.verify_decision_journal(c + (e3,))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="SEQUENCE_INVALID"))
+
+    def test_e2_12_missing_genesis_rejected(self) -> None:
+        e_a = non_genesis_entry(sequence=1, previous_entry_fingerprint=digest("fake"))
+        e_b = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=2, decision_fingerprint=digest("d2"), previous_entry_fingerprint=e_a.entry_fingerprint)
+        r = ndj.verify_decision_journal((e_a, e_b))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="SEQUENCE_INVALID"))
+
+    def test_e2_13_duplicate_sequence_rejected(self) -> None:
+        e0a = genesis_entry(decision_fingerprint=digest("x"))
+        e0b = genesis_entry(decision_fingerprint=digest("y"))
+        r = ndj.verify_decision_journal((e0a, e0b))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="SEQUENCE_INVALID"))
+
+    def test_e2_14_duplicate_exact_entry_rejected(self) -> None:
+        c = chain(2)
+        r = ndj.verify_decision_journal((c[0], c[0]))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="SEQUENCE_INVALID"))
+
+    def test_e2_15_wrong_starting_sequence_rejected(self) -> None:
+        e_a = non_genesis_entry(sequence=1, previous_entry_fingerprint=digest("fake"))
+        r = ndj.verify_decision_journal((e_a,))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="SEQUENCE_INVALID"))
+
+
+# --- 6. Presentation order (item 16) ---------------------------------------------------
+
+class VerifyPresentationOrderTests(unittest.TestCase):
+    def test_e2_16_correct_set_wrong_list_order_rejected(self) -> None:
+        c = chain(3)
+        r = ndj.verify_decision_journal((c[0], c[2], c[1]))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="PRESENTATION_ORDER_INVALID"))
+
+
+# --- 7. Predecessor linkage (item 17) --------------------------------------------------
+
+class VerifyPredecessorLinkageTests(unittest.TestCase):
+    def test_e2_17_predecessor_mismatch_rejected(self) -> None:
+        # Case L: an old entry is altered without updating the descendant's
+        # previous_entry_fingerprint.
+        c = chain(3)
+        e1_alt = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=1, decision_fingerprint=digest("altered"), previous_entry_fingerprint=c[0].entry_fingerprint)
+        r = ndj.verify_decision_journal((c[0], e1_alt, c[2]))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="PREDECESSOR_MISMATCH"))
+
+
+# --- 8. Fork (item 18) ------------------------------------------------------------------
+
+class VerifyForkTests(unittest.TestCase):
+    def test_e2_18_visible_fork_rejected(self) -> None:
+        c = chain(1)
+        child_a = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=1, decision_fingerprint=digest("a"), previous_entry_fingerprint=c[0].entry_fingerprint)
+        child_b = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=1, decision_fingerprint=digest("b"), previous_entry_fingerprint=c[0].entry_fingerprint)
+        r = ndj.verify_decision_journal((c[0], child_a, child_b))
+        self.assertEqual(r, ndj.JournalVerificationResult(valid=False, reason_code="SEQUENCE_INVALID"))
+
+
+# --- 9. Correlation fields are non-authoritative for verification (items 19-20) --------
+
+class VerifyCorrelationNonAuthorityTests(unittest.TestCase):
+    def test_e2_19_predecessor_linkage_indifferent_to_record_ref(self) -> None:
+        e0_original = genesis_entry(record_ref="ref-a")
+        e1 = ndj.DecisionJournalEntry(journal_id="journal-1", sequence=1, decision_fingerprint=digest("d1"), previous_entry_fingerprint=e0_original.entry_fingerprint)
+        # A differently-record_ref'd but semantically identical genesis entry
+        # still links correctly - entry_fingerprint excludes record_ref.
+        e0_different_ref = genesis_entry(record_ref="ref-b")
+        self.assertEqual(e0_original.entry_fingerprint, e0_different_ref.entry_fingerprint)
+        r = ndj.verify_decision_journal((e0_different_ref, e1))
+        self.assertTrue(r.valid)
+
+    def test_e2_20_recorded_at_change_does_not_affect_validity(self) -> None:
+        c = chain(2)
+        e0_alt = genesis_entry(decision_fingerprint=c[0].decision_fingerprint, recorded_at="2030-01-01T00:00:00Z")
+        self.assertEqual(c[0].entry_fingerprint, e0_alt.entry_fingerprint)
+        r = ndj.verify_decision_journal((e0_alt, c[1]))
+        self.assertTrue(r.valid)
+
+
+# --- 10. Critical, permanent limitations (items 21-23) ---------------------------------
+
+class VerifyLimitationTests(unittest.TestCase):
+    def test_e2_21_valid_prefix_accepted(self) -> None:
+        # STRUCTURALLY VALID PREFIX != PROOF OF COMPLETE HISTORY. A genuine
+        # prefix of a longer real history verifies True - this is CORRECT,
+        # not a bug: E2 only ever claims the presented chain is coherent,
+        # never that it is complete. Detecting truncation needs an external
+        # anchor (M8-E3 checkpoint territory), not this function.
+        full = chain(4)
+        prefix = full[:2]
+        self.assertTrue(ndj.verify_decision_journal(prefix).valid)
+
+    def test_e2_22_full_self_consistent_rewrite_remains_valid(self) -> None:
+        # CRITICAL, PERMANENT LIMITATION: if every entry in a local chain is
+        # rewritten and every descendant's previous_entry_fingerprint is
+        # recomputed to match, the result verifies True. This is not
+        # something E2 can or should claim to detect - it has no external
+        # anchor to compare against. This test documents the limitation by
+        # construction; it must never be "fixed" inside E2.
+        real_rec_0 = bound_record(decision_id="real-0", evaluation_fingerprint=digest("real-eval-0"))
+        real_e0 = ndj.append_decision_entry((), real_rec_0, journal_id="journal-1")
+        real_rec_1 = bound_record(decision_id="real-1", evaluation_fingerprint=digest("real-eval-1"))
+        real_e1 = ndj.append_decision_entry((real_e0,), real_rec_1, journal_id="journal-1")
+
+        rewritten_rec_0 = bound_record(decision_id="rewritten-0", evaluation_fingerprint=digest("rewritten-eval-0"))
+        rewritten_e0 = ndj.append_decision_entry((), rewritten_rec_0, journal_id="journal-1")
+        rewritten_rec_1 = bound_record(decision_id="rewritten-1", evaluation_fingerprint=digest("rewritten-eval-1"))
+        rewritten_e1 = ndj.append_decision_entry((rewritten_e0,), rewritten_rec_1, journal_id="journal-1")
+
+        self.assertNotEqual(real_e0.entry_fingerprint, rewritten_e0.entry_fingerprint)
+        self.assertTrue(ndj.verify_decision_journal((real_e0, real_e1)).valid)
+        self.assertTrue(ndj.verify_decision_journal((rewritten_e0, rewritten_e1)).valid)
+
+    def test_e2_23_hidden_fork_not_detectable(self) -> None:
+        # A branch not supplied to verify_decision_journal cannot be
+        # detected - each independently-presented branch verifies True on
+        # its own terms, with no way to know the other exists.
+        c = chain(2)
+        rec_a = bound_record(decision_id="branch-a", evaluation_fingerprint=digest("branch-a-eval"))
+        branch_a = ndj.append_decision_entry(c, rec_a, journal_id="journal-1")
+        rec_b = bound_record(decision_id="branch-b", evaluation_fingerprint=digest("branch-b-eval"))
+        branch_b = ndj.append_decision_entry(c, rec_b, journal_id="journal-1")
+
+        self.assertTrue(ndj.verify_decision_journal(c + (branch_a,)).valid)
+        self.assertTrue(ndj.verify_decision_journal(c + (branch_b,)).valid)
+
+
+# --- 11. Append construction (items 24-29) ----------------------------------------------
+
+class AppendConstructionTests(unittest.TestCase):
+    def test_e2_24_genesis_append(self) -> None:
+        rec = bound_record()
+        e0 = ndj.append_decision_entry((), rec, journal_id="journal-1")
+        self.assertEqual(e0.sequence, 0)
+        self.assertIsNone(e0.previous_entry_fingerprint)
+        self.assertEqual(e0.decision_fingerprint, rec.decision_fingerprint)
+
+    def test_e2_25_second_append(self) -> None:
+        rec0 = bound_record(decision_id="d0", evaluation_fingerprint=digest("e0"))
+        e0 = ndj.append_decision_entry((), rec0, journal_id="journal-1")
+        rec1 = bound_record(decision_id="d1", evaluation_fingerprint=digest("e1"))
+        e1 = ndj.append_decision_entry((e0,), rec1, journal_id="journal-1")
+        self.assertEqual(e1.sequence, 1)
+        self.assertEqual(e1.previous_entry_fingerprint, e0.entry_fingerprint)
+
+    def test_e2_26_multi_entry_append(self) -> None:
+        c = chain(5)
+        self.assertEqual(len(c), 5)
+        self.assertEqual(tuple(e.sequence for e in c), (0, 1, 2, 3, 4))
+        self.assertTrue(ndj.verify_decision_journal(c).valid)
+
+    def test_e2_27_append_derives_sequence_not_caller_supplied(self) -> None:
+        params = inspect.signature(ndj.append_decision_entry).parameters
+        self.assertNotIn("sequence", params)
+
+    def test_e2_28_append_derives_predecessor_fingerprint_not_caller_supplied(self) -> None:
+        params = inspect.signature(ndj.append_decision_entry).parameters
+        self.assertNotIn("previous_entry_fingerprint", params)
+
+    def test_e2_29_append_does_not_mutate_history(self) -> None:
+        e0 = ndj.append_decision_entry((), bound_record(), journal_id="journal-1")
+        history = [e0]
+        snapshot = list(history)
+        ndj.append_decision_entry(history, bound_record(decision_id="d2", evaluation_fingerprint=digest("e2")), journal_id="journal-1")
+        self.assertEqual(history, snapshot)
+
+
+# --- 12. Append rejections (items 30-34) -------------------------------------------------
+
+class AppendRejectionTests(unittest.TestCase):
+    def test_e2_30_append_rejects_invalid_history(self) -> None:
+        c = chain(2)
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.append_decision_entry((c[1], c[0]), bound_record(), journal_id="journal-1")
+
+    def test_e2_30b_append_checks_history_before_accessing_decision_fingerprint(self) -> None:
+        # This test protects the M8-E2 append trust ordering: FULL HISTORY
+        # VERIFICATION PRECEDES RECORD FINGERPRINT ACCESS. Not a claim of a
+        # security boundary beyond this function's own call ordering - it
+        # only proves append_decision_entry never reads
+        # DecisionRecordContract.decision_fingerprint until AFTER the
+        # supplied history has been proven structurally valid, so a
+        # corrupt-history failure and a legacy-record failure are never
+        # conflated. The patched property is restored automatically by the
+        # context manager even if an assertion below fails - no global
+        # state leaks between tests.
+        c = chain(2)
+        invalid_history = (c[1], c[0])  # wrong order -> PRESENTATION_ORDER_INVALID
+        accessed: list[bool] = []
+        original_property = nd.DecisionRecordContract.decision_fingerprint
+
+        def spy(self):
+            accessed.append(True)
+            return original_property.fget(self)
+
+        with mock.patch.object(nd.DecisionRecordContract, "decision_fingerprint", property(spy)):
+            with self.assertRaises(nd.DecisionValidationError):
+                ndj.append_decision_entry(invalid_history, unbound_record(), journal_id="journal-1")
+
+        self.assertEqual(accessed, [], "decision_fingerprint must not be accessed before history verification")
+
+    def test_e2_31_append_rejects_mixed_journal_history(self) -> None:
+        e0 = genesis_entry(journal_id="A")
+        e1b = ndj.DecisionJournalEntry(journal_id="B", sequence=1, decision_fingerprint=digest("d1"), previous_entry_fingerprint=e0.entry_fingerprint)
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.append_decision_entry((e0, e1b), bound_record(), journal_id="A")
+
+    def test_e2_32_append_rejects_wrong_pinned_journal(self) -> None:
+        c = chain(2, journal_id="B")
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.append_decision_entry(c, bound_record(), journal_id="A")
+
+    def test_e2_33_append_rejects_unbound_legacy_decision_record(self) -> None:
+        with self.assertRaises(nd.DecisionValidationError):
+            ndj.append_decision_entry((), unbound_record(), journal_id="journal-1")
+
+    def test_e2_34_append_obtains_fingerprint_from_decision_record(self) -> None:
+        rec = bound_record()
+        e0 = ndj.append_decision_entry((), rec, journal_id="journal-1")
+        self.assertEqual(e0.decision_fingerprint, rec.decision_fingerprint)
+
+
+# --- 13. Append correlation fields (item 35) ---------------------------------------------
+
+class AppendCorrelationTests(unittest.TestCase):
+    def test_e2_35_append_correlation_fields_do_not_alter_semantic_identity(self) -> None:
+        rec = bound_record()
+        e_a = ndj.append_decision_entry((), rec, journal_id="journal-1", record_ref="ref-a", recorded_at="2026-01-01T00:00:00Z")
+        e_b = ndj.append_decision_entry((), rec, journal_id="journal-1", record_ref="ref-b", recorded_at="2030-01-01T00:00:00Z")
+        self.assertEqual(e_a.entry_fingerprint, e_b.entry_fingerprint)
+
+
+# --- 14. Append API surface (item 36) -----------------------------------------------------
+
+class AppendApiSurfaceTests(unittest.TestCase):
+    def test_e2_36_no_raw_decision_fingerprint_append_parameter(self) -> None:
+        params = inspect.signature(ndj.append_decision_entry).parameters
+        self.assertNotIn("decision_fingerprint", params)
+        self.assertIn("decision_record", params)
+
+
+# --- 15. Schema version, unaffected by E2 (item 37) ---------------------------------------
+
+class SchemaVersionE2RegressionTests(unittest.TestCase):
+    def test_e2_37_append_does_not_expose_schema_version_override(self) -> None:
+        params = inspect.signature(ndj.append_decision_entry).parameters
+        self.assertNotIn("schema_version", params)
+
+    def test_e2_37b_appended_entry_uses_default_supported_schema_version(self) -> None:
+        e0 = ndj.append_decision_entry((), bound_record(), journal_id="journal-1")
+        self.assertEqual(e0.schema_version, nd.M8_DECISION_SCHEMA_VERSION)
+
+    def test_e2_37c_verify_decision_journal_never_references_schema_version(self) -> None:
+        # Direct proof (not a weaker proxy) that E2 imposes no cross-entry
+        # schema-version equality requirement: verify_decision_journal's own
+        # EXECUTABLE code - function docstring stripped, via
+        # _executable_code_only - never references schema_version at all.
+        # Each DecisionJournalEntry remains individually responsible for its
+        # own supported-version validation (E1's _require_supported_schema_
+        # version, unchanged). This deliberately asserts nothing about a
+        # future multiple-schema-version world - only that E2 today adds no
+        # same-version requirement across entries.
+        source = _executable_code_only(ndj)
+        start = source.index("def verify_decision_journal")
+        end = source.index("def append_decision_entry")
+        verify_source = source[start:end]
+        self.assertNotIn("schema_version", verify_source)
+
+
+# --- 16. Non-scope / safety (item 38 + static safety sweep) ------------------------------
+
+class E2NonScopeSafetyTests(unittest.TestCase):
+    def test_e2_38a_no_checkpoint_symbols(self) -> None:
+        for name in ("JournalCheckpoint", "DecisionJournalCheckpoint", "CheckpointVerificationResult", "verify_checkpoint", "verify_journal_against_checkpoint"):
+            self.assertFalse(hasattr(ndj, name))
+
+    def test_e2_38b_no_replay_symbols(self) -> None:
+        for name in ("replay_decision_journal", "ReplayResult", "SemanticReplay"):
+            self.assertFalse(hasattr(ndj, name))
+
+    def test_e2_38c_no_persistence_symbols(self) -> None:
+        for name in ("write_journal", "save_journal", "load_journal", "read_journal", "JournalManager", "append_journal_file"):
+            self.assertFalse(hasattr(ndj, name))
+
+    def test_e2_38d_no_e3_e4_e5_terms_in_executable_code(self) -> None:
+        source = _executable_code_only(ndj)
+        for banned in (
+            "JournalCheckpoint", "CheckpointVerificationResult", "verify_journal_against_checkpoint",
+            "checkpoint", "replay", "manifest", "witness", "signing", "Merkle", "blockchain",
+            "transparency", "JSONL", "sqlite", "fsync",
+        ):
+            self.assertNotIn(banned, source)
+
+    def test_e2_38e_reason_codes_are_journal_domain_not_decision_domain(self) -> None:
+        self.assertTrue(ndj.JOURNAL_REASON_CODES.isdisjoint(nd.DECISION_REASON_CODES))
+        self.assertTrue(ndj.JOURNAL_REASON_CODES.isdisjoint(nd.DECISION_TRUTH_VALUES))
+        self.assertTrue(ndj.JOURNAL_REASON_CODES.isdisjoint(nd.DECISION_VERDICTS))
+
+    def test_e2_no_sorting_in_verify_decision_journal(self) -> None:
+        source = _executable_code_only(ndj)
+        self.assertNotIn("sorted(", source)
+        self.assertNotIn(".sort(", source)
+
+    def test_e2_no_second_hash_path(self) -> None:
+        source = _executable_code_only(ndj)
+        self.assertNotIn("hashlib", source)
+        self.assertNotIn("hash(", source)
+
+    def test_e2_no_io_clock_uuid_dependency(self) -> None:
+        source = _executable_code_only(ndj)
+        for banned in ("random.", "uuid.", "time.time(", "datetime.now(", "open(", "Path(", "subprocess", "requests", "os.system", "socket"):
+            self.assertNotIn(banned, source)
+
+    def test_e2_append_signature_uses_decision_record_contract(self) -> None:
+        params = inspect.signature(ndj.append_decision_entry).parameters
+        annotation = params["decision_record"].annotation
+        self.assertIn("DecisionRecordContract", str(annotation))
+
+    def test_e2_decision_journal_entry_semantic_payload_unchanged(self) -> None:
+        # Regression guard: M8-E2 must not have touched E1's frozen contract.
+        e = genesis_entry()
+        self.assertEqual(set(e.semantic_payload()), {"journal_id", "sequence", "decision_fingerprint", "previous_entry_fingerprint", "schema_version"})
+
+    def test_e2_dependency_direction_still_one_way(self) -> None:
         import ast
         tree = ast.parse((ROOT / "scripts" / "nogap_decision.py").read_text(encoding="utf-8"))
         imported = set()
