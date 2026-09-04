@@ -537,10 +537,15 @@ class PhasePurityTests(unittest.TestCase):
             self.assertNotIn(banned, source)
 
     def test_56_no_replayresult_or_replayengine_types_introduced(self) -> None:
+        # verify_decision_replay() is deliberately NOT asserted absent here:
+        # M8-E4-B's own phase boundary only forbids IT from implementing
+        # replay execution - M8-E4-C is the later, separate, explicitly
+        # authorized milestone that legitimately adds the single pure
+        # verifier function (never a ReplayEngine/ReplayResult/ReplayStatus
+        # class - those remain correctly absent below).
         self.assertFalse(hasattr(nd, "ReplayResult"))
         self.assertFalse(hasattr(nd, "ReplayStatus"))
         self.assertFalse(hasattr(nd, "ReplayEngine"))
-        self.assertFalse(hasattr(nd, "verify_decision_replay"))
         self.assertFalse(hasattr(nd, "replay_decision"))
 
     def test_57_no_false_authenticity_claims_in_docstrings(self) -> None:

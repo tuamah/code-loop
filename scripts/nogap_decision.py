@@ -1920,3 +1920,192 @@ def validate_decision_replay_material(material: DecisionReplayMaterial) -> None:
     # Proves DecisionBehavioralContext is derivable from this material alone -
     # not that any input/evaluation/decision fingerprint recomputes correctly.
     build_decision_behavioral_context(material.policy, material.predicate_evidence_bindings, material.executor_ids)
+
+
+# ================================================================================
+# M8-E4-C: Semantic Replay Verifier
+# ================================================================================
+
+# Closed, fixed vocabulary - not the same vocabulary as DECISION_VERDICTS or
+# DECISION_TRUTH_VALUES, and never interchangeable with either (Section 52 of
+# the M8-E4-C brief: replay failure must never be reported as
+# DecisionTruth.UNKNOWN or a DecisionVerdict of ABSTAIN/REJECT - a replay
+# verification state is a THIRD, disjoint vocabulary from both).
+REPLAY_VERIFICATION_STATUSES = frozenset({
+    "REPLAY_MATCH",
+    "MATERIAL_INVALID",
+    "ENGINE_VERSION_MISMATCH",
+    "INPUT_FINGERPRINT_MISMATCH",
+    "EVALUATION_FINGERPRINT_MISMATCH",
+    "DECISION_FINGERPRINT_MISMATCH",
+})
+
+# Fixed, deterministic, replay-local correlation sentinels - never a clock,
+# UUID, or random value. Safe by construction: evaluation_id/decision_id are
+# excluded from every semantic_payload() in this module (DecisionEvaluationContract.
+# semantic_payload()/DecisionRecordContract.semantic_payload() never include
+# them), and created_at/evaluated_at are unconditionally excluded from
+# canonical_json()/_canonicalize() by _NON_SEMANTIC_FIELD_NAMES - so no value
+# chosen here can ever influence input_fingerprint/evaluation_fingerprint/
+# decision_fingerprint.
+_REPLAY_VERIFICATION_EVALUATION_ID = "m8-e4-c:replay-verification"
+_REPLAY_VERIFICATION_DECISION_ID = "m8-e4-c:replay-verification"
+_REPLAY_VERIFICATION_CREATED_AT = "1970-01-01T00:00:00Z"
+
+
+@dataclasses.dataclass(frozen=True)
+class DecisionReplayVerificationResult:
+    """Immutable, minimal semantic-replay verification outcome. Exactly three
+    fields - no confidence/score/probability/votes/weights/model opinion, and
+    no free-form authoritative explanation; if a future caller wants
+    diagnostic detail, it must remain narrative/non-authoritative and live
+    outside this contract, not inside it.
+
+    `verified` is never independently caller-supplied semantics: __post_init__
+    structurally enforces `verified == (status == "REPLAY_MATCH")` - no
+    partial success, no warning state that could be read as PASS. `reason_code`
+    is structurally enforced to exactly mirror `status` (Section 7's frozen
+    1:1 mapping) - a single closed vocabulary, not a second, independently
+    diverging reason taxonomy layered on top of DECISION_REASON_CODES or any
+    other vocabulary this module already owns.
+
+    REPLAY MATERIAL CLOSURE != AUTHENTICITY. SEMANTIC REPLAY != EVIDENCE
+    TRUTH. INSTANCE-LEVEL REPRODUCTION != ENGINE-WIDE EQUIVALENCE. HISTORICAL
+    REPLAY != CURRENT APPLICABILITY. RETRIEVAL != TRUST. A REPLAY_MATCH
+    result proves only that THIS material's behavior-relevant inputs, replayed
+    through whatever kernel code is CURRENTLY installed, reproduced the exact
+    historical input/evaluation/decision commitments retained for this one
+    decision instance - never historical source-code identity, general
+    engine-wide behavioral equivalence, evidence truth, external authenticity,
+    current applicability, retrieval correctness, or journal/checkpoint
+    completeness (this contract has no journal/checkpoint dependency at all)."""
+
+    status: str
+    verified: bool
+    reason_code: str
+
+    def __post_init__(self) -> None:
+        _require(self.status in REPLAY_VERIFICATION_STATUSES, f"unknown replay verification status: {self.status!r}")
+        _require(isinstance(self.verified, bool), "verified must be an explicit bool")
+        _require(
+            self.verified == (self.status == "REPLAY_MATCH"),
+            "verified must be True if and only if status == REPLAY_MATCH - no partial success, no warning state readable as PASS",
+        )
+        _require(self.reason_code == self.status, "reason_code must exactly mirror status - a single closed vocabulary, never a second diverging reason taxonomy")
+
+
+def verify_decision_replay(material: DecisionReplayMaterial) -> DecisionReplayVerificationResult:
+    """Pure semantic replay verifier. Answers exactly one question: does the
+    CURRENT compatible decision kernel reproduce the exact historical semantic
+    commitments (`expected_input_fingerprint`/`expected_evaluation_fingerprint`/
+    `expected_decision_fingerprint`) `material` retains, when replayed against
+    `material`'s own raw semantic input alone?
+
+    Fails at the FIRST trust-boundary divergence, in fixed precedence order -
+    material validity, then engine-version compatibility, then input
+    commitment, then evaluation commitment, then decision commitment, then
+    success - so a later comparison can never mask an earlier one:
+
+      1. validate_decision_replay_material(material) - the existing,
+         authoritative M8-E4-B completeness/admissibility check. Never
+         duplicated here. Failure -> MATERIAL_INVALID.
+      2. material.engine_version == M8_DECISION_ENGINE_VERSION. NO FALSE
+         UPGRADE: an unsupported/legacy engine_version is never silently
+         replayed, upgraded, or inferred-compatible. Mismatch ->
+         ENGINE_VERSION_MISMATCH. Deliberately never compared against or
+         derived from material.snapshot.engine_version - see
+         DecisionReplayMaterial's own docstring for why those two fields are
+         independent facts.
+      3. compute_input_fingerprint(material.snapshot, material.policy,
+         material.predicate_results, material.predicate_evidence_bindings,
+         material.executor_ids) == material.expected_input_fingerprint - the
+         earliest committed semantic boundary (E4-A's behavioral context is
+         already folded into this one comparison, since
+         compute_input_fingerprint derives it internally). Mismatch ->
+         INPUT_FINGERPRINT_MISMATCH, and evaluate_decision() is never called.
+      4. evaluate_decision(...).evaluation_fingerprint ==
+         material.expected_evaluation_fingerprint - only attempted once input
+         commitment already matches. Mismatch -> EVALUATION_FINGERPRINT_MISMATCH,
+         and build_decision_record() is never called.
+      5. build_decision_record(...).decision_fingerprint ==
+         material.expected_decision_fingerprint - only attempted once
+         evaluation commitment already matches. Mismatch ->
+         DECISION_FINGERPRINT_MISMATCH.
+      6. REPLAY_MATCH - the only successful terminal state.
+
+    Uses ONLY the existing frozen kernel path - validate_decision_replay_material()/
+    compute_input_fingerprint()/evaluate_decision()/build_decision_record() -
+    never reimplements any of their payloads or hashing, and never touches
+    derive_contract_verdict()/is_binding_admissible() directly. All
+    correlation-only parameters evaluate_decision()/build_decision_record()
+    require (evaluation_id/decision_id/created_at) are fixed, deterministic,
+    replay-local sentinel constants - never a clock, UUID, or random value -
+    and are excluded from every fingerprint's semantic_payload() by the
+    frozen baseline, so no value chosen for them can influence any comparison
+    here (Section 35's correlation-field-invariance property).
+
+    No filesystem, Git, network, database, environment variable, mutable
+    global registry, or model/session memory access of any kind anywhere in
+    this function - every behaviorally relevant input comes from `material`
+    alone. This is the operational proof of Replay Material Closure (M8-E4-B):
+    a fresh process holding only one DecisionReplayMaterial object and this
+    module's static code can run this function to completion.
+
+    Never reads scripts/nogap_decision_journal.py's journal or checkpoint
+    state - SEMANTIC REPLAY != JOURNAL VERIFICATION, a deliberately separate
+    trust signal E1-E3 already own. Never fetches/re-verifies the evidence
+    a PredicateEvidenceBinding's evidence_refs point at - SEMANTIC REPLAY !=
+    EVIDENCE TRUTH. Never inspects current repository state or asks whether
+    the historical decision still applies - HISTORICAL REPLAY != CURRENT
+    APPLICABILITY. Never searches, ranks, or retrieves candidate material -
+    RETRIEVAL != TRUST; the caller must already hold `material`.
+
+    A DecisionValidationError raised by evaluate_decision() for material that
+    already passed validate_decision_replay_material() above can only originate
+    from derive_contract_verdict()'s own required/blocking-vs-policy
+    classification consistency check - the one check M8-E4-B deliberately
+    deferred (see DecisionReplayMaterial.__post_init__'s own docstring) rather
+    than duplicate. Every other precondition evaluate_decision() checks
+    (decision_type consistency, duplicate identity, orphan bindings, binding
+    admissibility, the one-binding-per-result invariant) is already proven by
+    DecisionReplayMaterial.__post_init__/validate_decision_replay_material()
+    above - so this is provably a material-content inconsistency, not a
+    kernel divergence, and is classified MATERIAL_INVALID, not a new taxonomy
+    member. Any OTHER exception type is an unexpected programming defect and
+    is never caught here - it propagates, exactly as an unexpected bug should,
+    never silently reclassified as a deterministic replay failure."""
+    _require(isinstance(material, DecisionReplayMaterial), "material must be a DecisionReplayMaterial")
+
+    try:
+        validate_decision_replay_material(material)
+    except DecisionValidationError:
+        return DecisionReplayVerificationResult(status="MATERIAL_INVALID", verified=False, reason_code="MATERIAL_INVALID")
+
+    if material.engine_version != M8_DECISION_ENGINE_VERSION:
+        return DecisionReplayVerificationResult(status="ENGINE_VERSION_MISMATCH", verified=False, reason_code="ENGINE_VERSION_MISMATCH")
+
+    recomputed_input_fingerprint = compute_input_fingerprint(
+        material.snapshot, material.policy, material.predicate_results,
+        material.predicate_evidence_bindings, material.executor_ids,
+    )
+    if recomputed_input_fingerprint != material.expected_input_fingerprint:
+        return DecisionReplayVerificationResult(status="INPUT_FINGERPRINT_MISMATCH", verified=False, reason_code="INPUT_FINGERPRINT_MISMATCH")
+
+    try:
+        recomputed_evaluation = evaluate_decision(
+            material.snapshot, material.policy, material.predicate_results,
+            material.predicate_evidence_bindings, material.executor_ids,
+            evaluation_id=_REPLAY_VERIFICATION_EVALUATION_ID,
+        )
+    except DecisionValidationError:
+        return DecisionReplayVerificationResult(status="MATERIAL_INVALID", verified=False, reason_code="MATERIAL_INVALID")
+    if recomputed_evaluation.evaluation_fingerprint != material.expected_evaluation_fingerprint:
+        return DecisionReplayVerificationResult(status="EVALUATION_FINGERPRINT_MISMATCH", verified=False, reason_code="EVALUATION_FINGERPRINT_MISMATCH")
+
+    recomputed_record = build_decision_record(
+        recomputed_evaluation, decision_id=_REPLAY_VERIFICATION_DECISION_ID, created_at=_REPLAY_VERIFICATION_CREATED_AT,
+    )
+    if recomputed_record.decision_fingerprint != material.expected_decision_fingerprint:
+        return DecisionReplayVerificationResult(status="DECISION_FINGERPRINT_MISMATCH", verified=False, reason_code="DECISION_FINGERPRINT_MISMATCH")
+
+    return DecisionReplayVerificationResult(status="REPLAY_MATCH", verified=True, reason_code="REPLAY_MATCH")
