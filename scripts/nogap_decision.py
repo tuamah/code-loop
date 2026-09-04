@@ -1695,3 +1695,228 @@ def build_decision_record(
         schema_version=evaluation.schema_version,
         supersedes=supersedes,
     )
+
+
+# ================================================================================
+# M8-E4-B: Decision Replay Material (in-memory closure contract)
+# ================================================================================
+
+@dataclasses.dataclass(frozen=True)
+class DecisionReplayMaterial:
+    """Immutable closure of the minimum raw material a FUTURE, separate replay
+    verifier (M8-E4-C, NOT implemented here) needs to attempt DECISION KERNEL
+    SEMANTIC RECONSTRUCTION of one historical decision instance - i.e. to feed
+    the same behavior-relevant inputs back through a compatible-engine-version
+    kernel and check whether the same commitments result. This class only
+    CLOSES the material; it never performs, executes, or scores that
+    reconstruction itself - there is no verify/replay method anywhere on this
+    class or in this module, and none may be added without leaving M8-E4-B's
+    scope.
+
+    Nine fields only, each independently load-bearing (see the M8-E4-B1
+    Minimality Proof this design was adjudicated against): snapshot, policy,
+    predicate_results, predicate_evidence_bindings, and executor_ids are the
+    SEMANTIC INPUTS a compatible kernel needs; engine_version is the VERSION
+    DISCRIMINATOR that tells a future verifier which payload shape/algorithm
+    to run; expected_input_fingerprint/expected_evaluation_fingerprint/
+    expected_decision_fingerprint are the EXPECTED COMMITMENTS a future
+    verifier compares freshly recomputed values against - genuinely
+    unrecomputable from raw material alone, since raw material only lets you
+    derive a FRESH value, never tells you what the HISTORICAL value actually
+    was.
+
+    Deliberately excluded (see compute_input_fingerprint/
+    build_decision_behavioral_context and the M8-E4-B1 adjudication):
+    DecisionBehavioralContext itself (fully derivable from policy + bindings
+    + executor_ids - storing it too would be a second, competing
+    representation of the same facts); the lower-layer expected fingerprints
+    (snapshot_fingerprint/result_fingerprints/binding_fingerprints/
+    behavioral_context_fingerprint) - all recomputable from the required raw
+    objects, and any mismatch at that layer already surfaces as an
+    expected_input_fingerprint mismatch; every correlation-only field
+    (evaluation_id/decision_id/request_id/created_at/evaluated_at/
+    execution_run_id/authority_class/metadata/etc.), already excluded from
+    every contained object's own semantic_payload() - a future replay
+    verifier synthesizes placeholder values for these at replay time, never
+    reads them from stored material.
+
+    DECISION KERNEL SEMANTIC MATERIAL, NOT EXACT HISTORICAL OBJECT
+    RECONSTRUCTION: contained DecisionSnapshot/DecisionPolicyContract/
+    DecisionPredicateResult/PredicateEvidenceBinding objects may carry
+    whatever value a caller supplies for their own structurally-required-but-
+    semantically-excluded fields (e.g. DecisionSnapshot.request_id;
+    PredicateEvidenceBinding.execution_run_id/evaluation_id/evaluated_at/
+    authority_class) - this contract does not, and structurally cannot,
+    guarantee byte-for-byte identity with the original historical Python
+    object instances, only kernel-semantic sufficiency.
+
+    engine_version IS INDEPENDENTLY STORED - it is NEVER read from
+    self.snapshot.engine_version anywhere in this class or in
+    build_decision_replay_material(). snapshot.engine_version records which
+    engine version the SNAPSHOT was captured under; this field records which
+    engine version the EXPECTED COMMITMENTS below were produced under - two
+    structurally independent facts nothing in the current baseline
+    cross-validates against each other.
+
+    NO FALSE UPGRADE: historical decisions produced before this contract (or
+    before DecisionBehavioralContext, M8-E4-A) existed cannot retroactively
+    become replay-material-complete merely because a caller later supplies
+    policy classification, verifier identities, or executor_ids reconstructed
+    after the fact - this class has no backfill/inference/migration path, and
+    none may be added to it.
+
+    REQUIRED DISTINCTIONS THIS CLASS MUST NEVER BE READ TO COLLAPSE: REPLAY
+    MATERIAL CLOSURE != AUTHENTICITY. SEMANTIC REPLAY != EVIDENCE TRUTH.
+    INSTANCE-LEVEL REPRODUCTION != ENGINE-WIDE EQUIVALENCE. HISTORICAL REPLAY
+    != CURRENT APPLICABILITY. RETRIEVAL != TRUST. SEMANTIC FINGERPRINT !=
+    CONTENT DIGEST (expected_*_fingerprint above are semantic commitments,
+    never byte-level serialized content digests - this class has no
+    content_digest/bundle_digest/CAS-key field of any kind). IN-MEMORY REPLAY
+    CONTRACT != DURABLE PERSISTENCE (this class has no serializer, no
+    to_json/from_json, no storage encoding of any kind - that is later,
+    separate work)."""
+
+    snapshot: DecisionSnapshot
+    policy: DecisionPolicyContract
+    predicate_results: tuple[DecisionPredicateResult, ...]
+    predicate_evidence_bindings: tuple[PredicateEvidenceBinding, ...]
+    executor_ids: frozenset[str]
+    engine_version: str
+    expected_input_fingerprint: str
+    expected_evaluation_fingerprint: str
+    expected_decision_fingerprint: str
+
+    def __post_init__(self) -> None:
+        _require(isinstance(self.snapshot, DecisionSnapshot), "snapshot must be a DecisionSnapshot")
+        _require(isinstance(self.policy, DecisionPolicyContract), "policy must be a DecisionPolicyContract")
+
+        _require(isinstance(self.predicate_results, (tuple, list)), "predicate_results must be a tuple/list")
+        predicate_results = tuple(self.predicate_results)
+        for r in predicate_results:
+            _require(isinstance(r, DecisionPredicateResult), "predicate_results entries must be DecisionPredicateResult")
+        ids = [r.predicate_id for r in predicate_results]
+        _require(len(set(ids)) == len(ids), "predicate_results contains duplicate predicate_id")
+        result_fingerprints = [r.result_fingerprint for r in predicate_results]
+        _require(len(set(result_fingerprints)) == len(result_fingerprints), "predicate_results contains duplicate result_fingerprint")
+        object.__setattr__(self, "predicate_results", predicate_results)
+
+        _require(isinstance(self.predicate_evidence_bindings, (tuple, list)), "predicate_evidence_bindings must be a tuple/list")
+        bindings = tuple(self.predicate_evidence_bindings)
+        for b in bindings:
+            _require(isinstance(b, PredicateEvidenceBinding), "predicate_evidence_bindings entries must be PredicateEvidenceBinding")
+        binding_fingerprints = [b.binding_fingerprint for b in bindings]
+        _require(len(set(binding_fingerprints)) == len(binding_fingerprints), "predicate_evidence_bindings contains duplicate binding_fingerprint")
+        object.__setattr__(self, "predicate_evidence_bindings", bindings)
+
+        _require(isinstance(self.executor_ids, (frozenset, set, tuple, list)), "executor_ids must be a frozenset/set/tuple/list of str")
+        executor_ids = _require_str_tuple(tuple(self.executor_ids), "executor_ids")
+        object.__setattr__(self, "executor_ids", frozenset(executor_ids))
+
+        _require_supported_engine_version(self.engine_version)
+        _require_valid_digest(self.expected_input_fingerprint, "expected_input_fingerprint")
+        _require_valid_digest(self.expected_evaluation_fingerprint, "expected_evaluation_fingerprint")
+        _require_valid_digest(self.expected_decision_fingerprint, "expected_decision_fingerprint")
+
+        # Cross-object identity coherence - the SAME reference-matching checks
+        # evaluate_decision() itself performs before computing any fingerprint
+        # (decision_type consistency, orphan-binding rejection, snapshot/policy
+        # identity match). No verdict is derived anywhere in this method - the
+        # required/blocking-vs-policy classification consistency check
+        # (derive_contract_verdict()'s own validation prelude) is deliberately
+        # NOT duplicated here, since reusing it safely would mean either
+        # invoking derive_contract_verdict() itself (verdict computation - out
+        # of E4-B's phase boundary) or copying its private validation lines a
+        # second time (drift risk); a future replay verifier (M8-E4-C) checks
+        # it for real, at real replay time, using the one existing algebra.
+        _require(
+            self.snapshot.decision_type == self.policy.decision_type,
+            f"snapshot decision_type {self.snapshot.decision_type!r} does not match policy decision_type {self.policy.decision_type!r}",
+        )
+
+        results_by_fingerprint = {r.result_fingerprint: r for r in self.predicate_results}
+        for b in self.predicate_evidence_bindings:
+            _require(b.predicate_result_fingerprint in results_by_fingerprint, "predicate_evidence_bindings contains an orphan binding matching no supplied predicate_result")
+            _require(b.snapshot_fingerprint == self.snapshot.snapshot_fingerprint, "predicate_evidence_bindings contains a binding whose snapshot_fingerprint does not match the supplied snapshot")
+            _require(b.policy_id == self.policy.policy_id, "predicate_evidence_bindings contains a binding whose policy_id does not match the supplied policy")
+            _require(b.policy_version == self.policy.policy_version, "predicate_evidence_bindings contains a binding whose policy_version does not match the supplied policy")
+
+
+def build_decision_replay_material(
+    snapshot: DecisionSnapshot,
+    policy: DecisionPolicyContract,
+    predicate_results: Sequence[DecisionPredicateResult],
+    predicate_evidence_bindings: Sequence[PredicateEvidenceBinding],
+    executor_ids: frozenset[str],
+    *,
+    engine_version: str,
+    expected_input_fingerprint: str,
+    expected_evaluation_fingerprint: str,
+    expected_decision_fingerprint: str,
+) -> DecisionReplayMaterial:
+    """Pure construction helper. Accepts ONLY the nine already-known,
+    already-computed values DecisionReplayMaterial itself stores - never a
+    caller-supplied behavioral_context/behavioral_context_fingerprint,
+    snapshot_fingerprint, result_fingerprint, or binding_fingerprint, since
+    every one of those is independently derivable from the objects already
+    supplied here (see DecisionReplayMaterial's own docstring for why each is
+    excluded). Does not call evaluate_decision() or build_decision_record();
+    does not validate completeness beyond DecisionReplayMaterial's own
+    __post_init__ - call validate_decision_replay_material() separately for
+    the deeper admissibility/behavioral-context-derivability check."""
+    return DecisionReplayMaterial(
+        snapshot=snapshot,
+        policy=policy,
+        predicate_results=tuple(predicate_results),
+        predicate_evidence_bindings=tuple(predicate_evidence_bindings),
+        executor_ids=frozenset(executor_ids),
+        engine_version=engine_version,
+        expected_input_fingerprint=expected_input_fingerprint,
+        expected_evaluation_fingerprint=expected_evaluation_fingerprint,
+        expected_decision_fingerprint=expected_decision_fingerprint,
+    )
+
+
+def validate_decision_replay_material(material: DecisionReplayMaterial) -> None:
+    """Pure completeness validation. Answers ONLY: is this material
+    structurally complete and internally valid enough to be handed to a
+    future replay verifier (M8-E4-C, not implemented here)? It never answers
+    whether replay would actually reproduce the historical commitments - that
+    is HISTORICAL COMMITMENT MATCH, a strictly later, separate concern (see
+    DecisionReplayMaterial's own docstring). Raises DecisionValidationError on
+    any incompleteness; returns None (silently) when material is complete.
+
+    Reuses is_binding_admissible() - an existing pure validation/admissibility
+    helper - exactly as its own docstring sanctions: to answer "could this
+    binding participate in a valid decision evaluation under the supplied
+    material context," never to claim historical replay success. Also proves
+    build_decision_behavioral_context() succeeds against the supplied
+    material - the same derivation compute_input_fingerprint() would perform
+    internally - without computing an input_fingerprint or any verdict.
+
+    Does NOT call evaluate_decision() or build_decision_record(). Does NOT
+    compare any recomputed fingerprint against the material's own
+    expected_input_fingerprint/expected_evaluation_fingerprint/
+    expected_decision_fingerprint - that comparison is M8-E4-C's replay
+    verification, not this function's completeness check."""
+    _require(isinstance(material, DecisionReplayMaterial), "material must be a DecisionReplayMaterial")
+
+    results_by_fingerprint = {r.result_fingerprint: r for r in material.predicate_results}
+    admitted_predicate_ids: set[str] = set()
+    for b in material.predicate_evidence_bindings:
+        matched_result = results_by_fingerprint[b.predicate_result_fingerprint]
+        admissibility = is_binding_admissible(
+            b,
+            predicate_result=matched_result,
+            current_snapshot=material.snapshot,
+            current_policy=material.policy,
+            executor_ids=material.executor_ids,
+        )
+        _require(admissibility.admissible, f"replay material contains an inadmissible binding for predicate_id {matched_result.predicate_id!r}: {admissibility.reason_code}")
+        admitted_predicate_ids.add(matched_result.predicate_id)
+
+    for r in material.predicate_results:
+        _require(r.predicate_id in admitted_predicate_ids, f"predicate_result {r.predicate_id!r} has no admissible PredicateEvidenceBinding in this replay material")
+
+    # Proves DecisionBehavioralContext is derivable from this material alone -
+    # not that any input/evaluation/decision fingerprint recomputes correctly.
+    build_decision_behavioral_context(material.policy, material.predicate_evidence_bindings, material.executor_ids)
