@@ -12,13 +12,13 @@ repository write access by construction.
 
 ## The two contracts
 
-Ten adversarial review rounds produced twenty-five amendments and twenty-four named attacks. Review 7
+Eleven adversarial review rounds produced twenty-six amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 11, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 12, not frozen |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
@@ -89,6 +89,7 @@ had just added — which is why the split matters more than another amendment wo
 | 8 | A19, A20, A21 succeeded — all three inside the core, no new semantic layer | AM-19…21 |
 | 9 | first full 14-attack round on T1A: **12 blocked, 2 composed attacks passed**. §10's procedure still tested a field AM-19 had deleted and tested neither AM-20's grants nor AM-21's binding | AM-22 |
 | 10 | A22, A23, A24 — the granted action was never carried in the signed message, and consumption and head transitions were check-then-act, which are races | AM-23…25 |
+| 11 | full 17-attack round on T1A: **15 blocked, A23/A24 ambiguous** on the cross-authority case. AM-25 required one atomic transition across state §3.1 permits to be partitioned | AM-26 |
 
 Three properties turned out to be distinct, and the contract needed each separately:
 
@@ -129,9 +130,14 @@ A single-use authorization is a linear capability, and a head is a single-writer
 written as "check, then act" hold against a sequential adversary and fail against a concurrent one,
 so A23 and A24 are the concurrent cases of A21 and A18 rather than new semantics.
 
-Rounds 8 through 10 introduced no new semantic layer: message identity, signer authority,
-authorization binding, then action binding and atomicity. The findings are converging on the
-substrate rather than expanding past it.
+Rounds 8 through 11 introduced no new semantic layer: message identity, signer authority,
+authorization binding, action binding, atomicity, and finally where the state that atomicity spans
+must live. The findings are converging on the substrate rather than expanding past it, and round 11
+is the first whose single finding was a **consistency defect between two existing sections** rather
+than a missing rule — §3.1 permitted a topology §10.1 could not survive.
+
+Still outstanding as evidence: no round has yet completed without an amendment. The shape of the
+findings is inductive support for convergence; only a clean round is proof of it.
 
 ## Standing constraints
 
