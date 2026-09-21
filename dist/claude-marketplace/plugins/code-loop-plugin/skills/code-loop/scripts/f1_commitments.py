@@ -137,8 +137,28 @@ class SequenceSource:
     bytes, same signature, two different attestations collapsing to one commitment reference. A
     test asserting a reference covers the signature caught it.
 
-    `sequence` is "per-signing-identity, atomic, durable" in §6. This gives the first two. Durable
-    is I5's, and the seam is here so I5 replaces the allocator without touching a builder.
+    **What I3 guarantees, stated as a bound and not as a hope.**
+
+        sequence is unique and monotonic per signing identity, within one process lifetime.
+
+    **What I3 does NOT claim:** cross-process uniqueness, crash-persistent monotonicity, or
+    replay-safe allocation after a restart. Preventing a collision between processes needs durable
+    shared sequencing, which is transactional authoritative state — I5's, not this module's.
+
+    There is deliberately no workaround here: no PID, no UUID, no random prefix. Any of those would
+    make collisions rarer without making them impossible, and a rare invisible collision is worse
+    than a declared limit, because nothing ever reports it.
+
+    I5 must replace this with:
+
+        allocate_sequence(key_id) -> atomic, durable, monotonic, never reused after a crash or
+                                     restart, shared across every signer for that identity
+
+    and must treat that allocation as an **authoritative state transition** under §10.1, not a
+    helper counter. The two-signer collision this module was built after showed why: `sequence` is
+    not metadata about a message, it is part of the message's historical identity. Two attestations
+    that share one sequence share one commitment reference, and one of them silently ceases to
+    exist.
     """
 
     def __init__(self) -> None:

@@ -137,6 +137,43 @@ class AllElevenTypesTests(Fixture):
                        relation="NEW_TASK")["message"]["sequence"]]
         self.assertEqual(len(set(seqs)), 2, "two signers for one identity reused a sequence")
 
+    def test_the_sequence_guarantee_is_bounded_to_one_process_and_says_so(self):
+        """The limit is declared, not worked around.
+
+        I3 guarantees uniqueness and monotonicity per identity within one process lifetime. It
+        claims nothing across processes or across a restart — that needs durable shared
+        sequencing, which is I5's transactional state. A PID or random prefix here would make
+        collisions rarer without making them impossible, which is strictly worse than a limit
+        someone can read.
+        """
+        source = (Path(__file__).resolve().parents[1]
+                  / "scripts" / "f1_commitments.py").read_text()
+        self.assertIn("within one process lifetime", source)
+        self.assertIn("does NOT claim", source)
+        # Check what the module IMPORTS, not what its prose mentions. Scanning raw text for
+        # "random" matched the docstring saying there is no random prefix — the same mistake as a
+        # probe that re-implements a rule crudely instead of asking the real question.
+        import ast
+        imported = set()
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                imported.update(alias.name.split(".")[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                imported.add(node.module.split(".")[0])
+        for workaround in ("os", "uuid", "random", "secrets", "time", "socket"):
+            self.assertNotIn(workaround, imported,
+                             f"I3 imports {workaround!r}; a PID, UUID or random prefix would make "
+                             f"sequence collisions rarer without making them impossible, which "
+                             f"hides the limit instead of declaring it")
+
+    def test_a_fresh_allocator_restarts_at_zero_which_is_the_declared_limit(self):
+        # Not a bug being asserted as correct: this is exactly the boundary I5 closes, pinned so
+        # that closing it is a visible change rather than a silent one.
+        restarted = c.SequenceSource()
+        self.assertEqual(restarted.allocate("key-1"), 0)
+        self.assertEqual(self.sequences.allocate("key-1"), 0)
+        self.assertEqual(self.sequences.allocate("key-1"), 1)
+
     def test_genesis_previous_commitment_is_spelled_the_same_way_as_in_the_registry(self):
         # I2 uses "" for the first link. Two layers disagreeing on how genesis is spelled is
         # AM-39's cross-contract defect one level down.
