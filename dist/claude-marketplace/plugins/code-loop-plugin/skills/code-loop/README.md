@@ -396,13 +396,21 @@ python scripts/install-project.py /tmp/demo-project
 python scripts/validate-council.py .code-loop-template
 python -m unittest discover -s tests
 python -m unittest discover -s benchmarks
+python scripts/build-dist.py --check
 python ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py dist/openai-plugin
 ```
 
 ## Release Notes
 
-`code-loop.zip` is generated from the current v5 source tree. After changing the package, rerun
-validation and regenerate the archive without nesting old archives inside it.
+`dist/` and `code-loop.zip` are byte-identical copies of the source tree, rebuilt by one command:
+
+```bash
+python scripts/build-dist.py
+```
+
+Run it whenever a packaged file changes, and commit the result. CI runs
+`python scripts/build-dist.py --check` and fails if the packages and the source disagree, so a
+package can no longer quietly fall behind the code it ships.
 
 ### 5.1.0
 
