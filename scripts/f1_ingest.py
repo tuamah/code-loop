@@ -88,6 +88,37 @@ class Ingest:
             raise IngestError(str(exc)) from exc
         return stage2
 
+    def record_run_observation(self, run_commitment: str, *, candidate_fingerprint: str,
+                               execution_identity: str) -> None:
+        """A fact the TCB observed itself, not one carried by a message.
+
+        Two facts in F1 are not asserted by anybody and therefore cannot arrive as signed claims:
+        the `candidate_fingerprint` the controller DERIVES from the master it built, and the
+        `execution_identity` it launches. §7.5 makes the controller their producer, so requiring a
+        message for them would mean requiring someone to *assert* them — which is exactly what
+        deriving them instead is for.
+
+        So the invariant is precise rather than absolute:
+
+            a fact derived from a MESSAGE enters only through apply();
+            a fact the TCB OBSERVES ITSELF enters only through here, and only ever as values the
+            controller computed — this method takes no untrusted input and no verdict.
+
+        Both commit transactionally, and this one refuses to invent the run it annotates.
+        """
+        with self._store.transaction() as tx:
+            facts = tx._staged.setdefault(self._scope, {})
+            run = self._table(facts, "runs").get(run_commitment)
+            if run is None:
+                raise IngestError(
+                    "an observation does not create the run it names; the run must already be a "
+                    "TCB-held fact")
+            run["candidate_fingerprint"] = candidate_fingerprint
+            identities = set(run.get("execution_identities", ()))
+            identities.add(execution_identity)
+            run["execution_identities"] = sorted(identities)
+            self._table(facts, "candidates").setdefault(candidate_fingerprint, {"parent": None})
+
     # -- appliers, one per message type -----------------------------------------------------------
 
     @staticmethod

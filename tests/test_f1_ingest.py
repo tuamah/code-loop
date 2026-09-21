@@ -391,13 +391,32 @@ class VerdictIngestTests(Pipeline):
 
 
 class InvariantTests(Pipeline):
-    def test_no_fact_appears_without_going_through_the_pipeline(self):
-        """apply() is the only writer, and it takes a signed message and nothing else."""
+    def test_the_two_writers_are_exactly_these_two_and_each_is_constrained(self):
+        """The invariant, stated precisely rather than absolutely.
+
+        A fact derived from a MESSAGE enters only through apply(), which takes a signed message
+        and nothing else. A fact the TCB OBSERVES ITSELF — the candidate_fingerprint the
+        controller derives from the master it built, and the execution identity it launches —
+        enters only through record_run_observation(), which takes no untrusted input and no
+        verdict. I7 adds the second writer; requiring a signed message for a derived fact would
+        mean requiring someone to ASSERT it, which is the thing deriving it exists to avoid.
+        """
         import inspect
+        public = sorted(name for name in dir(ing.Ingest)
+                        if not name.startswith("_") and callable(getattr(ing.Ingest, name)))
+        self.assertEqual(public, ["apply", "record_run_observation"],
+                         f"another public writer exists: {public}")
         self.assertEqual(list(inspect.signature(ing.Ingest.apply).parameters), ["self", "signed"])
-        public = [name for name in dir(ing.Ingest)
-                  if not name.startswith("_") and callable(getattr(ing.Ingest, name))]
-        self.assertEqual(public, ["apply"], f"another public writer exists: {public}")
+        observation = list(inspect.signature(ing.Ingest.record_run_observation).parameters)
+        self.assertEqual(observation, ["self", "run_commitment", "candidate_fingerprint",
+                                       "execution_identity"])
+        self.assertNotIn("verdict", observation)
+
+    def test_an_observation_does_not_create_the_run_it_names(self):
+        with self.assertRaises(ing.IngestError):
+            self.ingest.record_run_observation("sha256:" + "77" * 32,
+                                               candidate_fingerprint=D,
+                                               execution_identity="executor-1")
 
     def test_every_message_type_has_an_applier(self):
         self.assertEqual(set(self.ingest._appliers), set(k.DOMAINS))
