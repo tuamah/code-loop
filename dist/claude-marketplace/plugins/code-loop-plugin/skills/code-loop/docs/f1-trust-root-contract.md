@@ -1,8 +1,8 @@
 # F1-T1 — Trust Root Threat Model & Contract
 
-**Status: DRAFT, revision 5, after adversarial reviews 1-4. NOT FROZEN. Review 4 found two more
-attacks and one semantically wrong rule before a single attack was re-run; no implementation may
-begin against it.**
+**Status: DRAFT, revision 6, after adversarial reviews 1-5. NOT FROZEN. Review 5 found three more
+attacks, including one against the very rule review 4 introduced; no implementation may begin
+against it.**
 
 F1 renamed per audit: *Missing Authenticated Trust Root / Forgeable Authority State*.
 
@@ -51,6 +51,27 @@ attacks — the invariants were incomplete, so testing them would have measured 
   proves they were the bytes it was permissible to build on. A caller-supplied `base_digest` let the
   adversary pick a base where the failing check does not exist. The authorized base is now a TCB
   commitment and a mismatch is refused. Integrity is not authenticity, one level further in.
+
+Revision 6 (review 5) adds three more. Two of them attack machinery the previous round introduced,
+which is the expected shape of this process:
+
+- **AM-10 (§10.2)** — **A10 succeeded, against AM-8 itself.** AM-8 required a PASS on every
+  *applicable* obligation and let the gate decide what applicable meant, so the adversary stops
+  laundering the candidate and launders the scope instead: an obligation that is FAILING becomes an
+  obligation that is not required. Applicability now has its own authenticated commitment and
+  lineage. Silence does not deactivate, narrowing counts as deactivation, and switching off a
+  currently-adverse obligation demands strictly stronger authority than switching off a passing one.
+- **AM-11 (§7.0)** — **A11 succeeded, against AM-7.** Task Genesis was given four relations to
+  choose between and no stated basis for choosing; any classifier driven by task text or caller
+  hints is an oracle the adversary tunes until it yields `NEW_TASK`. Rather than a better
+  classifier, the prize is removed: no task relation changes which obligations a candidate must
+  satisfy, and an unclear relation fails closed to human authority.
+- **AM-12 (§7.0.1)** — **A12 succeeded.** AM-9 derived the authorized base from "authenticated
+  project state" without ever saying where the first such state came from. Adopting repository HEAD
+  or a caller-named commit at provisioning moves Base Rebinding to the founding moment. A Project
+  Genesis Commitment now records a digest — never a mutable ref — under a human-authorized ceremony.
+  This is where the regress terminates, and it terminates in an act of authorization, not a
+  computation.
 
 ## 0. What this fixes, stated honestly
 
@@ -205,6 +226,29 @@ claims begin at Mode B.
 
 `deployment_mode` is recorded in every payload (§6) so a reader can never over-read the guarantee.
 
+### 3.1 Logical authorities are not a service count
+
+Each round of this review closed a gap by naming an authority, and the list is now:
+
+```
+Registry Root · Project Genesis · Task Genesis · Run Genesis · Freeze
+Verification Controller · Acceptance · Human
+```
+
+That is eight **authorization scopes**, and it would be a poor reading to build eight services with
+eight keys. F1-T2 may co-locate them in a single control plane provided the separations that do the
+security work survive:
+
+| Separation | Nature | May it be co-resident? |
+|---|---|---|
+| worker ↔ controller | untrusted code execution | **no** — this is the one hard isolation boundary (§2, §3) |
+| authority ↔ authority | authorization scope | yes, as distinct scopes and key roles in one plane |
+| message domains | cryptographic domain separation (§6) | must stay distinct regardless of topology |
+| human authority | outside the machine where feasible (§4) | no |
+
+Splitting semantic authority does not require exploding the architecture into ten processes.
+Collapsing the worker boundary, on the other hand, silently returns the deployment to Mode A.
+
 ## 4. Authority identities and key ownership
 
 Asymmetric per-identity keys, not a shared MAC secret: a shared secret cannot distinguish the
@@ -306,7 +350,7 @@ Run Genesis alone therefore only moved laundering up one level, from **Fresh-Run
 (A7). The chain must start above the task, and every link must be minted by the TCB:
 
 ```
-Authenticated Project
+Project Genesis           (Project Commitment, NOGAP::PROJECT::v1) — §7.0.1
         ↓
 Authenticated Task        (Task Commitment, NOGAP::TASK::v1)
         ↓
@@ -333,10 +377,50 @@ NEW_TASK | CONTINUATION_OF(task-X) | SUPERSEDES(task-X) | CHILD_OF(task-X)
 ```
 
 That relation is **authorized, not merely declared**. A caller asserting `NEW_TASK` is exactly the
-A7 move, so the authority decides the relation from TCB-held state, and escaping an existing task's
-unsatisfied obligations requires authenticated human approval (§4). Rewording a task never produces
-a clean slate — and under §10.1 it would not help even if it did, because obligations are
-project-scoped rather than task-scoped.
+A7 move, so the authority decides the relation from TCB-held state.
+
+**Task relation carries no power over obligations (AM-11).** Revision 5 left Task Genesis deciding
+between four relations without saying how — and any classifier driven by similarity, task text, or
+caller hints is an oracle the adversary tunes until it returns `NEW_TASK` (A11). The fix is not a
+better classifier; it is to remove the prize:
+
+> **No task relation, and no combination of them, changes which obligations a candidate must
+> satisfy.**
+
+- `NEW_TASK` does not clear project obligations; they were never the task's to clear (§10.1).
+- `SUPERSEDES` does not transfer or discharge an obligation. Only an authenticated applicability
+  transition (§10.2) changes an obligation's state — task relations are not that mechanism.
+- Task Genesis alone may never drop lineage.
+- An unclear relation is `AMBIGUOUS_RELATION`: **fail closed**, escalate to human authority (§4).
+
+Relation therefore stays useful for organising work and reading history, and is worthless as an
+escape from it.
+
+### 7.0.1 Project genesis and the initial base (AM-12)
+
+AM-9 derives the authorized base from "authenticated project state". A12 asks the only question that
+matters about that phrase: **where did the first authenticated project state come from?** If
+provisioning adopts repository HEAD, or a commit the caller names, Base Rebinding has simply moved
+to the founding moment.
+
+```
+Project Genesis Commitment        (human/operator-authorized ceremony, §5)
+  project_id
+  repository_identity       binds the project to a repository; blocks same-name substitution
+  initial_base_digest       a DIGEST, never a mutable ref — a branch name is not a commitment
+  policy_baseline
+  gate_baseline             what §8 matches gate content against
+  provisioned_by
+  provisioning_sequence
+```
+
+Adopting the repository's current HEAD is acceptable **only** when a human authorizes that specific
+digest and the ceremony records the digest itself. A ref moves; a digest does not.
+
+This is where the regress terminates, and it terminates in an **act of authorization, not a
+computation**. Every authenticated derivation in this contract bottoms out here. The contract's job
+is to make that point singular, explicit and auditable rather than implicit and scattered — which is
+also why R4 names provisioning the highest-value target in the whole design.
 
 ### 7.1 Run genesis (AM-4) — breaking revision 3's circular dependency
 
@@ -582,6 +666,46 @@ is visibly that.
 
 **Supersession is not proof of causal repair.** See R5.
 
+### 10.2 Applicability is part of the trust root (AM-10)
+
+§10.1 requires a PASS on every **applicable** obligation, and revision 5 let the gate decide what
+"applicable" meant. That hands the adversary a second laundry: instead of changing the candidate
+until the failure disappears, change the *scope* until the obligation does.
+
+```
+O1 applicable -> FAIL            becomes            O1 not applicable -> no PASS required
+```
+
+The word *applicable* is therefore load-bearing, and anything load-bearing must be authenticated
+exactly like identity, gate and candidate. Applicability gets its own commitment and its own
+lineage:
+
+```
+Applicability Commitment          (NOGAP::APPLICABILITY::v1)
+  obligation_id
+  project_scope
+  predicate_scope
+  activation_condition
+  deactivation_condition
+  authority_required_for_change
+```
+
+Rules:
+
+- **An activated obligation stays activated** on the project's and candidate's descendants until an
+  **authenticated applicability transition** authorizes otherwise.
+- **Silence is not deactivation.** A later gate that simply does not mention an obligation
+  deactivates nothing. Revision 5's "derived from the current gate" is exactly the defect.
+- **Narrowing is deactivation.** Shrinking `predicate_scope` so the candidate falls outside it is
+  the same move as removal and needs the same authority. The rule covers scope changes, not just
+  deletions.
+- **Deactivating a red obligation is not the same act as deactivating a green one.** Turning off a
+  currently-adverse obligation is the attack in its purest form — switching off the failing check —
+  and requires strictly stronger authority, human by default (§4), never an agent.
+- Transitions are **append-only with lineage**, so the history reads "O1 was active and failing, then
+  deactivated by X, under authority Y, at sequence N" rather than "O1 was never applicable."
+
+
 ## 11. Rotation, revocation, and what local time cannot prove
 
 `signed_at` comes from the signer's own clock. There is no trusted timestamping and no transparency
@@ -676,7 +800,7 @@ verdict as more than it is.
 
 ## 17. Open for adversarial review 2
 
-**Nine** attacks must be shown to fail before F1-T1 FREEZE.
+**Twelve** attacks must be shown to fail before F1-T1 FREEZE.
 
 Review 3, against revision 3:
 
@@ -697,8 +821,20 @@ A8  Base Rebinding                      SUCCEEDED                      -> AM-9
 A9  Trivial-Change Failure Laundering   SUCCEEDED; AM-6 was wrong      -> AM-8
 ```
 
-Revision 5 has not been attacked. Review 5 must run all nine against it. Any attack that succeeds,
+Review 5, against revision 5, by inspection:
+
+```
+A10 Applicability Narrowing             SUCCEEDED, against AM-8    -> AM-10
+A11 Task-Relation Laundering            SUCCEEDED, against AM-7    -> AM-11
+A12 Project/Base Genesis Substitution   SUCCEEDED                  -> AM-12
+```
+
+Revision 6 has not been attacked. Review 6 must run all twelve against it. Any attack that succeeds,
 or whose outcome is ambiguous, blocks the freeze.
+
+Note the trend worth watching: reviews 4 and 5 each found defects in machinery the previous round
+had just introduced. Every new authority is new attack surface, so the twelve must be re-run in
+full against revision 6 rather than only the three newest.
 
 An attack that fails only under conditions this contract does not require is not a pass; the
 condition must be written in.
