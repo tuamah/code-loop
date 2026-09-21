@@ -18,7 +18,7 @@ together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 9, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 10, not frozen |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
@@ -84,6 +84,7 @@ had just added — which is why the split matters more than another amendment wo
 | 6 | A13, A14, A15 succeeded; A13 defeated AM-10 by timing | AM-13…15 |
 | 7 | A16, A17, A18 succeeded; established the T1A/T1B seam | AM-16…18 |
 | 8 | A19, A20, A21 succeeded — all three inside the core, no new semantic layer | AM-19…21 |
+| 9 | first full 14-attack round on T1A: **12 blocked, 2 composed attacks passed**. §10's procedure still tested a field AM-19 had deleted and tested neither AM-20's grants nor AM-21's binding | AM-22 |
 
 Three properties turned out to be distinct, and the contract needed each separately:
 
@@ -102,9 +103,17 @@ authorization  this signer approved THIS operation, once
 
 Authentication proves who signed; it never proves what they authorized.
 
-Round 8 is the first round whose findings introduced no new layer — all three sat in message
-identity, signer authority and authorization binding. That shape, rather than the count, is what
-convergence looks like.
+Round 8 was the first round whose findings introduced no new layer — all three sat in message
+identity, signer authority and authorization binding. Round 9 then found that the two rules round 8
+added had been written into the sections that describe them and never into §10, the procedure that
+enforces them:
+
+> **A rule stated in one section and absent from the procedure that enforces it is not enforced.**
+
+Round 9 also surfaced the maintenance hazard behind it: AM-19 replaced the payload, and the
+admissibility list written against the old payload was left in place, still testing a field that no
+longer existed. Amendments are not additive — each one must be checked against the procedure it
+touches.
 
 ## Standing constraints
 

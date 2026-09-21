@@ -1,6 +1,8 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 9, after adversarial review 8. NOT FROZEN.** Split out of the single F1-T1
+**Status: DRAFT, revision 10, after adversarial review 9. NOT FROZEN.** Review 9 ran the full
+fourteen-attack round: twelve blocked, and the two composed attacks introduced by review 8 passed —
+because §10's procedure had not been rebuilt when AM-19 replaced the payload it was written against. Split out of the single F1-T1
 contract after review 7, which established where the seam lies. Review 8 attacked the core alone and
 found three defects in it — A19 missing domain separation for the newest commitments, A20 a registry
 that granted nothing, A21 human approvals replayable across operations — all three inside message
@@ -608,21 +610,59 @@ registry itself.
 ## 10. Admissibility
 
 `is_authoritative_evidence()` today reads `provenance.authority` and believes it. It is replaced by
-an ordered, fail-closed procedure with no default-admissible path:
+an ordered, fail-closed procedure with no default-admissible path.
+
+**The procedure is normative and complete (AM-22).** Revision 9 left an eleven-step list written
+against the single payload AM-19 had already replaced: step 6 tested `authority_class`, a field the
+envelope no longer has, and no step tested AM-20's grants or AM-21's authorization binding at all.
+Those rules existed only as prose in §5.1 and §6.1 while §10 claimed to be the place admissibility
+is decided — so the composed attacks (a valid key signing a message type it was never granted; a
+genuine human approval replayed onto another operation) passed every enumerated step. A rule stated
+in one section and absent from the procedure that enforces it is not enforced.
+
+The procedure now mirrors AM-19's split: a stage every message passes, then a stage keyed on
+`message_type`. A message type with no stage-2 clause is inadmissible rather than waved through.
 
 ```
- 1. payload parses under a known schema_version and re-canonicalizes byte-identically  else INADMISSIBLE
- 2. message_type matches the signed domain prefix                                      else INADMISSIBLE
- 3. signature verifies under key_id                                                    else INADMISSIBLE
- 4. key_id resolves in the authenticated registry                                      else INADMISSIBLE
- 5. key state permits this signature (§11)                                             else INADMISSIBLE / DISPUTED
- 6. registry grants producer_identity the claimed authority_class                      else INADMISSIBLE
- 7. scope covers this project_id / run_id / candidate                                  else INADMISSIBLE
- 8. gate_commitment matches the authenticated commitment for this run                  else INADMISSIBLE
- 9. candidate_fingerprint matches the live candidate                                   else STALE
-10. producer_identity is not an execution identity of this run                         else INADMISSIBLE
-11. deployment_mode is recorded and not weaker than policy requires                    else INADMISSIBLE
+STAGE 1 — every message, in order
+ 1. envelope parses at a known schema_version and re-canonicalizes byte-identically   else INADMISSIBLE
+ 2. message_type is in §6's closed domain list                                        else INADMISSIBLE
+ 3. message_type equals the signed domain prefix                                      else INADMISSIBLE
+ 4. body validates against THAT message_type's schema; unknown fields reject           else INADMISSIBLE
+ 5. signature verifies under key_id                                                    else INADMISSIBLE
+ 6. key_id resolves in the authenticated registry at its current head                  else INADMISSIBLE
+ 7. key state permits a signature at signed_at (§11)                     else INADMISSIBLE / DISPUTED
+ 8. registry grants this key_id THIS message_type and action (§5.1)                    else INADMISSIBLE
+ 9. registry grant covers this project scope (§5.1)                                    else INADMISSIBLE
+10. every head the body names is the current authoritative head (§10.3, AM-18)         else INADMISSIBLE
+11. sequence is consistent for this signing identity; gaps are reported, not ignored   else INADMISSIBLE
+12. deployment_mode is recorded and not weaker than policy requires                    else INADMISSIBLE
+
+STAGE 2 — by message_type
+ VERIFY         gate_commitment is the authenticated commitment for this run           else INADMISSIBLE
+                candidate_fingerprint matches the live candidate                       else STALE
+                producer_identity is not an execution identity of this run             else INADMISSIBLE
+ DECISION       decision_snapshot_digest resolves and its heads were current at CAS    else INADMISSIBLE
+                producer_identity is not an execution identity of this run             else INADMISSIBLE
+ GATE           names a TCB-held Run Commitment; baseline match OR a HUMAN
+                authorization admissible for THIS gate content (§8)                    else INADMISSIBLE
+ HUMAN          purpose-binding holds: action_type, target_message_type, subject_digest
+                and requested_transition match the operation being authorized          else INADMISSIBLE
+                not previously consumed, or within its declared reusable scope (§6.1)  else INADMISSIBLE
+                policy_head is current; not expired                                    else INADMISSIBLE
+ PROJECT        provisioning ceremony recorded; repository_identity binds (§7.0.1)     else INADMISSIBLE
+ TASK           project_commitment resolves; relation authorized, not declared (§7.0)  else INADMISSIBLE
+ RUN            task_commitment resolves; run_id was TCB-minted (§7.1);
+                authorized_base_commitment resolves (§7.2)                             else INADMISSIBLE
+ POLICY         epoch is current head; previous_commitment chains (§10.3)              else INADMISSIBLE
+ APPLICABILITY  epoch chains; authorization_ref is an admissible HUMAN or policy-granted
+                authorization for this class and transition (T1B §B4)                  else INADMISSIBLE
+ REGISTRY       signed by the trust root; epoch chains (§5)                            else INADMISSIBLE
 ```
+
+Stage 1 step 8 is what makes a key a *scoped* principal rather than a TCB master key, and the HUMAN
+clause is what makes an approval an authorization rather than a token. Both were the round-9
+composed attacks.
 
 The checks the audit confirmed genuine — `acceptability()`'s executor-identity rejection,
 contradictory-evidence blocking, non-passing rejection — are kept, now running on an authenticated
