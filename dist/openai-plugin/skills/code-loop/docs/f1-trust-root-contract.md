@@ -12,19 +12,37 @@ repository write access by construction.
 
 ## The two contracts
 
-Twenty adversarial review rounds produced thirty-eight amendments and thirty-five named attacks. Review 7
+Twenty-one adversarial review rounds produced thirty-eight amendments and thirty-five named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 20, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | **FROZEN rev 22** |
 | **Ledger** | [`f1-amendment-ledger.md`](f1-amendment-ledger.md) | What every amendment established, where it lives now, and whether it is still in force | canonical, CI-checked |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
 T1B. A T1B rule enforced over unauthenticated state is decoration; a T1A substrate with no T1B
 semantics authenticates statements that mean nothing in particular.
+
+### T1A FREEZE
+
+Round 21 completed clean against revision 22 and T1A is frozen at that content. The digests below
+pin it; the freeze commit is tagged `f1-t1a-freeze-rev22`.
+
+```
+FROZEN — F1-T1A, revision 22, after adversarial review 21
+sha256  docs/f1-t1a-trust-core.md    b2b6ec458ad004ad64cabb6dc726f7f578d205162ca3fbd4561a538e92237b1f
+sha256  docs/f1-amendment-ledger.md  5c3fb4cc2d864ccfd25ec656d68b945ad5a2df1601d9d047292653e25924a83b
+criterion met   0 successful  0 partial  0 ambiguous  0 security-semantic delta
+                0 guard weakening  0 hidden continuity loss  0 uncommitted legal universe
+```
+
+No semantic change may be made to T1A except through a new numbered amendment that explicitly
+reopens it, is recorded in the ledger, and names the invariant it changes. An editorial change is
+still possible and still has to be acknowledged deliberately in the ledger, so the digests above
+move only with a visible diff. T1B is not frozen and is the next target.
 
 **Freezing T1A does not close F1.** The intended sequence:
 
@@ -322,11 +340,16 @@ blocked, by AM-35's bijection.
 AM-38 pins all four in §-1's commitment block. Enforcing it found nothing pre-existing — unlike
 round 19 — and the contract's normative text was again untouched except to record the rule.
 
-Still outstanding: no round has completed without a security-semantic delta. But rounds 17 through
-20 each found their defect in the *guards*, and that surface is now exhausted: both guards have
-been attacked at the same intensity, neither attests to itself, and neither derives its legal
-extent from matter that could be truncated or forged. **T1A is a freeze candidate**, pending a
-round that completes clean. T1B has not yet been attacked independently.
+**Round 21** was confirmatory: the full package against revision 22 with no prior edit and no new
+scope. Seventeen attacks blocked, six structural audits clean, and all seventeen guard probes from
+rounds 18–20 behaving correctly with editorial reflow still passing. One probe reported A2 missing;
+it was the probe, which matched a clause across a line wrap and missed the blockquote marker — the
+clause is in §2. **Zero successful, zero partial, zero ambiguous, zero security-semantic delta,
+zero guard weakening, zero hidden continuity loss, no uncommitted legal universe.**
+
+That is the first round in twenty-one to complete without a delta, and it broke the loop in which
+each fix produced a new surface. **T1A is frozen at revision 22.** T1B has not yet been attacked
+independently and is next.
 
 ## Standing constraints
 
