@@ -51,3 +51,4 @@ decision that was reconsidered, and why.
 | AM-32 | LIVE | T1A | `Closure rules for this contract (AM-32)` | Every security-significant enumeration is DERIVED, CLOSED+CHECKED, or NON-NORMATIVE |
 | AM-33 | LIVE | T1A | `The rule applies to itself (AM-33)` | The closure manifest is canonical and checked; no enumeration enters undeclared |
 | AM-34 | LIVE | T1A | `Clause 3 says *outcome* deliberately (AM-34)` | Mode B forbids influence that moves the outcome toward acceptance, not all influence |
+| AM-35 | LIVE | T1A | `bijection, not mere coverage` | The closure manifest is a bijection; enumerations are blocks or tables, both scanned |

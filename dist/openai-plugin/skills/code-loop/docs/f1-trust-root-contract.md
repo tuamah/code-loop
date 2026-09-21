@@ -12,13 +12,13 @@ repository write access by construction.
 
 ## The two contracts
 
-Sixteen adversarial review rounds produced thirty-four amendments and twenty-four named attacks. Review 7
+Seventeen adversarial review rounds produced thirty-five amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 18, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 19, not frozen |
 | **Ledger** | [`f1-amendment-ledger.md`](f1-amendment-ledger.md) | What every amendment established, where it lives now, and whether it is still in force | canonical, CI-checked |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
@@ -238,7 +238,42 @@ invariant that can never be literally true is as useless as one always true. It 
 influence that moves the **outcome toward acceptance** — resource pressure drives fail-closed,
 which is availability and out of scope.
 
-Still outstanding: no round has completed without an amendment. Round 17 runs against revision 18.
+## The freeze criterion, restated
+
+"Zero amendments" stopped being the right test once the contract matured: a typo fix should not
+reset the counter. The criterion is now **zero security-semantic delta**, and the decisive question
+for any change is:
+
+> **Is there a single execution case whose verdict differed before the change and after it?**
+
+Yes → semantic; the round fails. No → editorial, and only if every guard and test keeps its
+expectations unchanged. Editorial corrections get no AM-number: an amendment means a change to the
+security model, and numbering comma fixes would make the ledger claim discoveries that never
+happened.
+
+A round is clean when it finds no change to: the accepted/rejected set, the threat model, an
+authority or scope, a cryptographic binding, a schema/domain/action, admissibility, a state
+transition or its atomicity, current-head semantics, fail-closed behaviour, a trust claim,
+migration behaviour, or any MUST/MUST NOT an implementation depends on.
+
+By that test AM-33 and AM-34 were both semantic — one changed the enforceability of the closure
+rule, the other changed what Mode B forbids — so round 16 failed correctly.
+
+**Round 17** attacked AM-33 and AM-34 directly. AM-34 held. AM-33's guard did not, and the two
+attacks were run rather than reasoned about:
+
+```
+a block beginning `epoch`, behind the manifest's short `epoch` prefix   → passed silently
+a security table instead of a fenced block                             → not scanned at all
+```
+
+AM-35 makes the manifest a **bijection** — every entry matches exactly one enumeration and every
+enumeration exactly one entry, so a prefix covering two things can no longer cover the next thing —
+and constrains security-significant enumerations to blocks and tables, which makes the scan's reach
+complete rather than a matter of where someone put a list. Both attacks now fail.
+
+Still outstanding: no round has completed without a security-semantic delta. Round 18 runs against
+revision 19.
 
 ## Standing constraints
 
