@@ -1,15 +1,18 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 13, after adversarial review 12. NOT FROZEN.** Review 12 ran the full
-seventeen-attack round: **all seventeen blocked**, including both concurrency composed cases. The
-round nevertheless produced one amendment, found outside the attack list: §12's migration grant —
-the single sanctioned exemption from fail-closed — had no representation in §6's closed message and
-action model, so it could only have lived in unsigned configuration. Split out of the single F1-T1
-contract after review 7, which established where the seam lies. Review 8 attacked the core alone and
-found three defects in it — A19 missing domain separation for the newest commitments, A20 a registry
-that granted nothing, A21 human approvals replayable across operations — all three inside message
-identity, signer authority and authorization binding rather than in any new semantic layer. See `f1-trust-root-contract.md` for F1's overall
-status and for F1-T1B.
+**Status: DRAFT, revision 14, after adversarial review 13. NOT FROZEN.**
+
+Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
+`f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
+
+Review 13 re-ran all seventeen attacks — **all blocked** — and added a systematic representability
+audit in both directions: every normative rule traced forward to a message, domain, action,
+producer, grant, admissibility clause, state head, atomic transition and enforcement point; and
+every message type traced back to its producer, consumer, and the security decision that depends on
+it. The audit found three gaps the attack list does not reach, all created or exposed by AM-27:
+`MIGRATION` carried a head but was missing from the atomic-transition list, §4's producer table
+covered four of eleven message types, and nothing barred a migration grant from elevating the trust
+claim. AM-28 closes all three.
 
 T1A answers one question: **can any statement in this system be authenticated, bound to an identity,
 a scope and an order, and read as part of a coherent state?** It says nothing about what the
@@ -222,6 +225,18 @@ door.
 | `tool` | **no** | — | nothing authoritative |
 
 The executor and the verification worker hold **no** key of any class.
+
+**The class is not the gate; the registry grant is (AM-28).** This table predates §6's eleven
+message types, and its "May sign" column names four of them — so read alone it implies nobody may
+produce `PROJECT`, `TASK`, `RUN`, `POLICY`, `APPLICABILITY`, `REGISTRY` or `MIGRATION` at all, and
+it offers no class for the genesis authorities or the registry root. What a key may sign is decided
+**only** by §5.1's grant (`allowed_message_types`, `allowed_actions`, `allowed_projects`), enforced
+at §10 stage 1 step 8; this column is a summary of the common case, never an independent authority.
+
+Identity class survives for exactly one purpose: the execution-identity separation checked in §10
+stage 2 (`producer_identity is not an execution identity of this run`). It is not a second gating
+mechanism, and no new authority needs a new class — a genesis, registry-root or migration authority
+is an ordinary grant, as §5.1 already states.
 
 **Human authority is authenticated too.** An out-of-band approval record inside `.code-loop/` is
 forgeable exactly like everything else and is not acceptable evidence of human approval.
@@ -743,10 +758,22 @@ begin
 commit atomically                                  (any failure aborts the whole transition)
 ```
 
-This covers, at minimum: `REGISTRY`, `POLICY`, `APPLICABILITY`, project state transitions, `TASK`
-and `RUN` genesis wherever uniqueness matters, `GATE` freeze under §8's first-commitment-wins, and
-`HUMAN` consumption. AM-15's CAS was written for DECISION alone; it was never only DECISION's
-problem.
+This covers, at minimum: `PROJECT` state transitions, `TASK` and `RUN` genesis wherever uniqueness
+matters, `GATE` freeze under §8's first-commitment-wins, `POLICY`, `APPLICABILITY`, `REGISTRY`,
+`MIGRATION`, and `HUMAN` consumption. AM-15's CAS was written for DECISION alone; it was never only
+DECISION's problem.
+
+**The rule is mechanical, not a list to maintain by hand (AM-28).** AM-27 added `MIGRATION` carrying
+`epoch, previous_commitment` — a head — and did not extend this list, so two concurrent grants could
+have forked the migration head: A24's shape, on the newest message type, one round after it was
+introduced. The list above is therefore a consequence, not the rule:
+
+> **Any message type whose body carries `epoch`/`previous_commitment`, or whose admission is
+> constrained by uniqueness, transitions authoritative state and runs under this transaction. A
+> message type added without deciding this question is inadmissible.**
+
+`VERIFY` and `DECISION` are the exceptions by construction, not by omission: a verdict is an
+append-only attestation with no head to fork, and `DECISION` is covered by §10.3's own CAS.
 
 **One transactional domain, or the requirement is unachievable (AM-26).** A transition routinely
 spans authorities: validate the current `POLICY` head, check the `REGISTRY` grant, consume a
@@ -925,7 +952,20 @@ Stage 2 adds: a `MIGRATION` is admissible only with a human authorization purpos
 grant, and any check relying on a migration grant must re-resolve it as a current, unexpired head
 (§10.3) at the moment it is relied upon — not merely at the moment it was issued. An expired or
 revoked grant fails closed with no further ceremony, which is the same rule as everything else here
-rather than an exception to it.
+rather than an exception to it. Grant and revoke are authoritative state transitions and run under
+§10.1's transaction (AM-28), so concurrent grants cannot fork the migration head.
+
+**A migration grant buys operation, never trust (AM-28).** Revision 13 constrained
+`AUTHENTICATED_TRUST` by deployment mode alone and said nothing about migration — leaving the one
+sanctioned exemption from fail-closed free, on its face, to also raise the guarantee. A signed
+universal bypass is worse than an unsigned one, because it looks like the system working.
+
+> **A migration grant never emits `AUTHENTICATED_TRUST=true`, never raises `deployment_mode`, and
+> never makes unauthenticated legacy evidence admissible or authoritative.**
+
+It permits exactly one thing: named, enumerated, expiring projects continuing to operate while
+their authenticated state is established. Everything produced under a grant is marked as produced
+under it, so no reader can mistake continuity of operation for a guarantee that was never given.
 
 ## 13. Consequent restatement of the audit verdicts
 
