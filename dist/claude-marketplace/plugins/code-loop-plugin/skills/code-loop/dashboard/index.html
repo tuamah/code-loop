@@ -1007,7 +1007,7 @@
             <div class="summary-stat">Open Items<strong data-summary="open_items">7</strong></div>
             <div class="summary-stat">Pending Verifications<strong data-summary="pending_verifications">4</strong></div>
             <div class="summary-stat">Decisions (30d)<strong data-summary="decisions_30d">23</strong></div>
-            <div class="date-filter">May 17 - Jun 16, 2025 <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M3 10h18"></path><rect x="3" y="4" width="18" height="18" rx="2"></rect></svg></div>
+            <div class="date-filter"><span data-date-range>Loading range...</span> <svg viewBox="0 0 24 24" width="18" height="18"><path d="M8 2v4"></path><path d="M16 2v4"></path><path d="M3 10h18"></path><rect x="3" y="4" width="18" height="18" rx="2"></rect></svg></div>
           </div>
         </div>
         <div class="control-strip">
@@ -1073,12 +1073,12 @@
         </div>
 
         <footer class="status-bar" aria-label="System status">
-          <div class="status-item"><strong>System Status</strong><span><i class="status-dot"></i>All Systems Operational</span></div>
-          <div class="status-item"><strong>Model Router</strong><span><i class="status-dot"></i>Terra plans</span></div>
-          <div class="status-item"><strong>Agent Runtime</strong><span><i class="status-dot"></i>5.4 executes</span></div>
-          <div class="status-item"><strong>Tool Provider</strong><span><i class="status-dot"></i>Operational</span></div>
-          <div class="status-item"><strong>Execution Backend</strong><span><i class="status-dot"></i>Operational</span></div>
-          <div class="status-item"><strong>Evidence Store</strong><span><i class="status-dot"></i>Operational</span></div>
+          <div class="status-item"><strong>System Status</strong><span data-status="system"><i class="status-dot"></i>Checking...</span></div>
+          <div class="status-item"><strong>Model Router</strong><span data-status="model_router"><i class="status-dot"></i>Checking...</span></div>
+          <div class="status-item"><strong>Agent Runtime</strong><span data-status="agent_runtime"><i class="status-dot"></i>Checking...</span></div>
+          <div class="status-item"><strong>Tool Provider</strong><span data-status="tools"><i class="status-dot"></i>Checking...</span></div>
+          <div class="status-item"><strong>Execution Backend</strong><span data-status="execution_backend"><i class="status-dot"></i>Checking...</span></div>
+          <div class="status-item"><strong>Evidence Store</strong><span data-status="evidence_store"><i class="status-dot"></i>Checking...</span></div>
           <div class="trust"><svg viewBox="0 0 24 24" width="32" height="32" class="green"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"></path><path d="m9 12 2 2 4-5"></path></svg><div><small>Sol judges</small><br><strong>92</strong><span> / 100</span></div></div>
         </footer>
       </section>
@@ -1194,9 +1194,14 @@
       if (node) node.textContent = value;
     }
 
-    function setStatus(selector, value) {
-      const node = document.querySelector(selector);
-      if (node) node.innerHTML = `<i class="status-dot"></i>${escapeHtml(value)}`;
+    function setStatusTone(name, value, tone = "green") {
+      const node = document.querySelector(`[data-status='${name}']`);
+      if (!node) return;
+      node.innerHTML = `<i class="status-dot"></i>${escapeHtml(value)}`;
+      const color = tone === "red" ? "var(--red)" : tone === "amber" ? "var(--amber)" : "var(--green)";
+      node.style.color = color;
+      const dot = node.querySelector(".status-dot");
+      if (dot) dot.style.background = color;
     }
 
     function renderGates(gates) {
@@ -1283,8 +1288,12 @@
       if (!dashboardData) return [];
       if (name === "gates") return (dashboardData.gates || []).map((item) => ({ title: item.name, detail: item.detail, status: item.status }));
       if (name === "decisions") return dashboardData.decisions || [];
-      if (name === "activity" || name === "executions") return dashboardData.activity || [];
-      if (name === "work_items") return [{ title: dashboardData.project?.objective || "No active objective", detail: dashboardData.project?.path || "", status: dashboardData.project?.runtime_exists ? "ACTIVE" : "NO_RUNTIME" }];
+      if (name === "activity") return dashboardData.records?.activity || dashboardData.activity || [];
+      if (name === "executions") return dashboardData.records?.events || [];
+      if (name === "work_items") {
+        const objectiveRow = { title: dashboardData.project?.objective || "No active objective", detail: dashboardData.project?.path || "", status: dashboardData.project?.runtime_exists ? "ACTIVE" : "NO_RUNTIME" };
+        return [objectiveRow, ...(dashboardData.records?.claims || [])];
+      }
       if (name === "evidence" || name === "verifications") return dashboardData.records?.evidence || [];
       if (name === "literature") return dashboardData.records?.literature || [];
       if (name === "knowledge") return dashboardData.records?.lessons || [];
@@ -1292,7 +1301,10 @@
       return [];
     }
 
+    let currentRecordName = null;
+
     function showRecords(name) {
+      currentRecordName = name;
       const [title, subtitle] = recordLabels[name] || ["Records", "Runtime-backed records from the selected project."];
       setText("[data-record-title]", title);
       setText("[data-record-subtitle]", subtitle);
@@ -1377,6 +1389,10 @@
         const data = await response.json();
         (data.providers || []).forEach(renderProvider);
         renderModels(data.models || []);
+        const statuses = (data.providers || []).map((provider) => provider.status);
+        if (statuses.every((status) => status === "connected")) setStatusTone("tools", "Operational", "green");
+        else if (statuses.some((status) => status === "connected")) setStatusTone("tools", "Degraded", "amber");
+        else setStatusTone("tools", "Disconnected", "red");
       } catch (error) {
         document.querySelectorAll("[data-provider-card]").forEach((card) => {
           const statusNode = card.querySelector("[data-field='status']");
@@ -1384,6 +1400,7 @@
           statusNode.className = "pill fail";
           card.querySelector("[data-field='meta']").textContent = "Connections API is unavailable.";
         });
+        setStatusTone("tools", "Offline", "red");
       }
     }
 
@@ -1461,7 +1478,11 @@
         openProject().catch((error) => toast(error.message));
       });
       document.querySelectorAll("[data-refresh-dashboard]").forEach((button) => {
-        button.addEventListener("click", () => loadDashboard().then(() => toast("Dashboard refreshed")).catch((error) => toast(error.message)));
+        button.addEventListener("click", () => loadDashboard().then(() => {
+          const recordsPanel = document.querySelector("[data-panel='records']");
+          if (currentRecordName && recordsPanel && !recordsPanel.hidden) showRecords(currentRecordName);
+          toast("Dashboard refreshed");
+        }).catch((error) => toast(error.message)));
       });
       document.querySelector("[data-validate-runtime]")?.addEventListener("click", () => {
         validateRuntime().catch((error) => toast(error.message));
@@ -1513,6 +1534,14 @@
       document.querySelector("[data-refresh-connections]")?.addEventListener("click", loadConnections);
     }
 
+    function setDateRange() {
+      const end = new Date();
+      const start = new Date(end.getTime() - 29 * 24 * 60 * 60 * 1000);
+      const fmt = (date) => date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+      const withYear = `${fmt(start)} - ${fmt(end)}, ${end.getFullYear()}`;
+      setText("[data-date-range]", withYear);
+    }
+
     async function loadDashboard() {
       try {
         const response = await fetch("/api/dashboard", { cache: "no-store" });
@@ -1530,19 +1559,32 @@
         renderGates(data.gates || []);
         renderDecisions(data.decisions || []);
         renderActivity(data.activity || []);
-        setText("[data-activity-count]", (data.activity || []).length);
-        setStatus(".status-item:nth-child(2) span", data.system.model_router);
-        setStatus(".status-item:nth-child(3) span", data.system.agent_runtime);
+        const fullActivity = data.records?.activity || data.activity || [];
+        setText("[data-activity-count]", fullActivity.length);
+        setStatusTone("model_router", data.system.model_router);
+        setStatusTone("agent_runtime", data.system.agent_runtime);
+        const hasFailedGate = (data.gates || []).some((gate) => statusClass(gate.status) === "fail");
+        if (!data.project.runtime_exists) setStatusTone("system", "No Runtime", "amber");
+        else if (hasFailedGate) setStatusTone("system", "Attention Needed", "red");
+        else setStatusTone("system", "All Systems Operational", "green");
+        setStatusTone("execution_backend", "Operational", "green");
+        setStatusTone("evidence_store", data.project.runtime_exists ? "Operational" : "No Runtime", data.project.runtime_exists ? "green" : "amber");
         setText(".trust small", data.system.arbiter);
         setText(".trust strong", data.system.trust_score);
       } catch (error) {
         document.querySelector(".runtime-pill").textContent = "Backend Offline";
         document.querySelector(".runtime-pill").style.color = "var(--red)";
         setText(".overview p", "Start scripts/nogap_dashboard.py to connect the dashboard to runtime data.");
+        setStatusTone("system", "Offline", "red");
+        setStatusTone("execution_backend", "Unreachable", "red");
+        setStatusTone("evidence_store", "Unknown", "red");
+        setStatusTone("model_router", "Unknown", "red");
+        setStatusTone("agent_runtime", "Unknown", "red");
       }
     }
 
     setupConnectionActions();
+    setDateRange();
     loadProjects().catch((error) => toast(error.message));
     loadDashboard();
     loadConnections();
