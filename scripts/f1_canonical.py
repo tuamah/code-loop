@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""RFC 8785 (JCS) canonicalization, restricted to the profile F1 payloads use.
+"""The F1 canonical JSON profile: RFC 8785-compatible for the value domain F1 uses, with
+floating-point numbers prohibited.
+
+That sentence is the claim, and it is narrower than "we implement RFC 8785". The restriction is a
+contract restriction, declared and mechanically enforced, not an unimplemented corner.
 
 T1A §6 requires a published, testable canonicalization rather than a local convention, so that
 independent implementations agree, and makes a payload that does not re-canonicalize byte-identically
 inadmissible.
 
-**The restriction is deliberate and enforced, not an omission.** RFC 8785 serializes numbers with
+RFC 8785 serializes numbers with
 ECMAScript `Number::toString`, whose shortest-round-trip float formatting differs from Python's
 `repr` in exponent form (`1e+21` vs `1e21`, `1e-05` vs `1e-5`). Every field in §6's body schemas is
 a string, a digest, an integer or a list of those — no F1 payload contains a float. So this

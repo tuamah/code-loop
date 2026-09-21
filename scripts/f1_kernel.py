@@ -28,7 +28,26 @@ from typing import Any
 
 from f1_canonical import CanonicalizationError, canonicalize
 
-SCHEMA_VERSION = "f1-t1a-rev24"
+# Three different questions, three different answers. Binding them into one string was the first
+# design defect in this module: it would have made every historical message unparsable the moment
+# T1A was reopened for a rule that does not touch the wire format at all, and F1's own principle is
+# that retired material is never forgotten.
+#
+#   schema_version       how do I decode these bytes?         -> on the wire, below
+#   contract revision    under which contract was it created? -> not on the wire; see below
+#   current authoritative state
+#                        is it still admissible today?        -> resolved at admissibility (I4+)
+#
+# An old message must stay cryptographically verifiable and structurally parseable; whether it is
+# still *acceptable* is a question for current policy, and a reopened contract answers it by
+# refusing the message, never by making it unreadable.
+SCHEMA_VERSION = "1"
+
+# What this kernel implements, recorded here and deliberately NOT carried in the envelope. Adding
+# a wire field for it would be a change to §6's closed envelope, which means reopening a frozen
+# contract; the trusted policy and registry context (I2) is where acceptable schema/contract
+# combinations are decided.
+CONTRACT_REVISION = "f1-t1a-rev24"
 
 # T1A §6. Closed: a message type without a domain string and a body schema cannot be signed, and
 # adding one is a contract change.
