@@ -1,8 +1,8 @@
 # F1-T1 — Trust Root Threat Model & Contract
 
-**Status: DRAFT, revision 6, after adversarial reviews 1-5. NOT FROZEN. Review 5 found three more
-attacks, including one against the very rule review 4 introduced; no implementation may begin
-against it.**
+**Status: DRAFT, revision 7, after adversarial reviews 1-6. NOT FROZEN. Review 6 found three more
+attacks, including one that defeats revision 6's newest rule by timing alone; no implementation may
+begin against it.**
 
 F1 renamed per audit: *Missing Authenticated Trust Root / Forgeable Authority State*.
 
@@ -72,6 +72,24 @@ which is the expected shape of this process:
   Genesis Commitment now records a digest — never a mutable ref — under a human-authorized ceremony.
   This is where the regress terminates, and it terminates in an act of authorization, not a
   computation.
+
+Revision 7 (review 6) adds three more. The subject has shifted: the first rounds protected files and
+identity, these protect **the meaning of policy itself**.
+
+- **AM-13 (§10.2)** — **A13 succeeded, against AM-10.** AM-10 demanded stronger authority to
+  deactivate a *currently adverse* obligation. The adversary does not wait: it deactivates while the
+  obligation is still green, then submits the candidate that would have failed it. No red obligation
+  was ever switched off. Protection level is now fixed in advance by obligation class, and the
+  general shape is named: a guard conditioned on state observed at request time is
+  timing-attackable.
+- **AM-14 (§10.2)** — **A14 succeeded.** `authority_required_for_change` lived inside the
+  Applicability Commitment, so the protected object declared how hard it was to weaken itself — F1's
+  original shape one level up. Authority now comes from a Policy Root anchored at Project Genesis:
+  a protected object may not define the authority required to weaken its own protection.
+- **AM-15 (§10.3)** — **A15 succeeded.** Every input was individually authenticated, but nothing
+  required them to be read as one state. The acceptance authority now derives from an atomic Trusted
+  Decision State Snapshot, asserts every head unchanged before signing, and binds the snapshot digest
+  into the payload. This is the third torn read in the contract, and the first inside the TCB itself.
 
 ## 0. What this fixes, stated honestly
 
@@ -408,8 +426,9 @@ Project Genesis Commitment        (human/operator-authorized ceremony, §5)
   project_id
   repository_identity       binds the project to a repository; blocks same-name substitution
   initial_base_digest       a DIGEST, never a mutable ref — a branch name is not a commitment
-  policy_baseline
+  policy_baseline           the Policy Root (AM-14): obligation_class -> required authority
   gate_baseline             what §8 matches gate content against
+  obligation_policy_baseline  which obligations exist and in which class
   provisioned_by
   provisioning_sequence
 ```
@@ -683,11 +702,11 @@ lineage:
 ```
 Applicability Commitment          (NOGAP::APPLICABILITY::v1)
   obligation_id
+  obligation_class          risk class; the POLICY maps class -> required authority (AM-14)
   project_scope
   predicate_scope
   activation_condition
   deactivation_condition
-  authority_required_for_change
 ```
 
 Rules:
@@ -699,12 +718,97 @@ Rules:
 - **Narrowing is deactivation.** Shrinking `predicate_scope` so the candidate falls outside it is
   the same move as removal and needs the same authority. The rule covers scope changes, not just
   deletions.
-- **Deactivating a red obligation is not the same act as deactivating a green one.** Turning off a
-  currently-adverse obligation is the attack in its purest form — switching off the failing check —
-  and requires strictly stronger authority, human by default (§4), never an agent.
+- **Protection level is pre-declared, never read off the current state (AM-13).** Revision 6 keyed
+  the strong-authority requirement on the obligation being *currently adverse*. The adversary simply
+  waits less: deactivate while the obligation is still green, then submit the candidate that would
+  have failed it. No red obligation was ever switched off, and the check vanished exactly when it
+  was about to matter (A13). Therefore the authority needed to weaken coverage — delete, deactivate
+  or narrow — is fixed in advance by the obligation's **class** (AM-14), not by its state at the
+  moment of the request. A currently-adverse obligation may raise the bar further; it may never be
+  the only thing that raises it.
+
+  The general rule, so later amendments do not reintroduce this shape: **any guard conditioned on
+  state observed at request time is timing-attackable.** Protection must be a declared property.
+
+- **Weakening must be visible in the decision it enables.** Prevention is not the whole job here:
+  a decision record must surface every applicability weakening within its lineage, so a
+  deactivation standing immediately before an acceptance is readable as what it is.
 - Transitions are **append-only with lineage**, so the history reads "O1 was active and failing, then
   deactivated by X, under authority Y, at sequence N" rather than "O1 was never applicable."
 
+**Authority comes from a Policy Root, never from the protected object (AM-14).** Revision 6 put
+`authority_required_for_change` *inside* the Applicability Commitment — so the object declared how
+hard it was to weaken itself. That is F1's original shape one level up: instead of a JSON file
+asserting `authority="verification"`, a policy object asserts its own protection level.
+
+> **A protected object may not define the authority required to weaken its own protection.**
+
+```
+Project Genesis  ──anchors──>  Policy Commitment        (NOGAP::POLICY::v1)
+                                 obligation_class -> authority required for
+                                   activation | deactivation | narrowing
+                                       ↓ referenced by
+                               Applicability Commitment  (carries obligation_class only)
+```
+
+Changing the policy itself requires the policy root's own authority — human by default. The regress
+terminates where AM-12 says it does: at the Project Genesis ceremony. Without that anchor, A14 is
+"solved" by minting yet another root, which is not a solution but a rename.
+
+
+### 10.3 The decision must observe one coherent state (AM-15)
+
+Every input to ACCEPT is now individually authenticated. That is still not enough. The acceptance
+authority reads many of them — project, policy, task, run, gate, base, obligations, applicability,
+verdicts, registry — and if it reads them at different moments, each read is valid while the
+combination never existed:
+
+```
+read PASS for O1            ✓ authentic
+applicability or policy changes
+read PASS for O2            ✓ authentic
+authorized base or run head moves
+sign ACCEPT                 ← derived from a state that never held as a whole
+```
+
+This is the third torn read in this contract. A6 tore the workspace; A15 tears the TCB's own state.
+The general rule, stated once so a fourth instance is not invented: **any multi-source read that
+feeds an attested conclusion must be snapshot-consistent, not merely individually authenticated.**
+
+It is also M8's lesson returning: deep immutability of each input does not compose into
+decision-level consistency when the inputs are read at different times.
+
+```
+Trusted Decision State Snapshot
+  project_head
+  policy_head
+  task_commitment
+  run_commitment
+  gate_commitment
+  authorized_base_commitment
+  candidate_fingerprint
+  obligation_set_commitment
+  applicability_head
+  verification_verdict_set
+  registry_head
+```
+
+```
+derive the decision from snapshot S
+  ↓
+before signing, assert every head is unchanged   (compare-and-swap)
+  ↓
+sign the decision, binding S's digest into the payload
+```
+
+- On CAS failure the decision is **aborted and re-derived from a fresh snapshot**. It is never
+  patched, merged, or partially re-read — partial re-reads are how torn state returns.
+- `decision_snapshot_digest` is part of the signed payload, so a later reader can re-derive the
+  decision from the same state instead of trusting that it was coherent.
+- A verdict arriving mid-decision belongs to the next snapshot, never half of this one.
+
+Equivalently, a single monotonic event-log head covering all of this state satisfies the rule; what
+matters is that one coherent point in time is named, not how it is implemented.
 
 ## 11. Rotation, revocation, and what local time cannot prove
 
@@ -800,7 +904,7 @@ verdict as more than it is.
 
 ## 17. Open for adversarial review 2
 
-**Twelve** attacks must be shown to fail before F1-T1 FREEZE.
+**Fifteen** attacks must be shown to fail before F1-T1 FREEZE.
 
 Review 3, against revision 3:
 
@@ -829,12 +933,22 @@ A11 Task-Relation Laundering            SUCCEEDED, against AM-7    -> AM-11
 A12 Project/Base Genesis Substitution   SUCCEEDED                  -> AM-12
 ```
 
-Revision 6 has not been attacked. Review 6 must run all twelve against it. Any attack that succeeds,
-or whose outcome is ambiguous, blocks the freeze.
+Review 6, against revision 6, by inspection:
 
-Note the trend worth watching: reviews 4 and 5 each found defects in machinery the previous round
-had just introduced. Every new authority is new attack surface, so the twelve must be re-run in
-full against revision 6 rather than only the three newest.
+```
+A13 Pre-Failure Applicability Laundering  SUCCEEDED, against AM-10   -> AM-13
+A14 Self-Authorized Policy Downgrade      SUCCEEDED                  -> AM-14
+A15 Mixed-State / Decision TOCTOU         SUCCEEDED                  -> AM-15
+```
+
+Revision 7 has not been attacked. Review 7 must run all fifteen against it. Any attack that
+succeeds, or whose outcome is ambiguous, blocks the freeze.
+
+The trend is now three rounds long: reviews 4, 5 and 6 each found defects in machinery the previous
+round had just introduced. Every new authority and every new rule is new attack surface, so the
+fifteen are re-run in full rather than only the newest three. Convergence is not guaranteed by
+adding amendments, and a round that adds none would be better evidence of it than a round that adds
+three.
 
 An attack that fails only under conditions this contract does not require is not a pass; the
 condition must be written in.
