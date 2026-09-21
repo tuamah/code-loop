@@ -12,13 +12,14 @@ repository write access by construction.
 
 ## The two contracts
 
-Fifteen adversarial review rounds produced thirty amendments and twenty-four named attacks. Review 7
+Fifteen adversarial review rounds produced thirty-two amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 16, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 17, not frozen |
+| **Ledger** | [`f1-amendment-ledger.md`](f1-amendment-ledger.md) | What every amendment established, where it lives now, and whether it is still in force | canonical, CI-checked |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
@@ -196,7 +197,30 @@ no closure property. One such list is still unamended and was left deliberately 
 evidence: §3's nine Mode B capabilities, a hand-maintained list with no defining property, in the
 same shape as the two that just failed.
 
-Still outstanding: no round has completed without an amendment.
+**Revision 17 is the Enumeration Closure Pass, not an attack round.** The anti-pattern behind
+rounds 13-15 now has a name and a prohibition: *security by remembered list*. T1A §-1 requires every
+security-significant enumeration to be DERIVED, CLOSED + CHECKED, or NON-NORMATIVE, and classifies
+all of them. Mode B stopped being nine prohibitions and became a five-clause invariant with the nine
+as test vectors, so a capability nobody anticipated no longer satisfies it by absence.
+
+Two scripts make it mechanical, and **both found real drift on their first run**:
+
+```
+check-f1-enumerations.py   MIGRATION had a signing domain but no body schema in §6
+check-f1-continuity.py     AM-1, AM-2, AM-3 cited nowhere in either contract
+```
+
+The second is the K2 lesson applied to ourselves. Thirty-two amendments were produced in
+conversation; only the contracts survive it. Two of those three had survived unlabelled, one had
+been superseded — and which was which was knowable only from the conversation that produced them.
+`f1-amendment-ledger.md` is now canonical: every LIVE amendment must have its invariant located in
+a document, every SUPERSEDED one must name its replacement, and CI fails if a rewrite drops one.
+The same anti-pattern that let an invariant slip out of a contract is the one that lets a week of
+work slip out of a project's memory; the fix is the same in both cases — a canonical source and a
+mechanical check, never a remembered list.
+
+Still outstanding: no round has completed without an amendment, and round 16 has not yet run
+against revision 17.
 
 ## Standing constraints
 
