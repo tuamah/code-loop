@@ -12,13 +12,13 @@ repository write access by construction.
 
 ## The two contracts
 
-Fourteen adversarial review rounds produced twenty-nine amendments and twenty-four named attacks. Review 7
+Fifteen adversarial review rounds produced thirty amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 15, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 16, not frozen |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
@@ -93,6 +93,7 @@ had just added — which is why the split matters more than another amendment wo
 | 12 | full 17-attack round: **17/17 blocked**, both concurrency composed cases included. One amendment still required, found outside the attack list: §12's migration grant had no representable message | AM-27 |
 | 13 | 17/17 blocked again, plus a systematic representability audit in both directions: 3 gaps, all created or exposed by the previous round's own amendment | AM-28 |
 | 14 | 17/17 blocked, both representability audits clean. A **semantic statefulness** audit failed it: statefulness was defined by fields, and the decision CAS covered only elements named `*_head` | AM-29 |
+| 15 | 17/17 blocked; representability and statefulness audits clean. A **snapshot-mutability** audit failed it: migration state and authorization consumption state were absent from the snapshot entirely | AM-30 |
 
 Three properties turned out to be distinct, and the contract needed each separately:
 
@@ -175,11 +176,27 @@ than another mechanism:
 effect        a rule is about what a message does, never about what it looks like
 ```
 
-Still outstanding as evidence: no round has yet completed without an amendment. Fourteen rounds, and
-every one of the last six found its defect in machinery the round before had just added. Attack
-coverage is demonstrated three times over; what remains unproven is that an amendment can be added
-without opening something — and rounds 13 and 14 are evidence *against* that proposition, not for
-it.
+Rounds 13, 14 and 15 found **the same class of defect three times**, and AM-28, AM-29 and AM-30 are
+the same move: replacing a hand-maintained enumeration with a defining property.
+
+```
+AM-28  a list of what must be atomic        →  AM-29  statefulness by effect
+AM-29  a CAS over elements named *_head     →  every mutable element
+AM-30  a list of snapshot elements          →  S is defined as what the decision reads
+```
+
+The discriminating evidence is in which enumerations failed. The three that are **declared closed
+and mechanically checkable** — the domain list, the per-type action enums, the stage-2 clauses —
+have produced **zero** findings across all three rounds; a script cross-checks them in seconds. Every
+finding in rounds 13-15 came from an **informal prose list** that had to be remembered when
+something was added.
+
+So the defect class is not the contract's size, and not its subject matter. It is enumerations with
+no closure property. One such list is still unamended and was left deliberately untouched as
+evidence: §3's nine Mode B capabilities, a hand-maintained list with no defining property, in the
+same shape as the two that just failed.
+
+Still outstanding: no round has completed without an amendment.
 
 ## Standing constraints
 

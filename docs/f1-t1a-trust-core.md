@@ -1,11 +1,17 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 15, after adversarial review 14. NOT FROZEN.**
+**Status: DRAFT, revision 16, after adversarial review 15. NOT FROZEN.**
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
 
-Review 14 re-ran the seventeen attacks (**all blocked**) and both representability audits (**clean**),
+Review 15 re-ran the seventeen attacks (**all blocked**), both representability audits (**clean**)
+and the statefulness audit (**clean**), and added a snapshot-mutability audit that revision 15
+failed: two authoritative facts a decision reads — migration state and authorization consumption
+state — were absent from the decision snapshot entirely, so nothing protected them between
+derivation and commit. AM-30 replaces the enumeration with a definition.
+
+Review 14 had re-run the seventeen attacks (all blocked) and both representability audits (clean),
 and added a semantic statefulness audit that revision 14 failed: statefulness was defined by the
 presence of `epoch` fields rather than by effect, and the decision CAS asserted only elements named
 `*_head`, leaving the mutable verdict set unprotected inside AM-15's own fix. AM-29 closes both.
@@ -864,18 +870,37 @@ decision-level consistency when the inputs are read at different times.
 
 ```
 Trusted Decision State Snapshot
-  project_head
-  policy_head
-  task_commitment
-  run_commitment
-  gate_commitment
-  authorized_base_commitment
-  candidate_fingerprint
-  obligation_set_commitment
-  applicability_head
-  verification_verdict_set
-  registry_head
+  IMMUTABLE BY CONSTRUCTION — fixed once written, nothing to re-check
+    task_commitment
+    run_commitment
+    gate_commitment
+    authorized_base_commitment
+    candidate_fingerprint
+
+  MUTABLE — each carries a head with a monotonic epoch, each covered by the CAS
+    project_head
+    policy_head
+    registry_head
+    applicability_head
+    obligation_set_head
+    verification_verdict_head        the CURRENT-verdict selection (AM-29)
+    migration_head                   (AM-30)
+    authorization_consumption_head   (AM-30)
 ```
+
+**S is a definition, not a list (AM-30).** Revision 15 enumerated eleven elements and omitted two
+that a decision demonstrably reads: migration state, which determines whether §12's fail-closed
+applies and whether the decision must be marked as produced under a grant, and authorization
+consumption state, which §10 stage 2 reads as "not previously consumed". A grant can expire or be
+revoked, and an authorization can be spent, between derivation and commit — and neither was in S,
+so neither was covered by anything.
+
+> **S is the complete set of authoritative facts the decision reads. A fact read during derivation
+> and absent from S is a defect in S, not an element outside it. Every element is either immutable
+> by construction or headed and CAS-covered; there is no third category.**
+
+The enumeration above is therefore a consequence of that definition, kept for readability, and is
+not what makes an element protected.
 
 ```
 derive the decision from snapshot S
