@@ -173,6 +173,33 @@ def make_task_contract(project: Path, made_chain: dict, actor: str = "architect"
     return create_artifact(project, "P12_TASK_CONTRACT", fields, actor=actor)
 
 
+class _ungoverned_project:
+    """TEST-ONLY seam: run a legacy fixture that has no methodology state.
+
+    Since closure item 2 the prebuild barrier refuses a project with no methodology state, and
+    there is deliberately NO production override - a file an executor could write would be a
+    bypass, which is the hole item 2 exists to close. This fixture predates methodology
+    governance and is not about the barrier (it has its own suite), so it patches
+    `preflight_build` inside this process instead.
+
+    The seam exists only in the test process. Nothing in the shipped runtime can reach it, which
+    is the point: the production path has no exemption at all.
+    """
+
+    PERMITTED = {"permitted": True, "status": "TEST_ONLY_UNGOVERNED", "reasons": [],
+                 "profile": None, "current_phase": None, "readiness": None, "tracked": False}
+
+    def __enter__(self):
+        from unittest import mock
+        self._patch = mock.patch("nogap_build.preflight_build", return_value=self.PERMITTED)
+        self._patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._patch.stop()
+        return False
+
+
 class InterlockFixture(unittest.TestCase):
     profile_args = ("production", "medium", "low")  # STANDARD: reproducibility + review required
     p7_extra: dict | None = {"responsibilities": ["r"], "interfaces": ["i"], "external_dependencies": ["d"]}
@@ -408,7 +435,8 @@ class LegacyCompatibilityTests(unittest.TestCase):
             nogap_adapters.ADAPTERS.clear()
             nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
             try:
-                nogap.cmd_run(run_namespace(str(project), execute=True))
+                with _ungoverned_project():
+                    nogap.cmd_run(run_namespace(str(project), execute=True))
                 run_script("freeze", str(project))
                 nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
                 nogap.cmd_verify_methodology(verify_namespace(str(project), review=True))
