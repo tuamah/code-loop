@@ -412,6 +412,32 @@ Run it whenever a packaged file changes, and commit the result. CI runs
 `python scripts/build-dist.py --check` and fails if the packages and the source disagree, so a
 package can no longer quietly fall behind the code it ships.
 
+### Unreleased
+
+Turns the runtime thesis into executable contracts. Read `references/nogap-runtime.md` to use it,
+`docs/nogapcode-runtime.md` for the architecture.
+
+- **Authority separation (M6-A)**: execution authority can no longer issue ACCEPT for its own run.
+  Identity is checked on `actor_id`; a role renamed to `verifier` does not bypass it.
+- **Execution (M6-B/C/D)**: `nogap run`, `nogap execute` in an isolated git worktree, trusted agent
+  dispatch, and an independent verification pipeline that produces authoritative evidence.
+- **Methodology (M7-A..D)**: canonical P0-P23 phase contracts, adaptive process depth by project
+  intent and risk, the lifecycle state machine, and the Golden Principle enforcement map.
+- **Executable lifecycle (M7-E..H)**: P0-P11 pre-build artifacts, BUILD and VERIFY bound to the
+  frozen gate, a verification interlock closing a false-pass gap, and an evidence-preserving
+  failure repair cycle. Verification evidence is bound to its candidate: change the patch, the
+  gate, or the requirement set and the stored result is stale, not reusable.
+- **Projections (M7)**: trusted project memory, structured research and claim assessment, and the
+  release/operate/evolve lifecycle.
+- **Decision engine (M8)**: deterministic decision kernel, deep-immutable snapshots and policy
+  metadata, evidence bound to immutable claims, an append-only decision journal with checkpoint
+  verification, and semantic replay verification.
+- **Dashboard**: a localhost control plane for runtime status and provider connections. Secrets
+  stay server-side; the page never runs provider shell commands.
+- Fixes a false-pass where stale verification evidence could be reported as current when two
+  records shared a timestamp, and rebuilds `dist/` and `code-loop.zip` from source under a CI
+  check that fails on drift.
+
 ### 5.1.0
 
 - Adds the NoGapCode runtime MVP contracts and scripts.

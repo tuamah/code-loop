@@ -74,6 +74,7 @@ def main() -> None:
         "references/risk-matrix.md",
         "references/verification.md",
         "references/token-discipline.md",
+        "references/nogap-runtime.md",
     ]
     for ref in required_refs:
         if ref not in skill:
