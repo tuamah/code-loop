@@ -22,7 +22,21 @@ invented AM-37 granting an authority nobody agreed to. The count below is the ex
 truncation or a fabrication now contradicts a line someone has to edit deliberately.
 
 ```
-AMENDMENTS: 38 through AM-38
+AMENDMENTS: 39 through AM-39
+```
+
+**Reopening a frozen contract.** T1A was frozen at revision 22, commit `b667d64`, after adversarial
+review 21 completed clean. The first adversarial review of T1B then found defects in the *seam*
+between the two contracts, which neither document's own audit could see because every guard read
+one document. AM-39 reopened T1A under the freeze rule — a numbered amendment that names what it
+changes and why — and T1A re-freezes at revision 23. The earlier freeze is not annulled: it was
+correct on the evidence then available, and this is the case reopen-by-amendment exists for.
+
+```
+F1-T1A rev22   FROZEN at b667d64
+               REOPENED by AM-39
+               reason: cross-contract representability defects found in T1B review 1
+F1-T1A rev23   re-frozen after the AM-39 regression
 ```
 
 Status is `LIVE` (the invariant is in force and located) or `SUPERSEDED` (replaced by a later
@@ -38,22 +52,22 @@ decision that was reconsidered, and why.
 | AM-5 | LIVE | T1A | `content-addressed (AM-5)` | `7d694b761616` |  | A candidate is named only by content-addressed references; nothing to tear |
 | AM-6 | LIVE | T1B | `Run lineage (AM-6)` | `2179c1119511` |  | Run lineage is TCB-held; a fresh run is not a fresh start |
 | AM-7 | LIVE | T1A | `The trust chain (AM-7)` | `2afecb2b4860` |  | An authenticated Task Commitment sits above the run; relation is authorized |
-| AM-8 | LIVE | T1B | `(AM-8, AM-16, AM-17)` | `124ad53827dc` |  | Failures attach to project-scoped obligations, never to fingerprints |
+| AM-8 | LIVE | T1B | `(AM-8, AM-16, AM-17)` | `7b233919d29a` |  | Failures attach to project-scoped obligations, never to fingerprints |
 | AM-9 | LIVE | T1A | `Content-addressed is not authorized (AM-9)` | `7d694b761616` |  | The authorized base is a TCB commitment; a caller-named base is refused |
-| AM-10 | LIVE | T1B | `(AM-10, AM-13, AM-14)` | `938631eb338a` |  | Applicability is authenticated; silence does not deactivate, narrowing does |
+| AM-10 | LIVE | T1B | `(AM-10, AM-13, AM-14)` | `602ac5f7fa11` |  | Applicability is authenticated; silence does not deactivate, narrowing does |
 | AM-11 | LIVE | T1B | `no power over obligations (AM-11)` | `5af11196fff8` |  | No task relation changes which obligations a candidate must satisfy |
 | AM-12 | LIVE | T1A | `Project genesis and the initial base (AM-12)` | `382eab97ee83` |  | Genesis records a digest, never a ref, under a human-authorized ceremony |
-| AM-13 | LIVE | T1B | `pre-declared, never read off the current state (AM-13)` | `938631eb338a` |  | Protection level is fixed by class in advance, not by current red/green state |
+| AM-13 | LIVE | T1B | `pre-declared, never read off the current state (AM-13)` | `602ac5f7fa11` |  | Protection level is fixed by class in advance, not by current red/green state |
 | AM-14 | LIVE | T1A | `the Policy Root (AM-14)` | `382eab97ee83` |  | A protected object may not define the authority required to weaken it |
 | AM-15 | LIVE | T1A | `snapshot-consistent, not merely individually authenticated` | `88e9b7728f9e` |  | A decision derives from one coherent snapshot and CAS-checks before signing |
-| AM-16 | LIVE | T1B | `born, not merely not-killed (AM-16)` | `124ad53827dc` |  | Silence cannot prevent an obligation's birth any more than cause deactivation |
-| AM-17 | LIVE | T1B | `never chosen by the object (AM-17)` | `124ad53827dc` |  | A protected object may not choose its own protection class |
+| AM-16 | LIVE | T1B | `born, not merely not-killed (AM-16)` | `7b233919d29a` |  | Silence cannot prevent an obligation's birth any more than cause deactivation |
+| AM-17 | LIVE | T1B | `never chosen by the object (AM-17)` | `7b233919d29a` |  | A protected object may not choose its own protection class |
 | AM-18 | LIVE | T1A | `A valid head is not the current head (AM-18)` | `88e9b7728f9e` |  | Only the current authoritative head may be used, never any valid one |
-| AM-19 | LIVE | T1A | `One payload shape for every message type was a defect (AM-19)` | `8c25dedd318e` |  | Ten closed domains; common envelope plus a per-type body schema |
+| AM-19 | LIVE | T1A | `One payload shape for every message type was a defect (AM-19)` | `e8768687aac5` |  | Ten closed domains; common envelope plus a per-type body schema |
 | AM-20 | LIVE | T1A | `A valid key is not every authority (AM-20)` | `d9f1a62b5744` |  | The registry grants message types, actions and scope per key |
 | AM-21 | LIVE | T1A | `Authorization is not authentication (AM-21)` | `2a66269deee8` |  | A human authorization is purpose-bound and consumed once |
-| AM-22 | LIVE | T1A | `The procedure is normative and complete (AM-22)` | `5fc70996bac7` |  | Admissibility is a two-stage procedure; a rule absent from it is not enforced |
-| AM-23 | LIVE | T1A | `The action must be signed, not inferred (AM-23)` | `8c25dedd318e` |  | The exact action is in the signed envelope, from a closed per-type enum |
+| AM-22 | LIVE | T1A | `The procedure is normative and complete (AM-22)` | `716f2be29953` |  | Admissibility is a two-stage procedure; a rule absent from it is not enforced |
+| AM-23 | LIVE | T1A | `The action must be signed, not inferred (AM-23)` | `e8768687aac5` |  | The exact action is in the signed envelope, from a closed per-type enum |
 | AM-24 | LIVE | T1A | `(AM-24, AM-25)` | `9938f798d27a` |  | A single-use authorization is a linear capability, consumed atomically |
 | AM-25 | LIVE | T1A | `assert current_head == expected_previous` | `9938f798d27a` |  | Validation and mutation of authoritative state are one transaction |
 | AM-26 | LIVE | T1A | `One transactional domain` | `9938f798d27a` |  | All such state lives in one serialized domain; authorities are scopes over it |
@@ -63,9 +77,10 @@ decision that was reconsidered, and why.
 | AM-30 | LIVE | T1A | `S is a definition, not a list (AM-30)` | `88e9b7728f9e` |  | The snapshot is the set of facts the decision reads; a read fact absent is a defect |
 | AM-31 | LIVE | T1A | `Mode B is an invariant, not a list of nine prohibitions (AM-31)` | `b5179f931ea0` |  | Mode B is a five-clause invariant; the nine capabilities are test vectors for it |
 | AM-32 | LIVE | T1A | `Closure rules for this contract (AM-32)` | `9b3e59ac8cc9` |  | Every security-significant enumeration is DERIVED, CLOSED+CHECKED, or NON-NORMATIVE |
-| AM-33 | LIVE | T1A | `The rule applies to itself (AM-33)` | `0634e774ea00` |  | The closure manifest is canonical and checked; no enumeration enters undeclared |
+| AM-33 | LIVE | T1A | `The rule applies to itself (AM-33)` | `e8a71c10f166` |  | The closure manifest is canonical and checked; no enumeration enters undeclared |
 | AM-34 | LIVE | T1A | `Clause 3 says *outcome* deliberately (AM-34)` | `b5179f931ea0` |  | Mode B forbids influence that moves the outcome toward acceptance, not all influence |
 | AM-36 | LIVE | T1A | `Continuity is a guard, not a memory (AM-36)` | `8f86d8f91d08` |  | Invariants are digested; supersession must be inherited by exactly one live amendment |
-| AM-35 | LIVE | T1A | `bijection, not mere coverage` | `0634e774ea00` |  | The closure manifest is a bijection; enumerations are blocks or tables, both scanned |
+| AM-35 | LIVE | T1A | `bijection, not mere coverage` | `e8a71c10f166` |  | The closure manifest is a bijection; enumerations are blocks or tables, both scanned |
 | AM-37 | LIVE | T1A | `The ledger is not self-attesting (AM-37)` | `e16846724046` |  | Anchors must be unambiguous; the ledger's extent is declared, never derived |
 | AM-38 | LIVE | T1A | `The guard may not derive what it is guarding (AM-38)` | `136295e8ca7d` |  | Universe, source, representation and content of every governed enumeration are pinned in advance |
+| AM-39 | LIVE | T1A | `A schema defined twice is defined nowhere (AM-39)` | `35a8ab3293e8` |  | T1A is the single canonical source for every schema; T1B states meaning only; both contracts are one closure set |

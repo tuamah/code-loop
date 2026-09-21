@@ -1,6 +1,6 @@
 # F1-T1B — Trusted Policy & Obligation Semantics
 
-**Status: DRAFT, revision 8. NOT FROZEN.** Split out of the single F1-T1 contract after adversarial
+**Status: DRAFT, revision 9. NOT FROZEN.** Adversarial review 1 produced four findings; three required AM-39 in T1A and are closed, and the fourth — T1B had no closure rules at all — is closed by §B0. Split out of the single F1-T1 contract after adversarial
 review 7. Builds on `f1-t1a-trust-core.md`, whose adversary model (T1A §1), authorities (T1A §4), trust root
 (T1A §5), payload and domain separation (T1A §6), and decision-snapshot consistency apply here unchanged and
 are not restated.
@@ -11,6 +11,38 @@ be concluded from a verdict. T1A can be frozen without T1B; F1 is closed only wh
 
 Every rule here assumes T1A's substrate. A T1B rule enforced over unauthenticated state is
 decoration.
+
+## B0. Closure rules for this contract (AM-32, AM-39)
+
+T1A §-1 forbids security by remembered list, and T1A took fifteen adversarial rounds to discover
+that its own enumerations were one. T1B inherits the rule from the start rather than repeating the
+journey. Every security-significant enumeration here is **DERIVED** from a property, **CLOSED +
+CHECKED** by a mechanical check, or **NON-NORMATIVE** and marked as such.
+
+T1B adds one rule of its own, which AM-39 exists to enforce:
+
+> **T1B defines no message schema. T1A §6 is the single canonical source; T1B states what fields
+> mean. A schema restated here is a second canonical source, which is what defining it twice
+> already cost.**
+
+The manifest below is checked by `scripts/check-f1-enumerations.py`, which reads T1A and T1B as one
+F1 set — a cross-contract duplicate is exactly the defect neither document's own audit could see.
+
+```
+GOVERNED     :: TABLE |Field (T1A §6) :: applicability field semantics — CLOSED+CHECKED (AM-39)
+GOVERNED     :: Verification Obligation :: obligation record — CLOSED+CHECKED (AM-8)
+ILLUSTRATIVE :: GOVERNED     :: this manifest
+ILLUSTRATIVE :: FAIL(obligation O :: supersession history example
+ILLUSTRATIVE :: O1 applicable :: the narrowing attack shape
+ILLUSTRATIVE :: Project Genesis  ──anchors──> :: policy anchoring diagram
+```
+
+```
+COMMITMENT — T1B, pinned in advance (AM-38 applied to T1B)
+ILLUSTRATIVE_ENTRIES: 4
+be8f3033615c  TABLE |Field (T1A §6)
+3332e3f00eca  Verification Obligation
+```
 
 ## B1. Task relation and obligations
 
@@ -105,11 +137,20 @@ set (A16). That is the same attack as silent deactivation, moved to the moment o
 
 > **Silence cannot prevent birth any more than it can cause deactivation.**
 
-The obligation set is therefore an **authenticated Obligation-Set Commitment**, either anchored at
-Project Genesis or derived deterministically and reproducibly from `Policy Root + Gate Baseline +
-Predicate Registry`. A decision names that commitment; an obligation set assembled ad hoc, or
-assembled by whatever the current gate happens to mention, is refused. Omission is never a lawful
-route to not applying an obligation.
+The obligation set is therefore an **authenticated Obligation-Set Commitment**, anchored at Project
+Genesis (`obligation_policy_baseline`, T1A §6) and derived deterministically and reproducibly from
+`Project Genesis + the current Policy Commitment + the authenticated Gate Baseline`. A decision
+names that commitment; an obligation set assembled ad hoc, or assembled by whatever the current
+gate happens to mention, is refused. Omission is never a lawful route to not applying an
+obligation.
+
+**One derivation, not a choice of two (AM-39).** Revision 8 offered genesis-anchoring *or*
+derivation from `Policy Root + Gate Baseline + Predicate Registry`. The second branch named an
+authority that existed nowhere — no message type, no schema, no authority — and a disjunction at
+the moment of obligation birth is the same silence this rule exists to forbid: two admissible
+answers to "where did this set come from" is one answer too many. `Predicate Registry` is removed
+from v1; `predicate_class_map_digest` in the Policy Commitment carries
+`predicate_identity -> obligation_class`, which is all it was ever needed for.
 
 **Class is assigned by policy, never chosen by the object (AM-17).** AM-14 moved
 `class -> required authority` into the Policy Root, which is right — but the Applicability
@@ -120,9 +161,13 @@ is the same thing wearing a hat.
 
 > **A protected object may not choose its own protection class either.**
 
-`predicate_identity -> obligation_class` comes from the Policy Root or from an independent
-authorization, never from the caller and never from the obligation record. Reclassifying a predicate
-downward is a weakening, and is governed by §B4's rules for weakening coverage.
+`predicate_identity -> obligation_class` comes from the Policy Commitment's
+`predicate_class_map_digest` (T1A §6, AM-39), never from the caller and never from the obligation
+record. It is a separate commitment from `class_authority_map_digest`, which carries
+`obligation_class -> required authority`: two different authorities, two digests, so the chain
+`predicate_identity -> obligation_class -> required authority` is authenticated at every link.
+Reclassifying a predicate downward is a weakening, and is governed by §B4's rules for weakening
+coverage.
 
 **Supersession is not proof of causal repair.** See §B5.
 
@@ -141,15 +186,19 @@ The word *applicable* is therefore load-bearing, and anything load-bearing must 
 exactly like identity, gate and candidate. Applicability gets its own commitment and its own
 lineage:
 
-```
-Applicability Commitment          (NOGAP::APPLICABILITY::v1)
-  obligation_id
-  obligation_class          risk class; the POLICY maps class -> required authority (AM-14)
-  project_scope
-  predicate_scope
-  activation_condition
-  deactivation_condition
-```
+The message is `NOGAP::APPLICABILITY::v1`. **Its schema is T1A §6's and only T1A §6's (AM-39)** —
+this section says what the fields mean, and deliberately does not restate them. Revision 8 carried
+its own field list here, and the two disagreed on nine fields out of eleven for four revisions,
+with each document enforcing rules over fields the other lacked.
+
+| Field (T1A §6) | What it means here |
+|---|---|
+| `obligation_class` | risk class; the POLICY maps class -> required authority (AM-14) |
+| `predicate_scope_digest` | binds the scope the obligation covers; shrinking it is narrowing |
+| `condition_commitment` | binds the activation and deactivation conditions |
+| `transition` | which change this message authorizes: activate, deactivate or narrow |
+| `authorization_ref` | the authorization admissible for this class and this transition |
+| `epoch`, `previous_commitment` | the append-only lineage a transition takes its place in |
 
 Rules:
 

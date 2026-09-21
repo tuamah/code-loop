@@ -1,23 +1,24 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: FROZEN, revision 22, after adversarial review 21.** Round 21 was confirmatory: the
-full package — seventeen adversarial attacks, forward and reverse representability, semantic
-statefulness, snapshot mutability, enumeration closure, historical continuity and seventeen
-adversarial guard probes — ran against this revision with no prior edit, and completed with zero
-successful, zero partial and zero ambiguous results, zero security-semantic delta, zero guard
-weakening, zero hidden continuity loss and no uncommitted legal universe.
+**Status: FROZEN, revision 23, after the AM-39 regression.** Revision 22 was frozen at commit
+`b667d64` after review 21 completed clean, then reopened by **AM-39** — the first use of the
+reopen-by-amendment rule the freeze was written with. The first adversarial review of T1B found
+three defects in the *seam* between the contracts, which neither document's own audit could see
+because every guard read one document: `NOGAP::APPLICABILITY::v1` was defined in both, agreeing on
+two fields out of eleven; `predicate_identity -> obligation_class` had no representation anywhere;
+and obligation birth offered two derivations, one of them through an authority that did not exist.
 
-Rounds 17 through 20 each found their defect in the *guards* rather than in this contract, and
-round 20 exhausted that surface: both guards have now been attacked at the same intensity, neither
-attests to itself, and neither derives its legal extent from material that could be truncated or
-forged. Round 21 is the first round in the series to complete clean, which is what freezing
-required — stability demonstrated rather than assumed.
+AM-39 is deliberately narrow: T1A becomes the single canonical source for every schema, two
+representation gaps are closed, and the guards read T1A and T1B as one closure set. Nothing else in
+T1A changed. The regression — the ten attacks over the changed surface, the seventeen legacy
+attacks, representability both ways, closure across both contracts, continuity, and ten adversarial
+guard probes — completed with zero semantic regression, zero duplicate canonical schema, zero
+unrepresented policy fact and no security-semantic delta outside AM-39.
 
 **What FROZEN means.** No semantic change may be made to this document except through a new
 numbered amendment that explicitly reopens T1A, is recorded in `f1-amendment-ledger.md`, and states
-which invariant it changes and why. Editorial changes remain possible and are still caught by the
-continuity guard, which requires them to be acknowledged deliberately. The frozen content digest is
-recorded in `f1-trust-root-contract.md`.
+which invariant it changes and why. The `b667d64` freeze is not annulled: it was correct on the
+evidence available then, and AM-39 is the case that rule exists for.
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
@@ -129,6 +130,41 @@ changed text means the same thing.** No script can. What it buys is that drift c
 *silently* — the change becomes a line in a diff that a reviewer must judge. The guarantee is "no
 unacknowledged change", never "no harmful change".
 
+### A schema defined twice is defined nowhere (AM-39)
+
+T1A was frozen at revision 22 and reopened by this amendment. The first adversarial review of T1B
+found what neither document's own audits could: `NOGAP::APPLICABILITY::v1` had a body schema in §6
+*and* a different one in T1B §B4, agreeing on two fields out of eleven. §6 lacked
+`predicate_scope`, which is the whole subject of T1B's "narrowing is deactivation" rule (A10); T1B
+lacked `transition`, `epoch`, `previous_commitment` and `authorization_ref`, which are what make an
+applicability change an authenticated, ordered, authorized act at all. Each document enforced a
+rule over fields the other did not have. The guards could not see it because each read one
+document. **A canonical source is only canonical across the whole set of contracts that share it.**
+
+> **T1A is the single canonical source for every message schema. T1B states what the fields mean
+> and may not redefine, extend or restate a schema. An enumeration that is security-significant in
+> either document is governed in both, by the same closure rules and the same mechanical check.**
+
+Two representation gaps closed with it, both of AM-27's shape — a rule about a thing that could not
+be expressed as an authenticated message, so it would have lived in unsigned state:
+
+- **`predicate_scope_digest` and `condition_commitment`** (APPLICABILITY). Applicability semantics
+  may be complex, so the payload commits to them by binding digest rather than carrying raw text —
+  but what A10 and A13 depend on is now inside the signed commitment, directly or by a digest that
+  binds it. Nothing load-bearing is left outside.
+- **`predicate_class_map_digest`** (POLICY). `class_authority_map_digest` commits
+  `obligation_class -> required authority` (AM-14). It says nothing about
+  `predicate_identity -> obligation_class`, the mapping AM-17 depends on, and the two are different
+  authorities. They are kept as two digests rather than one bundle, because a single field carrying
+  two meanings is how a field later grows a third. The chain
+  `predicate_identity -> obligation_class -> required authority` is authenticated end to end.
+
+`Predicate Registry` is **removed from v1**. T1B named it as one of two possible sources for the
+obligation set, and it existed nowhere: no message type, no schema, no authority. With
+`predicate_class_map_digest` in POLICY there is no work left for it to do, and an unnecessary
+authority is unnecessary attack surface. The obligation set has one derivation, not a choice of
+two — a disjunction at the moment of obligation birth is the same silence AM-16 forbids.
+
 ### The guard may not derive what it is guarding (AM-38)
 
 Round 20 attacked `check-f1-enumerations.py` along eight paths; six landed, all with one root
@@ -237,7 +273,7 @@ MESSAGE_TYPES: 11 83a0451d68e9
 ILLUSTRATIVE_ENTRIES: 17
 5136ae3f44f8  read or copy any private authority key
 afb2fd6b7067  key_id ->
-fd20320439e6  Common Signed Envelope
+49fb6562aefa  Common Signed Envelope
 10676bcc2bad  PROJECT        genesis
 4b7a4e474a5d  NOGAP::PROJECT::v1
 7dae20087cdd  authorization_id
@@ -245,7 +281,7 @@ c7fc43fc51bd  NEW_TASK |
 d267b9ac86d8  Project Genesis Commitment
 fa38c582729d  Trusted Run Manifest
 7b25e7e9069a  authorized freeze request
-b6999c215ac1  STAGE 1 — every message, in order
+015970710e9f  STAGE 1 — every message, in order
 f89feebc61bf  begin
 009cb2d63cdf  Trusted Decision State Snapshot
 ac32e0d6fba8  derive the decision from snapshot S
@@ -570,9 +606,11 @@ Message-specific body             validated against the schema for message_type,
                  verification_method, verdict, observation_digest
   DECISION       run_commitment, candidate_fingerprint, decision, decision_snapshot_digest,
                  superseded_adverse_verdicts, policy_head
-  POLICY         project_commitment, epoch, previous_commitment, class_authority_map_digest
-  APPLICABILITY  project_commitment, obligation_id, obligation_class, transition, epoch,
-                 previous_commitment, authorization_ref
+  POLICY         project_commitment, epoch, previous_commitment, class_authority_map_digest,
+                 predicate_class_map_digest                                     (AM-39)
+  APPLICABILITY  project_commitment, obligation_id, obligation_class, predicate_scope_digest,
+                 condition_commitment, transition, epoch, previous_commitment,
+                 authorization_ref                                              (AM-39)
   REGISTRY       epoch, previous_commitment, key_grants_digest
   MIGRATION      project_commitments (enumerated, never a wildcard), reason, expiry,
                  authorization_ref, epoch, previous_commitment          (§12)
@@ -958,9 +996,11 @@ STAGE 2 — by message_type
  TASK           project_commitment resolves; relation authorized, not declared (§7.0)  else INADMISSIBLE
  RUN            task_commitment resolves; run_id was TCB-minted (§7.1);
                 authorized_base_commitment resolves (§7.2)                             else INADMISSIBLE
- POLICY         epoch is current head; previous_commitment chains (§10.3)              else INADMISSIBLE
+ POLICY         epoch is current head; previous_commitment chains (§10.3);
+                both map digests resolve to retrievable maps (AM-39)              else INADMISSIBLE
  APPLICABILITY  epoch chains; authorization_ref is an admissible HUMAN or policy-granted
-                authorization for this class and transition (T1B §B4)                  else INADMISSIBLE
+                authorization for this class and transition (T1B §B4);
+                predicate_scope_digest and condition_commitment resolve (AM-39)   else INADMISSIBLE
  REGISTRY       signed by the trust root; epoch chains (§5)                            else INADMISSIBLE
  MIGRATION      authorization_ref is an admissible HUMAN authorization for THIS grant;
                 projects enumerated; expiry present; epoch chains (§12)                else INADMISSIBLE

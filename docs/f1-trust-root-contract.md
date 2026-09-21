@@ -18,9 +18,9 @@ together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | **FROZEN rev 22** |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | **FROZEN rev 23** (reopened once, by AM-39) |
 | **Ledger** | [`f1-amendment-ledger.md`](f1-amendment-ledger.md) | What every amendment established, where it lives now, and whether it is still in force | canonical, CI-checked |
-| **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
+| **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 9, not frozen — review 1 done |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
 T1B. A T1B rule enforced over unauthenticated state is decoration; a T1A substrate with no T1B
@@ -34,11 +34,14 @@ the content. The freeze commit is `b667d64` on `claude/affectionate-edison-6ph9c
 authoritative pin.
 
 ```
-FROZEN — F1-T1A, revision 22, after adversarial review 21
-sha256  docs/f1-t1a-trust-core.md    b2b6ec458ad004ad64cabb6dc726f7f578d205162ca3fbd4561a538e92237b1f
-sha256  docs/f1-amendment-ledger.md  5c3fb4cc2d864ccfd25ec656d68b945ad5a2df1601d9d047292653e25924a83b
-criterion met   0 successful  0 partial  0 ambiguous  0 security-semantic delta
-                0 guard weakening  0 hidden continuity loss  0 uncommitted legal universe
+FROZEN — F1-T1A, revision 23, after the AM-39 regression
+sha256  docs/f1-t1a-trust-core.md    3b54b281aed341d432ab6059b15ee2c2062759b224fc63d4915ee6c3d9ae1504
+sha256  docs/f1-amendment-ledger.md  8455d4268c0ad10384b0e0ea7f5c173ba90b872e52be3f71ff01dcc4f351019f
+
+rev22  FROZEN at b667d64 — review 21 clean
+       REOPENED by AM-39: cross-contract representability defects, found in T1B review 1
+rev23  re-frozen: 0 semantic regression, 0 duplicate canonical schema,
+       0 unrepresented policy fact, 0 security-semantic delta outside AM-39
 ```
 
 No semantic change may be made to T1A except through a new numbered amendment that explicitly
