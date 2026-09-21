@@ -117,6 +117,29 @@ changed text means the same thing.** No script can. What it buys is that drift c
 *silently* — the change becomes a line in a diff that a reviewer must judge. The guarantee is "no
 unacknowledged change", never "no harmful change".
 
+### The guard may not derive what it is guarding (AM-38)
+
+Round 20 attacked `check-f1-enumerations.py` along eight paths; six landed, all with one root
+cause. Deleting HUMAN from all four sites passed, because eleven was only ever "what we found
+today". Adding a twelfth type to all four sites passed, for the same reason. A "revised action
+enum" placed earlier in the file became canonical, because the source was found by document order.
+The same closed set written as an indented code block was never scanned. Widening a closed action
+enum with `bypass` passed, because the guard checked that enumerations were present and agreed,
+never what they said. And declaring a real enumeration ILLUSTRATIVE exempted it — the governor
+deciding what it governs.
+
+> **The expected universe, the canonical source, the representation and the content of every
+> governed enumeration are pinned in advance. The universe is a committed count and digest, not a
+> tally of what the document currently holds. The canonical source is named by its role in the
+> manifest, never by where it appears. Every representation an enumeration can take is scanned.
+> The number of NON-NORMATIVE declarations is itself pinned, so an exemption cannot be granted
+> silently.**
+
+This is AM-37's rule carried from the ledger to the material: *a legal extent is never derived
+from matter that may itself be truncated or forged.* The commitment block is not one of the things
+it pins — a digest cannot cover a block containing itself — so its own integrity rests on the
+continuity guard, which digests §-1 as a section. Two guards, neither attesting to itself.
+
 ### The ledger is not self-attesting (AM-37)
 
 Round 19 turned the same question on the ledger AM-36 relies on. Three attacks, three passes:
@@ -196,6 +219,34 @@ ILLUSTRATIVE :: Policy v1   valid signature :: attack illustration
 ILLUSTRATIVE :: Mechanism exists: :: audit verdict restatement
 ILLUSTRATIVE :: GOVERNED     :: this manifest
 ```
+```
+COMMITMENT — the expected universe, pinned in advance (AM-38)
+MESSAGE_TYPES: 11 83a0451d68e9
+ILLUSTRATIVE_ENTRIES: 17
+5136ae3f44f8  read or copy any private authority key
+afb2fd6b7067  key_id ->
+fd20320439e6  Common Signed Envelope
+10676bcc2bad  PROJECT        genesis
+4b7a4e474a5d  NOGAP::PROJECT::v1
+7dae20087cdd  authorization_id
+c7fc43fc51bd  NEW_TASK |
+d267b9ac86d8  Project Genesis Commitment
+fa38c582729d  Trusted Run Manifest
+7b25e7e9069a  authorized freeze request
+b6999c215ac1  STAGE 1 — every message, in order
+f89feebc61bf  begin
+009cb2d63cdf  Trusted Decision State Snapshot
+ac32e0d6fba8  derive the decision from snapshot S
+9bd8fda2a7df  epoch                      monotonic
+6c87a00ff5fe  verify(request_id)            request names
+ce2a5c014163  PERMITTED   verify(request_id)
+2529cf671b96  TABLE |T1A owns
+400dc7f0ada1  TABLE |Form | Requirement
+97ec989b36df  TABLE |Enumeration | Form | Where
+48577d989fe9  TABLE |Mode | What it is
+f38db4feaac4  TABLE |Separation | Nature
+```
+
 
 A closure rule that was itself a remembered list would be the joke writing itself.
 
