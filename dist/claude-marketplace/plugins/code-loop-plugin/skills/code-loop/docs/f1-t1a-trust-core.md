@@ -1,11 +1,23 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 20, after adversarial review 18. NOT FROZEN.** Round 18 attacked the
-continuity guard with the same hostility the enumeration guard had faced, and broke it in all four
-categories: an anchor kept while the rule beneath it was inverted, a supersession pointing at an
-amendment carrying none of the invariant, a supersession cycle, and a false positive on a reflowed
-line. AM-36 rebuilds it — section digests over normalized text, supersession as inheritance, cycle
-detection — and states plainly what a digest can and cannot prove.
+**Status: FROZEN, revision 22, after adversarial review 21.** Round 21 was confirmatory: the
+full package — seventeen adversarial attacks, forward and reverse representability, semantic
+statefulness, snapshot mutability, enumeration closure, historical continuity and seventeen
+adversarial guard probes — ran against this revision with no prior edit, and completed with zero
+successful, zero partial and zero ambiguous results, zero security-semantic delta, zero guard
+weakening, zero hidden continuity loss and no uncommitted legal universe.
+
+Rounds 17 through 20 each found their defect in the *guards* rather than in this contract, and
+round 20 exhausted that surface: both guards have now been attacked at the same intensity, neither
+attests to itself, and neither derives its legal extent from material that could be truncated or
+forged. Round 21 is the first round in the series to complete clean, which is what freezing
+required — stability demonstrated rather than assumed.
+
+**What FROZEN means.** No semantic change may be made to this document except through a new
+numbered amendment that explicitly reopens T1A, is recorded in `f1-amendment-ledger.md`, and states
+which invariant it changes and why. Editorial changes remain possible and are still caught by the
+continuity guard, which requires them to be acknowledged deliberately. The frozen content digest is
+recorded in `f1-trust-root-contract.md`.
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
