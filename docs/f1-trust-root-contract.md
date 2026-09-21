@@ -1,7 +1,8 @@
 # F1-T1 — Trust Root Threat Model & Contract
 
-**Status: DRAFT, revision 4, after adversarial reviews 1-3. NOT FROZEN. Review 3 found two
-succeeding attacks and one latent circular dependency; no implementation may begin against it.**
+**Status: DRAFT, revision 5, after adversarial reviews 1-4. NOT FROZEN. Review 4 found two more
+attacks and one semantically wrong rule before a single attack was re-run; no implementation may
+begin against it.**
 
 F1 renamed per audit: *Missing Authenticated Trust Root / Forgeable Authority State*.
 
@@ -31,8 +32,25 @@ Revision 4 (review 3) adds three more, from attacking revision 3:
   existed, which the attestation would describe honestly. Candidates are now named only by
   content-addressed references, so there is nothing to tear.
 - **AM-6 (§7.3)** — **A5 succeeded.** Nothing linked runs, so the adversary retried with a fresh run
-  until a flaky check passed and presented that run's ACCEPT. Run lineage is now TCB-held and an
-  adverse authenticated verdict for the same candidate blocks ACCEPT across the whole task.
+  until a flaky check passed and presented that run's ACCEPT. Run lineage is now TCB-held.
+
+Revision 5 (review 4) adds three more, found by inspecting revision 4 rather than by re-running the
+attacks — the invariants were incomplete, so testing them would have measured the wrong thing:
+
+- **AM-7 (§7.0)** — **A7 succeeded.** Lineage was gathered "for the same task", but only
+  `task_digest` named a task, and that is caller-authored text. Rewording a task minted a fresh
+  identity with empty lineage: Run Genesis had merely moved laundering up one level. An
+  authenticated Task Commitment now sits above the run, the executor never chooses `task_id`, and
+  the task's relation to existing tasks is authorized rather than declared.
+- **AM-8 (§10.1)** — **A9 succeeded, and AM-6 was semantically wrong.** "Cleared by a verdict on a
+  different candidate" treats different bytes as a repair, so a comment or a whitespace change
+  manufactured a repair history. Failures now attach to project-scoped **obligations**, and ACCEPT
+  requires a current authenticated PASS on every applicable obligation for the exact candidate being
+  accepted. One rule closes A5, A7 and A9.
+- **AM-9 (§7.2)** — **A8 succeeded.** Content addressing proves bytes did not change; it never
+  proves they were the bytes it was permissible to build on. A caller-supplied `base_digest` let the
+  adversary pick a base where the failing check does not exist. The authorized base is now a TCB
+  commitment and a mismatch is refused. Integrity is not authenticity, one level further in.
 
 ## 0. What this fixes, stated honestly
 
@@ -273,6 +291,53 @@ assumed.
 
 ## 7. Run genesis, candidate identity, and TOCTOU
 
+### 7.0 The trust chain (AM-7)
+
+Revision 4 stopped at `run -> gate -> verification`. That is too short. `parent_run_commitments`
+was gathered "for the same task", but the only thing naming a task was `task_digest` — a digest of
+caller-authored text (§7.4). Change a word, a description, any whitespace, and the task is new:
+
+```
+task A   -> adverse lineage
+task A'  -> new task_digest -> first run -> parent_run_commitments = []
+```
+
+Run Genesis alone therefore only moved laundering up one level, from **Fresh-Run** to **Fresh-Task**
+(A7). The chain must start above the task, and every link must be minted by the TCB:
+
+```
+Authenticated Project
+        ↓
+Authenticated Task        (Task Commitment, NOGAP::TASK::v1)
+        ↓
+TCB-minted Run            (Run Commitment, §7.1)
+        ↓
+Authorized Base + Gate    (§7.2, §8)
+        ↓
+Content-addressed Candidate
+        ↓
+Verification Obligation   (§10.1)
+        ↓
+Authenticated Verdict
+        ↓
+Explicit Supersession Rules
+        ↓
+Acceptance Decision
+```
+
+**The executor never chooses `task_id`.** It may submit a task description; a Task Genesis Authority
+in the TCB mints the identity and records the task's relation to existing tasks:
+
+```
+NEW_TASK | CONTINUATION_OF(task-X) | SUPERSEDES(task-X) | CHILD_OF(task-X)
+```
+
+That relation is **authorized, not merely declared**. A caller asserting `NEW_TASK` is exactly the
+A7 move, so the authority decides the relation from TCB-held state, and escaping an existing task's
+unsatisfied obligations requires authenticated human approval (§4). Rewording a task never produces
+a clean slate — and under §10.1 it would not help even if it did, because obligations are
+project-scoped rather than task-scoped.
+
 ### 7.1 Run genesis (AM-4) — breaking revision 3's circular dependency
 
 Revision 3 said run identity is read from the authenticated gate commitment (§8), while §8 said the
@@ -301,10 +366,20 @@ Trusted Run Manifest                       (built by the TCB, not read from the 
   Verification / Decision payloads — carry both commitments
 ```
 
-The dependency now runs one way: **run, then gate, then verification.** A caller may *request* a
-run; it can never choose the resulting identity. A request naming a `run_id` that the TCB did not
+The dependency now runs one way: **project, task, run, gate, verification.** A caller may *request*
+a run; it can never choose the resulting identity. A request naming a `run_id` that the TCB did not
 mint is refused, and a gate commitment whose `run_commitment_digest` resolves to no TCB-held Run
 Commitment is refused.
+
+The interface takes an **authenticated Task Commitment**, never a caller-supplied digest:
+
+```
+FORBIDDEN   create_run(task_digest)                    caller names the task, and so its lineage
+PERMITTED   create_run(authenticated_task_commitment)  caller says only "a run for this task"
+```
+
+From that commitment the authority resolves project, task identity, parent runs, authorized base
+(§7.2) and policy out of TCB state. The caller supplies none of them.
 
 ### 7.2 Candidate acquisition must be content-addressed (AM-5)
 
@@ -318,6 +393,19 @@ The fix is not a faster copy. It is to stop snapshotting mutable state at all:
 
 - A candidate is identified by **content-addressed references**, never by "the working tree as it
   currently is": `base_digest` (an immutable base object) plus `patch_digest` (immutable content).
+
+**Content-addressed is not authorized (AM-9).** A digest proves *these bytes did not change*. It
+never proves *these were the bytes it was permissible to build on*. If the caller supplies
+`base_digest`, it picks the base: an older commit, a branch where the failing test does not exist,
+any object it can reach. That is the same lesson as F1 itself — integrity is not authenticity — one
+level further in. Therefore:
+
+- the **authorized base** for a task is a TCB-held commitment, derived from authenticated project
+  state and recorded in the Task Commitment (§7.0), not taken from the request
+- the controller checks `base_digest == the base committed for this task/run`, and **refuses**
+  otherwise; it never accepts a base named by the caller
+- for a repair run, the authorized base is the prior candidate, which is what makes candidate
+  lineage (§10.1) structural rather than claimed
 - Both are recorded in the Run Commitment's candidate binding before verification begins.
 - The controller materializes the master **from those objects**, not from the workspace. The
   content of a content-addressed object cannot change under it, so there is nothing to tear.
@@ -336,9 +424,9 @@ ACCEPT. Every run in that sequence is individually honest, and the sequence as a
 
 - Every Run Commitment records `parent_run_commitments` for the same task, assembled by the TCB
   from its own records — never from the workspace, which cannot be trusted to remember.
-- The acceptance authority evaluates a candidate against **the task's whole lineage**: an
-  authenticated adverse verdict for the same `candidate_fingerprint` anywhere in the lineage blocks
-  ACCEPT until it is superseded by an authenticated verdict on a *different* candidate.
+- The acceptance authority evaluates a candidate against **the task's whole lineage**. Revision 4
+  said an adverse verdict is cleared by a verdict on a *different* candidate; that was wrong, and
+  §10.1 replaces it. A different fingerprint proves different bytes, never a repair.
 - Omission is not possible: lineage lives in the TCB, so a caller that simply does not mention
   earlier runs changes nothing.
 - Run creation is deliberately **not** rate-limited by magic. Creating a thousand runs is useless by
@@ -446,6 +534,54 @@ The checks the audit confirmed genuine — `acceptability()`'s executor-identity
 contradictory-evidence blocking, non-passing rejection — are kept, now running on an authenticated
 input instead of a self-asserted one.
 
+### 10.1 Verification obligations and supersession (AM-8)
+
+Admissibility asks whether a verdict is genuine. It does not ask whether the *conclusion drawn from
+it* is sound. Revision 4's rule — an adverse verdict is cleared by a verdict on a different
+candidate — fails exactly there: a comment, a whitespace change, a touched unrelated file all yield
+a new `candidate_fingerprint`, so the adversary manufactures a repair history without repairing
+anything (A9). **Different bytes is not a fixed defect.**
+
+A failure is therefore attached to an **obligation**, not to a fingerprint:
+
+```
+Verification Obligation
+  obligation_id        stable across candidates and runs
+  project_commitment   obligations are PROJECT-scoped, not task-scoped
+  predicate_identity   which assertion, named by the authenticated gate baseline
+  failure_semantics    what counts as adverse for this predicate
+  applicability        which candidates it applies to, decided by the gate, never claimed
+```
+
+Obligations are **project-scoped on purpose**: that is what closes A7. Minting a new task cannot
+escape an obligation the project still owes, because the obligation never belonged to the task.
+
+The acceptance rule follows from this and is deliberately blunt:
+
+> **ACCEPT requires a current authenticated PASS on every applicable obligation, for the exact
+> candidate being accepted.**
+
+No inherited PASS, no credit from a sibling candidate, no clearing by novelty. A trivially altered
+descendant must re-satisfy every applicable obligation on itself; if the real defect is still there,
+the same obligation fails again. This closes A5, A7 and A9 with one rule rather than three special
+cases.
+
+**Supersession records, it never erases.** History retains both:
+
+```
+FAIL(obligation O, candidate A, run R1)
+PASS(obligation O, candidate B, run R2)
+```
+
+A later verdict may be recorded as superseding an earlier adverse one only when all hold: it is on
+the **same `obligation_id`**; the candidate is a **TCB-recorded descendant** of the adverse one
+(structural under AM-9, not claimed); the gate/policy in force is **equal or stronger**; and it is a
+PASS. Policy — not the trust root — then decides whether that supersession counts as repair. Every
+decision record carries the adverse verdicts it superseded, so a candidate that passed on attempt 47
+is visibly that.
+
+**Supersession is not proof of causal repair.** See R5.
+
 ## 11. Rotation, revocation, and what local time cannot prove
 
 `signed_at` comes from the signer's own clock. There is no trusted timestamping and no transparency
@@ -527,12 +663,22 @@ verdict as more than it is.
   TCB compromise, which §1 places out of scope.
 - **R3 — Snapshot storage is part of the TCB.** §7's guarantee holds only while the snapshot is
   beyond the executor's reach. Under Mode A it is not.
+- **R5 — Supersession cannot prove causation.** A PASS on a descendant after a FAIL may be a real
+  fix or a flaky predicate that happened to pass. The trust root binds facts; it cannot infer that
+  one caused the other, and it must not pretend to. The residual laundering vector is therefore
+  flakiness: retry until every applicable obligation passes at once. Mitigation is policy, not
+  cryptography — require predicates to be deterministic or reproducible, require N consecutive
+  passes, or require human sign-off to supersede nominated obligation classes. This is the exact
+  seam between *cryptographically valid* and *engineering-valid*, and NoGapCode must state which one
+  it is claiming.
 - **R4 — Provisioning is the root of everything.** An adversary present at trust-root provisioning
   owns all of it. Out of scope by §1, but it makes the ceremony the highest-value target.
 
 ## 17. Open for adversarial review 2
 
-Six attacks must be shown to fail before F1-T1 FREEZE. Review 3 result against revision 3:
+**Nine** attacks must be shown to fail before F1-T1 FREEZE.
+
+Review 3, against revision 3:
 
 ```
 A1  Signing Oracle              blocked, but rested on a circular run identity  -> AM-4
@@ -543,8 +689,16 @@ A5  Fresh-Run Laundering        SUCCEEDED                                       
 A6  Master Substitution         SUCCEEDED                                       -> AM-5
 ```
 
-Revision 4 has not itself been attacked. Review 4 must re-run all six against it, and no attack may
-remain successful or ambiguous.
+Review 4, against revision 4, by inspection:
+
+```
+A7  Fresh-Task Laundering               SUCCEEDED                      -> AM-7
+A8  Base Rebinding                      SUCCEEDED                      -> AM-9
+A9  Trivial-Change Failure Laundering   SUCCEEDED; AM-6 was wrong      -> AM-8
+```
+
+Revision 5 has not been attacked. Review 5 must run all nine against it. Any attack that succeeds,
+or whose outcome is ambiguous, blocks the freeze.
 
 An attack that fails only under conditions this contract does not require is not a pass; the
 condition must be written in.
