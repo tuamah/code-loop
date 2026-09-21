@@ -344,8 +344,14 @@ class AuthorityRegistry:
         state = store.get_key(key_id)
         if state is None:
             raise RegistryError(f"{action} names unknown key_id {key_id!r}")
+        # Every lifecycle change is written back through put_key. Mutating the object get_key
+        # returned was enough while the store handed back a live reference, but that is an
+        # aliasing assumption the RegistryStore interface never made — and a store that
+        # deserializes (I5b's durable one) silently dropped retirement and revocation. The
+        # write-back makes the interface's get/put contract what the code actually relies on.
         if action == "retire_key":
             state.state, state.retired_at = RETIRED, at
+            store.put_key(key_id, state)
         elif action == "revoke_key":
             # A bound on the TCB's own ordering, never an instant the signer asserts.
             bound = entry.get("compromised_after_epoch")
@@ -353,6 +359,7 @@ class AuthorityRegistry:
                 raise RegistryError(
                     "revocation needs compromised_after_epoch, a TCB acceptance epoch (§11)")
             state.state, state.compromised_after = REVOKED, bound
+            store.put_key(key_id, state)
         elif action == "rotate_root":
             raise RegistryError("root rotation is F1-T2, not I2")
         else:
