@@ -12,13 +12,13 @@ repository write access by construction.
 
 ## The two contracts
 
-Seventeen adversarial review rounds produced thirty-five amendments and twenty-four named attacks. Review 7
+Eighteen adversarial review rounds produced thirty-six amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 19, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 20, not frozen |
 | **Ledger** | [`f1-amendment-ledger.md`](f1-amendment-ledger.md) | What every amendment established, where it lives now, and whether it is still in force | canonical, CI-checked |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
@@ -272,8 +272,33 @@ enumeration exactly one entry, so a prefix covering two things can no longer cov
 and constrains security-significant enumerations to blocks and tables, which makes the scan's reach
 complete rather than a matter of where someone put a list. Both attacks now fail.
 
-Still outstanding: no round has completed without a security-semantic delta. Round 18 runs against
-revision 19.
+**Round 18** turned the same hostility on `check-f1-continuity.py` that round 17 had turned on the
+enumeration guard, and broke it in all four categories asked for:
+
+```
+anchor kept, rule beneath it inverted            -> passed   (false negative)
+AM-18 marked SUPERSEDED by an AM carrying none   -> passed   (hidden loss)
+supersession cycle AM-18 -> AM-29 -> AM-18       -> passed
+one line reflowed, nothing changed               -> FAILED   (false positive)
+```
+
+The first version verified a string was present, which proves text exists and nothing about what it
+means. AM-36 digests the whole section an invariant heads, over whitespace-normalized text, so
+reflow no longer trips it and editing the rule does; supersession becomes inheritance, with exactly
+one live amendment required to declare a retired one and carry its invariant forward; cycles are
+rejected. All four attacks now behave correctly.
+
+And the limit is written into the contract rather than left implied:
+
+> A digest proves text did not change. It cannot prove that changed text means the same thing. No
+> script can. What it buys is that drift cannot happen *silently* — the change becomes a line in a
+> diff a reviewer must judge. The guarantee is "no unacknowledged change", never "no harmful
+> change".
+
+Still outstanding: no round has completed without a security-semantic delta. Rounds 16, 17 and 18
+each found their defect in the round before's machinery — and rounds 17 and 18 found it in the
+*guards* rather than the contract, which is a smaller and more finite surface than the contract
+itself. Round 19 runs against revision 20.
 
 ## Standing constraints
 

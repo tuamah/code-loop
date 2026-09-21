@@ -1,11 +1,11 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 19, after adversarial review 17. NOT FROZEN.** Round 17 attacked AM-33
-and AM-34 directly. AM-34 held. AM-33's guard did not: two of its declared prefixes were short
-enough to swallow a new undeclared enumeration, and the scan covered fenced blocks while ignoring
-tables. Both attacks were run, both succeeded, and both now fail. AM-35 makes the manifest a
-bijection and constrains security-significant enumerations to blocks and tables so the scan is
-complete.
+**Status: DRAFT, revision 20, after adversarial review 18. NOT FROZEN.** Round 18 attacked the
+continuity guard with the same hostility the enumeration guard had faced, and broke it in all four
+categories: an anchor kept while the rule beneath it was inverted, a supersession pointing at an
+amendment carrying none of the invariant, a supersession cycle, and a false positive on a reflowed
+line. AM-36 rebuilds it — section digests over normalized text, supersession as inheritance, cycle
+detection — and states plainly what a digest can and cannot prove.
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
@@ -97,6 +97,25 @@ deciding whether it is stateful (AM-29).
 `scripts/check-f1-enumerations.py` enforces the CLOSED + CHECKED rows; `scripts/check-f1-continuity.py`
 enforces that no amendment's invariant is lost to a rewrite (see `f1-amendment-ledger.md`). Both run
 in CI.
+
+### Continuity is a guard, not a memory (AM-36)
+
+The same anti-pattern that lets an invariant slip out of a contract lets a month of work slip out
+of a project: something true is remembered rather than recorded, and then it is not. Thirty-five
+amendments were produced in conversation; only these documents and `f1-amendment-ledger.md` survive
+it.
+
+> **Every amendment's invariant is located in a document and digested. A rewrite that changes the
+> section holding it fails CI until someone acknowledges the change deliberately. Supersession is
+> inheritance: an amendment may only be retired if exactly one live amendment declares it and
+> carries its invariant forward.**
+
+Round 18 attacked the guard enforcing this and broke it four ways, so the rule above is what the
+guard now enforces rather than what an earlier version merely appeared to. What it proves is
+bounded and worth stating plainly: **a digest proves text did not change; it cannot prove that
+changed text means the same thing.** No script can. What it buys is that drift cannot happen
+*silently* — the change becomes a line in a diff that a reviewer must judge. The guarantee is "no
+unacknowledged change", never "no harmful change".
 
 ### The rule applies to itself (AM-33)
 
