@@ -75,6 +75,24 @@ def main() -> int:
         if not verbs:
             problems.append(f"{message_type}: action enum is empty; a type with no action cannot be granted (AM-20)")
 
+    # AM-33: the closure rule applies to itself. Every fenced block must be declared in §-1's
+    # manifest, so a new enumeration cannot enter the document without being classified.
+    manifest = re.search(r"```\n((?:GOVERNED|ILLUSTRATIVE).*?)\n```", text, re.S)
+    if not manifest:
+        problems.append("§-1's closure manifest is missing — AM-33 requires it as the canonical source")
+    else:
+        prefixes = []
+        for line in manifest.group(1).splitlines():
+            mm = re.match(r"(GOVERNED|ILLUSTRATIVE)\s{2,}(\S.*?)\s{2,}\S", line)
+            if mm:
+                prefixes.append(mm.group(2).strip())
+        if not prefixes:
+            problems.append("§-1's closure manifest has no parsable entries")
+        for block in re.findall(r"```\n(.*?)\n```", text, re.S):
+            first = block.splitlines()[0].strip()
+            if not any(first.startswith(prefix) for prefix in prefixes):
+                problems.append(f"undeclared enumeration block, not in §-1's manifest: {first[:64]!r}")
+
     if problems:
         print("FAIL: F1-T1A closed vocabularies disagree", file=sys.stderr)
         for problem in problems:

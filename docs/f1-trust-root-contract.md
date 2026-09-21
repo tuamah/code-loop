@@ -12,13 +12,13 @@ repository write access by construction.
 
 ## The two contracts
 
-Fifteen adversarial review rounds produced thirty-two amendments and twenty-four named attacks. Review 7
+Sixteen adversarial review rounds produced thirty-four amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 17, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 18, not frozen |
 | **Ledger** | [`f1-amendment-ledger.md`](f1-amendment-ledger.md) | What every amendment established, where it lives now, and whether it is still in force | canonical, CI-checked |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
@@ -219,8 +219,26 @@ The same anti-pattern that let an invariant slip out of a contract is the one th
 work slip out of a project's memory; the fix is the same in both cases — a canonical source and a
 mechanical check, never a remembered list.
 
-Still outstanding: no round has completed without an amendment, and round 16 has not yet run
-against revision 17.
+**Round 16** ran the full seven-part package against revision 17. Seventeen attacks blocked; the
+representability, statefulness and snapshot audits clean; both automated guards green. The
+**closure audit failed it**, and on the sharpest possible point: §-1 forbade security by remembered
+list and was itself enforced by a fourteen-row table nothing checked. A future amendment adding a
+list — which AM-19, AM-23, AM-25 and AM-27 each did — could have omitted itself from that table
+with both guards staying green.
+
+That is A14 and A17 one level higher: the policy object setting its own protection, the obligation
+choosing its own class, and now the closure rule exempting itself from closure. **The governing
+object is not exempt from its own governance.** AM-33 makes §-1's manifest canonical and requires
+every fenced block in T1A to match it, so an enumeration cannot enter undeclared; the guard was
+verified to fail on exactly the move a future amendment would make.
+
+AM-34 came from the same round: Mode B's clause 3 forbade influencing trusted computation at all,
+which no co-resident process can satisfy, since timing and resource pressure are influence. An
+invariant that can never be literally true is as useless as one always true. It now forbids
+influence that moves the **outcome toward acceptance** — resource pressure drives fail-closed,
+which is availability and out of scope.
+
+Still outstanding: no round has completed without an amendment. Round 17 runs against revision 18.
 
 ## Standing constraints
 
