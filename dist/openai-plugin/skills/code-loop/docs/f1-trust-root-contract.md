@@ -1,7 +1,7 @@
 # F1-T1 — Trust Root Threat Model & Contract
 
-**Status: DRAFT, revision 3, after adversarial reviews 1 and 2. Not frozen. No implementation may
-begin against it.**
+**Status: DRAFT, revision 4, after adversarial reviews 1-3. NOT FROZEN. Review 3 found two
+succeeding attacks and one latent circular dependency; no implementation may begin against it.**
 
 F1 renamed per audit: *Missing Authenticated Trust Root / Forgeable Authority State*.
 
@@ -20,6 +20,19 @@ Revision 3 (review 2) adds three amendments found by attacking revision 2:
   semantics added: the controller keeps an immutable master, the worker gets a disposable copy.
 - **AM-3 (§2)** — worker-output handling was advice in §16; it is now normative, together with an
   explicit rule that the controller never executes or imports project code.
+
+Revision 4 (review 3) adds three more, from attacking revision 3:
+
+- **AM-4 (§7.1)** — AM-1 was circular: run identity came from the gate commitment, which itself
+  carried a run binding, so the caller still minted run identity. A **Run Genesis Authority** in the
+  TCB now mints it, and the dependency runs one way: run, then gate, then verification.
+- **AM-5 (§7.2)** — **A6 succeeded.** Copying a mutable working tree is not atomic, so the adversary
+  mutates during materialization and the master becomes a torn read: a mixture that never coherently
+  existed, which the attestation would describe honestly. Candidates are now named only by
+  content-addressed references, so there is nothing to tear.
+- **AM-6 (§7.3)** — **A5 succeeded.** Nothing linked runs, so the adversary retried with a fresh run
+  until a flaky check passed and presented that run's ACCEPT. Run lineage is now TCB-held and an
+  adverse authenticated verdict for the same candidate blocks ACCEPT across the whole task.
 
 ## 0. What this fixes, stated honestly
 
@@ -258,47 +271,109 @@ property would be optimizing the wrong variable against an empirically demonstra
 break. Private-key storage backend and OS isolation are deferred to F1-T2; raw key files are not
 assumed.
 
-## 7. Candidate identity and TOCTOU
+## 7. Run genesis, candidate identity, and TOCTOU
 
-The controller must never accept the caller's word for what it is about to test. Between a
-caller-supplied `candidate_fingerprint` and the checks running, the adversary can swap the
-workspace: candidate A is tested, candidate B is attested.
+### 7.1 Run genesis (AM-4) — breaking revision 3's circular dependency
 
-**Run identity must itself be authenticated (AM-1).** `run.json` and the task contract live in
-`.code-loop/` and are adversary-writable under §1, so resolving a request against them lets the
-adversary redirect an attestation onto a run or task of its choosing — and lets it defeat §8's
-"first commitment wins per run" simply by naming a fresh `run_id`. Therefore:
+Revision 3 said run identity is read from the authenticated gate commitment (§8), while §8 said the
+gate commitment carries a project/run binding. That is circular: `run_id` must already exist before
+the commitment that supposedly defines it, so whoever supplies it at freeze time **mints run
+identity** — and that is the caller. Run creation was therefore still an adversary primitive, which
+is also what made A5 (§17) trivial.
 
-- a run exists, for trust purposes, only once it has an **authenticated gate commitment** (§8)
-  held by the TCB; `project_id` and `run_id` are read from that commitment, never from the workspace
-- a verification request naming a run with no authenticated gate commitment is **refused**
-- the TCB keeps its own record of which commitments exist; the workspace copy is a cache (§5)
+Run identity is minted by a **Run Genesis Authority** inside the TCB, before any gate exists:
 
-The caller therefore supplies **references only**:
+```
+Trusted Run Manifest                       (built by the TCB, not read from the workspace)
+  project_id            resolved from the TCB's authenticated project binding, never caller text
+  task_digest           digest of the task contract; a binding, not an endorsement (§7.4)
+  policy_version
+  creation_nonce        TCB-generated; never caller-supplied
+  run_id                TCB-derived from (project_id, creation_nonce, creation_sequence)
+  parent_run_commitments  lineage for this task (§7.3); empty only for the first run
+  created_by_authority
+  creation_sequence     per-authority, atomic, durable
+        ↓ signed
+  Run Commitment        (NOGAP::RUN::v1)
+        ↓ referenced by
+  Gate Commitment       (NOGAP::GATE::v1, §8) — carries run_commitment_digest, not a bare run_id
+        ↓ referenced by
+  Verification / Decision payloads — carry both commitments
+```
+
+The dependency now runs one way: **run, then gate, then verification.** A caller may *request* a
+run; it can never choose the resulting identity. A request naming a `run_id` that the TCB did not
+mint is refused, and a gate commitment whose `run_commitment_digest` resolves to no TCB-held Run
+Commitment is refused.
+
+### 7.2 Candidate acquisition must be content-addressed (AM-5)
+
+"Materialize an immutable master snapshot" was not enough. §1 grants the adversary mutation *at any
+moment*, and copying a working tree is not atomic: the adversary mutates during the copy and the
+master becomes a **torn read** — a mixture of candidate A and candidate B that never coherently
+existed. The attestation would then be perfectly honest about a state no one ever authored, and the
+adversary can shape the tear so that the mixture passes checks neither A nor B would.
+
+The fix is not a faster copy. It is to stop snapshotting mutable state at all:
+
+- A candidate is identified by **content-addressed references**, never by "the working tree as it
+  currently is": `base_digest` (an immutable base object) plus `patch_digest` (immutable content).
+- Both are recorded in the Run Commitment's candidate binding before verification begins.
+- The controller materializes the master **from those objects**, not from the workspace. The
+  content of a content-addressed object cannot change under it, so there is nothing to tear.
+- If a reference does not resolve, verification is refused. It is never resolved "as close as
+  possible" to something in the workspace.
+
+This aligns with what the runtime already produces: `nogap execute` yields a patch, and today's
+`candidate_hash` is already derived from `patch_hash`. What changes is that those digests stop
+being descriptive labels and become the **only** way the candidate is named.
+
+### 7.3 Run lineage (AM-6)
+
+A fresh run must not be a fresh start. Without lineage, the adversary simply retries: run, get an
+adverse verdict, mint another run, repeat until a flaky check passes, then present that run's
+ACCEPT. Every run in that sequence is individually honest, and the sequence as a whole is laundering.
+
+- Every Run Commitment records `parent_run_commitments` for the same task, assembled by the TCB
+  from its own records — never from the workspace, which cannot be trusted to remember.
+- The acceptance authority evaluates a candidate against **the task's whole lineage**: an
+  authenticated adverse verdict for the same `candidate_fingerprint` anywhere in the lineage blocks
+  ACCEPT until it is superseded by an authenticated verdict on a *different* candidate.
+- Omission is not possible: lineage lives in the TCB, so a caller that simply does not mention
+  earlier runs changes nothing.
+- Run creation is deliberately **not** rate-limited by magic. Creating a thousand runs is useless by
+  construction: each one still gets a baseline-bound gate (§8), so more runs never yield an easier
+  gate, and lineage means more runs never yield a cleaner history.
+
+### 7.4 What a signature over caller-derived content does and does not mean
+
+`task_digest` binds a payload to a task contract the caller authored. Signing a *binding* to
+caller-supplied content is not an *endorsement* of that content, and nothing downstream may treat it
+as one. Only fields the authority itself derived — verdict, candidate_fingerprint, sequence,
+signed_at, deployment_mode — carry the authority's word.
+
+### 7.5 The verification sequence
 
 ```
 verify(request_id)            request names run/task by id; nothing self-describing
    ↓ controller:
-resolve run/task via the TCB-held authenticated gate commitment  (never from the workspace)
-load the authenticated gate commitment
-materialize an IMMUTABLE MASTER snapshot into TCB-controlled storage
-compute candidate_fingerprint FROM THE MASTER
-give the worker an EPHEMERAL COPY of the master        (the worker may write to its copy)
+resolve the TCB-held Run Commitment            (never from the workspace)
+load the Gate Commitment bound to it
+resolve base_digest + patch_digest from the candidate binding   else REFUSE
+materialize the MASTER from those content-addressed objects into TCB storage
+derive candidate_fingerprint from the MASTER
+hand the worker an EPHEMERAL COPY               (the worker may write to, or destroy, its copy)
 collect bounded observations
-re-confirm the MASTER's fingerprint is unchanged        else ABORT, no attestation
+re-confirm the MASTER is unchanged              else ABORT, no attestation
 discard the worker copy
 re-derive verdict, construct payload, sign
 ```
 
-**Master-copy semantics (AM-2).** A build or test legitimately writes to the tree it runs in, so
-re-fingerprinting the worker's copy would either fail on honest runs or prove nothing. The
-controller retains an immutable **master** and hands the worker a disposable copy; the attestation
-binds the master's fingerprint, and the post-run confirmation is of the master, not of the copy.
-
-The master must live in storage the executor cannot mutate. A master materialized inside the
-project worktree is not a master — it is the thing the adversary is still holding. If its
-fingerprint changes between materialization and completion, the run aborts and nothing is signed;
-a mutated candidate never produces a "best effort" attestation.
+**Master ownership and lifecycle.** The master is created by the controller, lives in TCB-controlled
+storage for the life of the verification, and is destroyed or retained by policy afterwards. The
+executor can neither read-modify nor replace it, and destroying the worker copy — which the worker
+is free to do — has no effect on it. A master materialized inside the project worktree is not a
+master; it is the thing the adversary is still holding (see R3).
 
 ## 8. Authorized freeze
 
@@ -326,9 +401,12 @@ Rules:
   deviation, for this project and run.
 - No "weakness ordering" is invented. The contract does not try to decide whether one gate is
   weaker than another; anything that is not an exact authenticated baseline match requires a human.
-- **First commitment wins per run.** A second commitment for the same `run_id` is refused. Changing
-  the gate means a new run with its own authorization — which is what "immutable for one run"
-  actually requires.
+- The freeze request must name a **TCB-held Run Commitment** (§7.1). A gate commitment is bound to
+  `run_commitment_digest`, never to a bare `run_id` the caller chose.
+- **First commitment wins per run.** A second commitment for the same Run Commitment is refused.
+  Changing the gate means a new run with its own genesis and authorization — which is what
+  "immutable for one run" actually requires. Because every run's gate is baseline-bound, minting
+  more runs does not produce an easier gate (§7.3).
 - The separation is explicit: *"this is the data I signed"* is not *"I was authorized to adopt this
   data as the gate for this run."*
 
@@ -442,9 +520,11 @@ verdict as more than it is.
   those checks execute. A signed verdict proves *who observed what*, never that the observation was
   a meaningful test. A project that writes a vacuous test still gets an honestly signed "passed".
   Mitigation belongs to effect verification (GP-10) and reproducibility, not to the trust root.
-- **R2 — Worker output is attack surface.** The controller parses data produced under adversary
-  influence. §2 makes the handling rules normative; the residual is that a parser defect inside the
-  TCB is a TCB compromise, which §1 places out of scope.
+- **R2 — Adversary-influenced input to the TCB is attack surface.** The controller parses worker
+  output, and under AM-5 it also resolves and materializes content-addressed objects the adversary
+  authored. Any tool it runs over that data — an archiver, a patch applier, a parser — is TCB
+  surface. §2 makes the handling rules normative; the residual is that a defect inside the TCB is a
+  TCB compromise, which §1 places out of scope.
 - **R3 — Snapshot storage is part of the TCB.** §7's guarantee holds only while the snapshot is
   beyond the executor's reach. Under Mode A it is not.
 - **R4 — Provisioning is the root of everything.** An adversary present at trust-root provisioning
@@ -452,14 +532,19 @@ verdict as more than it is.
 
 ## 17. Open for adversarial review 2
 
-Four attacks must be shown to fail against this contract before F1-T1 FREEZE:
+Six attacks must be shown to fail before F1-T1 FREEZE. Review 3 result against revision 3:
 
 ```
-A1  Signing Oracle
-A2  Verifier Key Exfiltration
-A3  Candidate TOCTOU
-A4  Unauthorized Gate Freeze
+A1  Signing Oracle              blocked, but rested on a circular run identity  -> AM-4
+A2  Verifier Key Exfiltration   blocked (Mode B); TCB input surface widened     -> R2
+A3  Candidate TOCTOU            blocked, and strengthened                       -> AM-5
+A4  Unauthorized Gate Freeze    blocked, now anchored to a TCB-minted run       -> AM-4
+A5  Fresh-Run Laundering        SUCCEEDED                                       -> AM-6
+A6  Master Substitution         SUCCEEDED                                       -> AM-5
 ```
+
+Revision 4 has not itself been attacked. Review 4 must re-run all six against it, and no attack may
+remain successful or ambiguous.
 
 An attack that fails only under conditions this contract does not require is not a pass; the
 condition must be written in.
