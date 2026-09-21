@@ -30,6 +30,8 @@ jobs:
         run: python -m unittest tests.test_f1_registry -v
       - name: F1 commitment adversarial tests
         run: python -m unittest tests.test_f1_commitments -v
+      - name: F1 Stage 1 adversarial tests
+        run: python -m unittest tests.test_f1_stage1 -v
       - name: F1 contract continuity
         run: python scripts/check-f1-continuity.py
       - name: F1 enumeration closure
