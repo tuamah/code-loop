@@ -1,7 +1,10 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 8. NOT FROZEN.** Split out of the single F1-T1 contract after adversarial
-review 7, which established where the seam lies. See `f1-trust-root-contract.md` for F1's overall
+**Status: DRAFT, revision 9, after adversarial review 8. NOT FROZEN.** Split out of the single F1-T1
+contract after review 7, which established where the seam lies. Review 8 attacked the core alone and
+found three defects in it — A19 missing domain separation for the newest commitments, A20 a registry
+that granted nothing, A21 human approvals replayable across operations — all three inside message
+identity, signer authority and authorization binding rather than in any new semantic layer. See `f1-trust-root-contract.md` for F1's overall
 status and for F1-T1B.
 
 T1A answers one question: **can any statement in this system be authenticated, bound to an identity,
@@ -233,29 +236,75 @@ The trust root is established **out of band** by an explicit provisioning ceremo
 decision. It is never created implicitly on first use — an implicitly created root is a root the
 adversary can create first. An adversary present at provisioning is out of scope (§1).
 
+### 5.1 A valid key is not every authority (AM-20)
+
+§4 names key classes and §3.1 calls the eight authorities "authorization scopes", but revision 8
+never said what the registry actually **enforces**. A verifier reading a `RUN` commitment signed by
+the key it also knows as the freeze authority had no rule to apply. That gap is the whole ballgame:
+without it, holding any TCB key is holding all of them (A20).
+
+The registry therefore grants explicitly, per key:
+
+```
+key_id ->
+  allowed_message_types     which domains (§6) this key may sign, enumerated
+  allowed_actions           which operations within them
+  allowed_projects          scope, or a declared wildcard
+  validity                  window, state, epoch (§10.3)
+```
+
+> **Possessing a valid key is not possessing every TCB authority.** A signature is admissible only
+> if the registry grants *that* `key_id` *that* `message_type` and action, in *that* scope.
+
+This is deliberately independent of process topology (§3.1). One control-plane key may legitimately
+carry several scopes; what may never happen is a key exercising an authority the registry did not
+grant it. Genesis authorities — project, task, run — are ordinary grants under this rule, not
+implicit powers: revision 8 left them as scopes with no cryptographic principal, and they now
+resolve like every other signer.
+
 ## 6. Canonical payload, canonicalization, domain separation
 
 Signatures cover a small explicit payload, never a raw file and never "the JSON as it happens to
 serialize".
 
+**One payload shape for every message type was a defect (AM-19).** Revision 8 defined a single
+canonical payload carrying `verdict`, `verification_method`, `gate_commitment`,
+`candidate_fingerprint` and the rest — fields that are meaningless for a `PROJECT` commitment, and
+that a `HUMAN` approval may have no run or gate for at all. Optional-everywhere fields are how a
+field that means nothing today becomes a hole tomorrow. The payload therefore splits into a common
+envelope and a message-specific body, and a body is validated against its own schema:
+
 ```
-schema_version          unknown version -> inadmissible
-message_type            one of the domain strings below
-key_id                  resolves to identity and grants in the registry
-producer_identity       the asserting principal as recorded in the registry
-authority_class         verification | acceptance | freeze | human
-project_id              binds to a project; blocks cross-project replay
-run_id                  binds to a run; blocks cross-run replay
-gate_commitment         the authenticated gate commitment (§8)
-candidate_fingerprint   computed by the controller from its own snapshot (§7)
-subject_digest          digest of what is attested
-verification_method     how the verdict was reached; a bare verdict is not a method
-verdict                 the outcome as observed by the signer
-sequence                per-signing-identity, atomic, durable (§14); ordering, not freshness
-signed_at               signer clock; see §10 on what it cannot prove
-policy_version          admissibility policy in force
-deployment_mode         A | B | C (§3)
+Common Signed Envelope            present in every message, identical meaning in every message
+  schema_version                  unknown version -> inadmissible
+  message_type                    one of the domains below; must equal the signed prefix
+  key_id                          resolves to identity, grants and validity in the registry
+  producer_identity               the asserting principal, as recorded in the registry
+  sequence                        per-signing-identity, atomic, durable; ordering, not freshness
+  signed_at                       signer clock; see §11 on what it cannot prove
+  deployment_mode                 A | B | C (§3)
+
+Message-specific body             validated against the schema for message_type, and no other
+  PROJECT        project_id, repository_identity, initial_base_digest, policy_baseline,
+                 gate_baseline, obligation_policy_baseline, provisioned_by, provisioning_sequence
+  TASK           project_commitment, task_digest, relation, parent_task_commitment
+  RUN            project_commitment, task_commitment, creation_nonce, run_id,
+                 parent_run_commitments, authorized_base_commitment, policy_head
+  GATE           run_commitment, gate_content_digest, baseline_match | human_authorization,
+                 freeze_policy_version
+  VERIFY         run_commitment, gate_commitment, candidate_fingerprint, obligation_id,
+                 verification_method, verdict, observation_digest
+  DECISION       run_commitment, candidate_fingerprint, decision, decision_snapshot_digest,
+                 superseded_adverse_verdicts, policy_head
+  POLICY         project_commitment, epoch, previous_commitment, class_authority_map_digest
+  APPLICABILITY  project_commitment, obligation_id, obligation_class, transition, epoch,
+                 previous_commitment, authorization_ref
+  REGISTRY       epoch, previous_commitment, key_grants_digest
+  HUMAN          authorization body (§6.1)
 ```
+
+A field absent from a body's schema is not optional — it is **rejected**. There is no shared
+grab-bag in which an unused field can quietly acquire meaning.
 
 **Canonicalization**: RFC 8785 (JSON Canonicalization Scheme). It is a published, testable
 specification rather than a local convention, so independent implementations agree. The contract
@@ -265,15 +314,59 @@ Unknown fields are rejected, not ignored. Absent fields are omitted, never `null
 **Domain separation** is by explicit message type, not by schema version:
 
 ```
-NOGAP::GATE::v1      || canonical_payload
-NOGAP::VERIFY::v1    || canonical_payload
-NOGAP::DECISION::v1  || canonical_payload
-NOGAP::REGISTRY::v1  || canonical_payload
-NOGAP::HUMAN::v1     || canonical_payload
+NOGAP::PROJECT::v1        || canonical_payload
+NOGAP::TASK::v1           || canonical_payload
+NOGAP::RUN::v1            || canonical_payload
+NOGAP::GATE::v1           || canonical_payload
+NOGAP::VERIFY::v1         || canonical_payload
+NOGAP::DECISION::v1       || canonical_payload
+NOGAP::POLICY::v1         || canonical_payload
+NOGAP::APPLICABILITY::v1  || canonical_payload
+NOGAP::REGISTRY::v1       || canonical_payload
+NOGAP::HUMAN::v1          || canonical_payload
 ```
 
-A verification signature can never be reinterpreted as a decision, even if the payloads coincide.
-`message_type` inside the payload must equal the prefix signed over; a mismatch is inadmissible.
+Revision 8 used `PROJECT`, `TASK`, `RUN`, `POLICY` and `APPLICABILITY` throughout §7 and §10 while
+defining domains only for the other five, so the newest and most powerful commitments in the
+contract had no signing domain at all (A19). The list above is **closed**: a message type without a
+domain string and a body schema cannot be signed, and adding one is a contract change.
+
+A verification signature can never be reinterpreted as a decision, even if the bodies coincide.
+`message_type` inside the envelope must equal the prefix signed over; a mismatch is inadmissible.
+
+### 6.1 Authorization is not authentication (AM-21)
+
+The contract leans on "authenticated human approval" in three places — a gate deviation (§8), an
+applicability weakening (T1B), an ambiguous task relation (§7.0). Revision 8 never bound an approval
+to the operation it approved. A human approves a gate deviation for run X; the signature is valid
+forever, for anything that asks for a human approval, so it is replayed to found a second project,
+authorize a different run, or weaken a policy (A21).
+
+> **Authentication proves who signed. Authorization must additionally prove what exact operation
+> that signer authorized.**
+
+A `HUMAN` body is purpose-bound:
+
+```
+authorization_id       unique; the consumption record keys on it
+action_type            the single operation authorized
+target_message_type    the domain it may be consumed by, and no other
+project_commitment     which project
+subject_digest         the exact thing approved — this gate content, this transition
+requested_transition   for a state change, the precise from -> to
+policy_head            the policy under which approval was given (§10.3)
+use_semantics          single-use, or reusable within an explicitly declared scope
+expiry
+```
+
+Consumption is recorded in the TCB. A single-use authorization presented twice is **refused on the
+second attempt**, and a reusable one is refused outside its declared scope. An authorization whose
+`policy_head` is no longer current is refused: approval was given under rules that have since
+changed, and silently carrying it forward would re-open A18 through the human path.
+
+This closes the loop back to the very first invariant (§2). A signing oracle signs what it is told;
+a replayable approval is the same failure in slower motion — a human's intent, detached from its
+object, becomes a token anyone can spend.
 
 **Algorithm**: Ed25519 via `cryptography`. This is the project's first runtime dependency and the
 Ladder justifies it: rung 3 (standard library) does not reach — Python ships `hashlib`/`hmac` and

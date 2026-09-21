@@ -12,14 +12,14 @@ repository write access by construction.
 
 ## The two contracts
 
-Seven adversarial review rounds produced eighteen amendments and eighteen named attacks. Review 7
+Eight adversarial review rounds produced twenty-one amendments and twenty-one named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT, not frozen |
-| **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 9, not frozen |
+| **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
 T1B. A T1B rule enforced over unauthenticated state is decoration; a T1A substrate with no T1B
@@ -35,7 +35,7 @@ attack T1B with the policy and obligation attacks
   → only then is F1 closed, and only after implementation
 ```
 
-## The eighteen attacks, and where each now lives
+## The twenty-one attacks, and where each now lives
 
 ```
 T1A — Authenticated Trust Core
@@ -50,6 +50,9 @@ T1A — Authenticated Trust Core
   A12  Project/Base Genesis Substitution
   A15  Mixed-State / Decision TOCTOU
   A18  Signed-Policy Rollback
+  A19  Missing Domain Separation for Core Commitments
+  A20  Authority-Class Gap / Genesis Signer Ambiguity
+  A21  Authorization Replay / Human Approval Reuse
 
 T1B — Trusted Policy & Obligation Semantics
   A5   Fresh-Run Laundering              (obligation half)
@@ -80,6 +83,7 @@ had just added — which is why the split matters more than another amendment wo
 | 5 | A10, A11, A12 succeeded; A10 defeated AM-8 | AM-10…12 |
 | 6 | A13, A14, A15 succeeded; A13 defeated AM-10 by timing | AM-13…15 |
 | 7 | A16, A17, A18 succeeded; established the T1A/T1B seam | AM-16…18 |
+| 8 | A19, A20, A21 succeeded — all three inside the core, no new semantic layer | AM-19…21 |
 
 Three properties turned out to be distinct, and the contract needed each separately:
 
@@ -89,7 +93,18 @@ authenticity  a specific authority said it      (a signature gives this)
 currency      it is still the operative one     (a monotonic head gives this)
 ```
 
-Rules that held only one of the three were defeated in rounds 5, 6 and 7 respectively.
+Rules that held only one of the three were defeated in rounds 5, 6 and 7 respectively. Round 8 added
+a fourth, at the boundary between them:
+
+```
+authorization  this signer approved THIS operation, once
+```
+
+Authentication proves who signed; it never proves what they authorized.
+
+Round 8 is the first round whose findings introduced no new layer — all three sat in message
+identity, signer authority and authorization binding. That shape, rather than the count, is what
+convergence looks like.
 
 ## Standing constraints
 
