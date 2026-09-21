@@ -1,0 +1,6 @@
+{
+  "id": "STRICT",
+  "name": "Strict",
+  "description": "For high-risk or high-claim-strength work (e.g. scientific claims). No phase is skippable. Every phase's exit gate is expected to be satisfied with its deepest available evidence rather than the minimum. A project may run at a lower base profile (e.g. STANDARD) while escalating individual phases to STRICT via MethodologyState.phase_profile_overrides - escalation is always explicit, never a silent default.",
+  "skippable_phases": []
+}

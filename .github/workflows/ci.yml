@@ -20,3 +20,5 @@ jobs:
         run: python -m unittest discover -s benchmarks
       - name: Council template
         run: python scripts/validate-council.py .code-loop-template
+      - name: Package sync
+        run: python scripts/build-dist.py --check

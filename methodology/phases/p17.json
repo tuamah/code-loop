@@ -1,0 +1,32 @@
+{
+  "id": "P17",
+  "macro_phase": "VERIFY",
+  "name": "Reproducibility & Independent Validation",
+  "loop": "verify_loop",
+  "required_inputs": [
+    "DETERMINISTIC_VERIFICATION_EVIDENCE"
+  ],
+  "required_artifacts": [
+    "REPRODUCIBILITY_EVIDENCE"
+  ],
+  "required_evidence": [
+    "verification_evidence"
+  ],
+  "required_roles": [
+    "verifier"
+  ],
+  "exit_gate": {
+    "description": "The result reproduces outside the original execution context (external/clean validation), scaled to the active process depth.",
+    "checks": [
+      "result_reproduced_independently_of_original_worktree"
+    ]
+  },
+  "allowed_next": [
+    "P18"
+  ],
+  "allowed_back_transitions": [
+    "P16"
+  ],
+  "failure_transition": "P13",
+  "minimum_profile": "STANDARD"
+}

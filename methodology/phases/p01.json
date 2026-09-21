@@ -1,0 +1,34 @@
+{
+  "id": "P1",
+  "macro_phase": "DEFINE",
+  "name": "Problem / Scope / Constraints",
+  "required_inputs": [
+    "PROJECT_INTENT"
+  ],
+  "required_artifacts": [
+    "PROBLEM_STATEMENT",
+    "SCOPE",
+    "CONSTRAINTS"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "human_owner"
+  ],
+  "exit_gate": {
+    "description": "Problem, in-scope, out-of-scope, and constraints are all recorded, not merely implied.",
+    "checks": [
+      "problem_statement_exists",
+      "in_scope_list_nonempty",
+      "out_of_scope_list_exists",
+      "constraints_recorded"
+    ]
+  },
+  "allowed_next": [
+    "P2"
+  ],
+  "allowed_back_transitions": [
+    "P0"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

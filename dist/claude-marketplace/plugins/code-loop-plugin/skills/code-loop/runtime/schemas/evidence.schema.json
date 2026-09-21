@@ -8,7 +8,7 @@
     "id": { "type": "string", "minLength": 1 },
     "run_id": { "type": "string", "minLength": 1 },
     "kind": {
-      "enum": ["test", "lint", "typecheck", "build", "trace", "benchmark", "screenshot", "review", "source-reference"]
+      "enum": ["test", "lint", "typecheck", "build", "trace", "benchmark", "screenshot", "review", "source-reference", "execution"]
     },
     "status": { "enum": ["passed", "failed", "blocked", "inconclusive"] },
     "claim_ids": {
@@ -23,10 +23,18 @@
       "properties": {
         "created_by": { "type": "string", "minLength": 1 },
         "created_at": { "type": "string", "format": "date-time" },
+        "actor_id": { "type": "string", "minLength": 1 },
+        "authority": { "enum": ["execution", "verification", "acceptance", "human", "tool"] },
+        "role": { "type": "string" },
+        "provider": { "type": "string" },
+        "runtime": { "type": "string" },
+        "model": { "type": "string" },
         "commit": { "type": "string" },
         "gate_hash": { "type": "string" },
         "command": { "type": "string" },
-        "artifact_path": { "type": "string" }
+        "artifact_path": { "type": "string" },
+        "log_path": { "type": "string" },
+        "dispatch_id": { "type": "string" }
       }
     },
     "summary": { "type": "string" }

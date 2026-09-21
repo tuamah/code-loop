@@ -1,0 +1,35 @@
+{
+  "id": "P12",
+  "macro_phase": "BUILD",
+  "name": "Task Contract & Planning",
+  "loop": "build_loop",
+  "required_inputs": [
+    "GOLDEN_GATES",
+    "TEST_PLAN"
+  ],
+  "required_artifacts": [
+    "TASK_CONTRACT"
+  ],
+  "required_evidence": [
+    "plan_record"
+  ],
+  "required_roles": [
+    "planner"
+  ],
+  "exit_gate": {
+    "description": "A task contract exists with goal, scope, forbidden scope, acceptance criteria, required tests/evidence, cost budget, and stop conditions.",
+    "checks": [
+      "task_contract_has_goal_and_scope",
+      "task_contract_has_forbidden_scope",
+      "task_contract_has_acceptance_criteria"
+    ]
+  },
+  "allowed_next": [
+    "P13"
+  ],
+  "allowed_back_transitions": [
+    "P11"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

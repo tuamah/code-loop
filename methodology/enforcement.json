@@ -1,0 +1,304 @@
+{
+  "enforcement_version": "1.0.0",
+  "principles": [
+    {
+      "principle_id": "GP-1",
+      "classification": "B",
+      "status": "PARTIAL",
+      "scope": "methodology_engine",
+      "owner_component": "nogap_methodology.py:init_project",
+      "mechanism": "init_project() requires intent/risk/claim_strength before any methodology state exists, and P0's phase contract requires a PROJECT_INTENT artifact before P1. nogap run/execute do not consult methodology state at all, so implementation is not actually blocked by a missing intent.",
+      "evidence_kind": "methodology_state",
+      "implemented_by": ["scripts/nogap_methodology.py", "methodology/phases/p00.json"],
+      "tests": ["tests/test_methodology_state.py"],
+      "future_milestone": "M7-F",
+      "notes": "Enforced within the methodology engine's own domain; not yet the trust runtime's gatekeeper."
+    },
+    {
+      "principle_id": "GP-2",
+      "classification": "B",
+      "status": "PARTIAL",
+      "scope": "methodology_engine",
+      "owner_component": "nogap_methodology.py:transition",
+      "mechanism": "The P0-P23 phase graph structurally blocks reaching BUILD (P12+) without recording forward transitions through RESEARCH (P3-P5) first; verified directly by the transition tests. Same caveat as GP-1: not yet connected to nogap run/execute.",
+      "evidence_kind": "transition_history",
+      "implemented_by": ["scripts/nogap_methodology.py"],
+      "tests": ["tests/test_methodology_engine.py"],
+      "future_milestone": "M7-F",
+      "notes": "Real, tested graph-level enforcement; integration with BUILD execution is the remaining gap."
+    },
+    {
+      "principle_id": "GP-3",
+      "classification": "B",
+      "status": "PARTIAL",
+      "scope": "methodology_engine",
+      "owner_component": "nogap_failure.py:record_research",
+      "mechanism": "propose_repair()/select_repair() are only reachable once a FailureRecord has passed through record_research(); record_research() rejects an empty research_refs list unless the project's effective profile is LIGHT AND an explicit, audited policy_exception (reason/actor_id/authority) is supplied. STANDARD/STRICT accept no exception at all. The remaining gap: this governs the M7-H failure/repair path specifically, not every possible route back into BUILD (e.g. a plain re-run outside the FailureRecord lifecycle is untouched by this check).",
+      "evidence_kind": "failure_record.research_refs / research_policy_exception",
+      "implemented_by": ["scripts/nogap_failure.py:record_research", "scripts/nogap_failure.py:propose_repair"],
+      "tests": [
+        "tests/test_methodology_failure.py::ResearchAndRootCauseTests::test_9_repair_before_research_rejected",
+        "tests/test_methodology_failure.py::ResearchAndRootCauseTests::test_32_light_cannot_blind_retry_research_still_mandatory_or_explicit",
+        "tests/test_methodology_failure.py::ResearchAndRootCauseTests::test_33_standard_enforces_research_before_repair_no_exception"
+      ],
+      "future_milestone": null,
+      "notes": "Enforced for the M7-H repair path (the actual scope of GP-3's 'research before repair' framing); a future milestone could extend the same interlock to any other path back into BUILD."
+    },
+    {
+      "principle_id": "GP-4",
+      "classification": "B",
+      "status": "PARTIAL",
+      "scope": "methodology_engine",
+      "owner_component": "nogap_methodology.py:transition",
+      "mechanism": "P6 (Requirements Engineering) must be forward-transitioned through before P12 (BUILD) in the phase graph; same mechanism and same integration gap as GP-2.",
+      "evidence_kind": "transition_history",
+      "implemented_by": ["scripts/nogap_methodology.py"],
+      "tests": ["tests/test_methodology_engine.py"],
+      "future_milestone": "M7-F",
+      "notes": null
+    },
+    {
+      "principle_id": "GP-5",
+      "classification": "B",
+      "status": "PARTIAL",
+      "scope": "trust_runtime",
+      "owner_component": "nogap.py:cmd_validate",
+      "mechanism": "A claim with status=supported must reference non-empty evidence, checked by cmd_validate on every run. This enforces evidence-linked claims, but does not verify a test PLAN existed before the claim was first asserted.",
+      "evidence_kind": "claim and evidence records",
+      "implemented_by": ["scripts/nogap.py"],
+      "tests": ["tests/test_runtime_scripts.py"],
+      "future_milestone": "M7-E",
+      "notes": "M7-E's P0-P23 artifact generation would let P11's test plan be checked before P12 (BUILD) is entered."
+    },
+    {
+      "principle_id": "GP-6",
+      "classification": "A",
+      "status": "ENFORCED",
+      "scope": "trust_runtime",
+      "owner_component": "nogap.py:acceptability",
+      "mechanism": "acceptability() rejects ACCEPT unless the decision references authoritative, independent, non-contradictory evidence for the current frozen gate. Applied on every decide call, not opt-in.",
+      "evidence_kind": "decision records",
+      "implemented_by": ["scripts/nogap.py:acceptability", "scripts/nogap.py:is_authoritative_evidence"],
+      "tests": [
+        "tests/test_runtime_scripts.py::RuntimeScriptTests::test_runtime_accepts_only_after_frozen_gate_and_passing_evidence",
+        "tests/test_runtime_scripts.py::RuntimeScriptTests::test_independent_verifier_and_acceptor_allows_accept",
+        "tests/test_runtime_scripts.py::RuntimeScriptTests::test_independent_failed_verifier_blocks_accept"
+      ],
+      "future_milestone": null,
+      "notes": null
+    },
+    {
+      "principle_id": "GP-7",
+      "classification": "A",
+      "status": "PARTIAL",
+      "scope": "cross_cutting",
+      "owner_component": "nogap_adapters.py",
+      "mechanism": "Adapter capabilities() (can_execute) are declared independently of any acceptance-authority grant; no code path converts a capability flag into ACCEPT authority. True by the complete absence of such a path rather than by an explicit dedicated guard.",
+      "evidence_kind": null,
+      "implemented_by": ["scripts/nogap_adapters.py"],
+      "tests": ["tests/test_nogap_adapters.py"],
+      "future_milestone": "M8",
+      "notes": "Recommend a dedicated adversarial test (capability alone must never grant ACCEPT) in M8's adversarial suite rather than claiming ENFORCED on an implicit absence."
+    },
+    {
+      "principle_id": "GP-8",
+      "classification": "A",
+      "status": "ENFORCED",
+      "scope": "trust_runtime",
+      "owner_component": "nogap.py:acceptability",
+      "mechanism": "acceptability() rejects ACCEPT when the deciding actor_id is also a recorded execution identity (execution_actor_ids), and rejects authoritative evidence produced by an execution identity too; role renaming does not bypass identity.",
+      "evidence_kind": "decision records",
+      "implemented_by": ["scripts/nogap.py:acceptability", "scripts/nogap.py:execution_actor_ids"],
+      "tests": [
+        "tests/test_runtime_scripts.py::RuntimeScriptTests::test_executor_self_acceptance_is_blocked",
+        "tests/test_runtime_scripts.py::RuntimeScriptTests::test_role_renaming_does_not_bypass_authority_identity"
+      ],
+      "future_milestone": null,
+      "notes": null
+    },
+    {
+      "principle_id": "GP-9",
+      "classification": "B",
+      "status": "PARTIAL",
+      "scope": "trust_runtime",
+      "owner_component": "nogap_memory.py",
+      "mechanism": "nogap_memory.py deterministically projects a MemorySnapshot/MEMORY.md from methodology state, transition history, P0-P18 artifacts, FailureRecords, Research records, Lifecycle (release/deployment/operations/incident/improvement/lifecycle-decision) records, and the decision/evidence/event ledgers - never from Agent conversational memory or prose, and there is no generic 'memory add' path (the only inputs to build_memory_snapshot are project/actor; every fact traces to an existing source record). memory_status() detects both source staleness and MEMORY.md tampering, and rebuild_memory() always regenerates both files from current sources, so nothing here can drift into standing in for the sources it was built from. The mechanism is real and tested end to end, but is invoked on demand (nogap memory build/rebuild) rather than automatically after every relevant transition/decision/failure/lifecycle event - that gap keeps this PARTIAL rather than ENFORCED. M7-K did not implement automatic Memory refresh; broader projection coverage alone does not change the enforcement mechanism, so status is intentionally unchanged.",
+      "evidence_kind": "memory snapshot and projection",
+      "implemented_by": ["scripts/nogap.py:append_event", "scripts/nogap_memory.py"],
+      "tests": ["tests/test_methodology_memory.py", "tests/test_methodology_lifecycle.py::MemoryIntegrationTests"],
+      "future_milestone": null,
+      "notes": "The append-only ledger this principle depends on already exists and is exercised throughout the test suite; M7-I added the actual MEMORY.md/snapshot projection. Auto-invoking a rebuild after every relevant trust-runtime action (rather than requiring an explicit CLI call) is the remaining gap toward ENFORCED, and has no named milestone yet."
+    },
+    {
+      "principle_id": "GP-10",
+      "classification": "A",
+      "status": "ENFORCED",
+      "scope": "trust_runtime",
+      "owner_component": "nogap_effects.py",
+      "mechanism": "verify_effect() judges the observed patch, never returncode or narrative; classify_agent_execution() requires both a normal process exit AND a satisfied effect - neither fact alone implies success. Both false-success shapes are covered by golden regression tests reproducing the exact live-observed bugs.",
+      "evidence_kind": "execution and verification evidence",
+      "implemented_by": ["scripts/nogap_effects.py"],
+      "tests": [
+        "tests/test_execution_effects.py",
+        "tests/test_orchestrator.py::OrchestratorTests::test_golden_regression_clean_exit_with_zero_effect_is_never_passed",
+        "tests/test_orchestrator.py::OrchestratorTests::test_golden_regression_crashed_process_with_partial_effect_is_never_passed"
+      ],
+      "future_milestone": null,
+      "notes": null
+    },
+    {
+      "principle_id": "GP-11",
+      "classification": "B",
+      "status": "PARTIAL",
+      "scope": "trust_runtime",
+      "owner_component": "nogap_failure.py",
+      "mechanism": "Execution and verification evidence is always written regardless of pass/fail status. A failure is a first-class, permanently queryable FailureRecord (OPEN -> EVIDENCE_PRESERVED -> REPRODUCED -> CHARACTERIZED -> RESEARCHED -> ROOT_CAUSE_IDENTIFIED -> REPAIR_PROPOSED -> REPAIR_SELECTED -> REPAIRED -> REGRESSION_TESTED -> REVALIDATED -> RESOLVED, plus INCONCLUSIVE/REJECTED/ABANDONED): create_failure()/record_evidence_preservation() reject unknown evidence/artifact refs, history is append-only, and no code path deletes a failure record. M7-I's Project Memory now reads this back as a corpus: open/resolved/inconclusive failures, root cause, and repair target all surface in MemorySnapshot/MEMORY.md with their source_ref pointing back at the real failure record, and a RESOLVED failure's own full history remains independently queryable through nogap_failure.load_failure - the projection never hides that a failure happened. M7-K's nogap_lifecycle.py extends the same evidence discipline into production: link_incident_failure()/set_incident_status() read nogap_failure.load_failure()'s real current_state directly - an incident can never be marked RESOLVED while its linked FailureRecord is not actually RESOLVED, and M7-K never reimplements repair-lifecycle judgment.",
+      "evidence_kind": "failure_record (append-only history) and memory snapshot",
+      "implemented_by": ["scripts/nogap.py:write_isolated_run_evidence", "scripts/nogap_failure.py", "scripts/nogap_memory.py", "scripts/nogap_lifecycle.py"],
+      "tests": [
+        "tests/test_execution_backend.py", "tests/test_verification_pipeline.py",
+        "tests/test_methodology_failure.py::CreationAndHistoryTests::test_3_history_is_append_only",
+        "tests/test_methodology_failure.py::RepairAndBudgetTests::test_29_and_30_and_31_successful_full_cycle_resolves_and_stays_queryable",
+        "tests/test_methodology_memory.py::FailureIntegrationTests",
+        "tests/test_methodology_memory.py::ScenarioCTests::test_scenario_c_historical_failure_preservation",
+        "tests/test_methodology_lifecycle.py::IncidentTests"
+      ],
+      "future_milestone": null,
+      "notes": "The FailureRecord lifecycle itself is real and tested; M7-I added reading failures back as durable, sourced project memory without ever collapsing RESOLVED into deletion of what actually happened."
+    },
+    {
+      "principle_id": "GP-12",
+      "classification": "C",
+      "status": "ENFORCED",
+      "scope": "methodology_engine",
+      "owner_component": "nogap_research.py",
+      "mechanism": "REFUTED and INCONCLUSIVE are first-class ClaimAssessment outcomes, structurally equal to SUPPORTED/PARTIALLY_SUPPORTED - assess_claim() enforces the same preconditions for all four and there is no delete/update path for an assessment once written (claim['assessment_refs'] is append-only). A later, revised assessment never overwrites or removes an earlier REFUTED/INCONCLUSIVE one; get_current_claim_assessment() only ever SELECTS which is current for projection, and ties it cannot resolve report CONFLICT rather than silently picking a favorable one. assess_claim() also actively refuses to let missing evidence become REFUTED (that produces INCONCLUSIVE or a rejected call instead) and refuses REFUTED without genuine contradictory evidence - a negative result cannot be faked into existence any more than it can be deleted.",
+      "evidence_kind": "claim_assessment (append-only per claim)",
+      "implemented_by": ["scripts/nogap_research.py:assess_claim", "scripts/nogap_research.py:get_current_claim_assessment"],
+      "tests": [
+        "tests/test_methodology_research.py::NegativeResultTests",
+        "tests/test_methodology_research.py::InconclusiveResultTests",
+        "tests/test_methodology_research.py::ScenarioBTests::test_scenario_b_negative_result_preserved"
+      ],
+      "future_milestone": null,
+      "notes": "The literature reject/defer path (nogap.py cmd_literature) is unrelated machinery and unchanged by this; GP-12's real gap - no structured registry preserving a negative research result - is what M7-J closes."
+    },
+    {
+      "principle_id": "GP-13",
+      "classification": "C",
+      "status": "DECLARED",
+      "scope": "methodology_engine",
+      "owner_component": "none",
+      "mechanism": "P8's phase contract requires ADR and COST_MODEL artifacts before proceeding past DESIGN, but no artifact-generation tooling exists yet (M7-E) and no runtime cost tracking exists (M10).",
+      "evidence_kind": null,
+      "implemented_by": ["methodology/phases/p08.json"],
+      "tests": [],
+      "future_milestone": "M7-E",
+      "notes": null
+    },
+    {
+      "principle_id": "GP-14",
+      "classification": "B",
+      "status": "ENFORCED",
+      "scope": "methodology_engine",
+      "owner_component": "nogap_methodology.py:derive_profile",
+      "mechanism": "raw_score = max(risk_score, claim_score, intent_floor) deterministically raises the required profile as risk increases, which in turn changes which phases are mandatory vs skippable through the whole lifecycle. M7-K's evaluate_release_readiness() reads this same effective_profile to set release burden: LIGHT skips the included-task verification requirement entirely, STANDARD requires it, and STRICT additionally requires rollback_plan_ref/observability_plan_ref - release ceremony scales with the same risk-derived profile, never a second, independent depth policy.",
+      "evidence_kind": "methodology_state.derivation",
+      "implemented_by": ["scripts/nogap_methodology.py:derive_profile", "scripts/nogap_lifecycle.py:evaluate_release_readiness"],
+      "tests": ["tests/test_methodology_state.py::ProfileDerivationTests", "tests/test_methodology_lifecycle.py::ProfileAwareReadinessTests"],
+      "future_milestone": null,
+      "notes": null
+    },
+    {
+      "principle_id": "GP-15",
+      "classification": "B",
+      "status": "ENFORCED",
+      "scope": "methodology_engine",
+      "owner_component": "nogap_methodology.py:derive_profile",
+      "mechanism": "claim_score contributes to the same raw_score/profile derivation as risk; a higher claim_strength raises the profile, which (through skippable_phases) determines whether P17/P18's deeper verification is mandatory or optional. M7-J adds a second, independent enforcement of the same principle specifically for research claims: assess_claim() hard-blocks a HIGH-strength claim from SUPPORTED unless reproducibility_status=REPRODUCED and the assessor is independent (assessor_role != SELF) - a HIGH claim is never allowed to require less evidence than a LOW one.",
+      "evidence_kind": "methodology_state.derivation and claim_assessment preconditions",
+      "implemented_by": ["scripts/nogap_methodology.py:derive_profile", "scripts/nogap_research.py:assess_claim"],
+      "tests": ["tests/test_methodology_state.py::ProfileDerivationTests", "tests/test_methodology_engine.py::ProfileAndSkipTests", "tests/test_methodology_research.py::ClaimStrengthEvidenceDepthTests"],
+      "future_milestone": null,
+      "notes": null
+    },
+    {
+      "principle_id": "GP-16",
+      "classification": "C",
+      "status": "DEFERRED",
+      "scope": "trust_runtime",
+      "owner_component": "none",
+      "mechanism": "No Model Router exists yet. route_implementer() only picks the first ready AgentRuntime found; there is no reasoning-value/cost weighting of any kind.",
+      "evidence_kind": null,
+      "implemented_by": ["scripts/nogap.py:route_implementer"],
+      "tests": ["tests/test_orchestrator.py"],
+      "future_milestone": "M9",
+      "notes": "The referenced test covers today's simple first-ready selection only, not model-quality weighting."
+    },
+    {
+      "principle_id": "GP-17",
+      "classification": "A",
+      "status": "ENFORCED",
+      "scope": "trust_runtime",
+      "owner_component": "nogap.py:cmd_freeze",
+      "mechanism": "A frozen gate's hash is computed from its full payload at freeze time; validate and decide both re-verify that hash on every run and reject any post-freeze edit or stale reference. M7-K's release readiness/deployment path never reads or writes .code-loop/runtime/gates/ at all (verified by direct inspection) - a failed readiness evaluation produces NOT_READY/STALE and points back to an earlier phase; it never weakens or bypasses the Golden Gate to let a release pass.",
+      "evidence_kind": "gate records",
+      "implemented_by": ["scripts/nogap.py:cmd_freeze", "scripts/nogap.py:gate_hash"],
+      "tests": [
+        "tests/test_runtime_scripts.py::RuntimeScriptTests::test_runtime_rejects_tampered_frozen_gate",
+        "tests/test_runtime_scripts.py::RuntimeScriptTests::test_stale_verifier_gate_hash_is_rejected",
+        "tests/test_methodology_lifecycle.py::FailClosedTests::test_no_gate_mutation_anywhere_in_lifecycle"
+      ],
+      "future_milestone": null,
+      "notes": null
+    },
+    {
+      "principle_id": "GP-18",
+      "classification": "C",
+      "status": "ADVISORY",
+      "scope": "methodology_engine",
+      "owner_component": "none",
+      "mechanism": "No mechanism measures or enforces implementation simplicity. Left to human/reviewer judgment by design - the methodology explicitly says this should not become a hard gate.",
+      "evidence_kind": null,
+      "implemented_by": [],
+      "tests": [],
+      "future_milestone": null,
+      "notes": "Permanently ADVISORY, not a placeholder for a future ENFORCED status."
+    },
+    {
+      "principle_id": "GP-19",
+      "classification": "C",
+      "status": "ADVISORY",
+      "scope": "methodology_engine",
+      "owner_component": "none",
+      "mechanism": "No mechanism evaluates technology recency versus fit. Advisory by design, used in planning/review, not as a hard gate.",
+      "evidence_kind": null,
+      "implemented_by": [],
+      "tests": [],
+      "future_milestone": null,
+      "notes": "Permanently ADVISORY, not a placeholder for a future ENFORCED status."
+    },
+    {
+      "principle_id": "GP-20",
+      "classification": "A",
+      "status": "ENFORCED",
+      "scope": "cross_cutting",
+      "owner_component": "nogap_methodology.py:transition",
+      "mechanism": "Every methodology transition requires a non-empty actor_id and reason, and always records timestamp + evidence_refs + artifact_refs (transition() rejects empty actor/reason outright). Decision records populate actor_id/decided_by on every decide call through the CLI. Every FailureRecord history entry (nogap_failure.py:_append_history) likewise requires a non-empty actor_id and reason and is append-only; repair selection additionally records selected_by/authority/timestamp. M7-I's Project Memory now makes this traceability queryable end to end: every derived fact in MemorySnapshot carries a source_ref back to the real transition/decision/failure/artifact record it came from, and query_memory() preserves that provenance rather than returning bare values. M7-J extends the same discipline into research: every material research state change (hypothesis registration, protocol freeze/amendment, claim assessment, supersession) requires actor_id+reason and is append-only, and every research fact Memory projects carries a source_ref back to its real question/hypothesis/protocol/claim/assessment record. M7-K extends it once more into release/operate/evolve: candidate freeze/invalidation, readiness evaluation, deployment results, incident linkage, improvement selection/re-entry, and lifecycle decisions all require actor_id+reason and are append-only, with every lifecycle fact Memory projects carrying a source_ref back to its real record; irreversible lifecycle outcomes (RETIRE/ARCHIVE) additionally require human/acceptance authority, never an ordinary agent.",
+      "evidence_kind": "transition_history, decision records, failure_record history, and memory source_refs",
+      "implemented_by": ["scripts/nogap_methodology.py:transition", "scripts/nogap.py:cmd_decide", "scripts/nogap_failure.py:_append_history", "scripts/nogap_memory.py", "scripts/nogap_research.py", "scripts/nogap_lifecycle.py"],
+      "tests": [
+        "tests/test_methodology_engine.py::RejectionAndFailClosedTests::test_18_transition_without_actor_rejected",
+        "tests/test_methodology_engine.py::RejectionAndFailClosedTests::test_19_transition_without_reason_rejected",
+        "tests/test_methodology_engine.py::ApiIntegrityTests::test_20_transition_history_is_append_only",
+        "tests/test_methodology_failure.py::RepairLoopTests::test_22_repair_selection_requires_actor_and_reason",
+        "tests/test_methodology_memory.py::QueryApiTests::test_46_query_preserves_provenance",
+        "tests/test_methodology_research.py::ActorReasonRequirementTests",
+        "tests/test_methodology_lifecycle.py::ActorReasonRequirementTests",
+        "tests/test_methodology_lifecycle.py::LifecycleDecisionTests::test_irreversible_outcome_requires_authority"
+      ],
+      "future_milestone": null,
+      "notes": "decision.schema.json does not itself require actor_id (only the Python-level acceptability() check does for ACCEPT specifically) - a minor schema gap, not a functional one, since the CLI never omits it in practice."
+    }
+  ]
+}

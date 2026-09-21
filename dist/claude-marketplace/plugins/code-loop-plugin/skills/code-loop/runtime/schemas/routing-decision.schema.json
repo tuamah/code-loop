@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Provider-Neutral Routing Decision",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "run_id", "selected", "reason", "policy_version", "created_at"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "role": { "type": "string" },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "capabilities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "privacy": { "type": "string" },
+        "tool_support": { "type": "boolean" },
+        "context_limit": { "type": "integer", "minimum": 1 },
+        "accelerator": { "type": "string" },
+        "vram_gb": { "type": "number", "minimum": 0 }
+      }
+    },
+    "selected": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "runtime"],
+      "properties": {
+        "provider": { "type": "string", "minLength": 1 },
+        "runtime": { "type": "string", "minLength": 1 },
+        "model": { "type": "string" }
+      }
+    },
+    "reason": { "type": "string", "minLength": 1 },
+    "considered": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["provider", "runtime"],
+        "properties": {
+          "provider": { "type": "string", "minLength": 1 },
+          "runtime": { "type": "string", "minLength": 1 },
+          "model": { "type": "string" },
+          "available": { "type": "boolean" },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "cost_quota": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "policy_version": { "type": "string", "minLength": 1 },
+    "created_at": { "type": "string", "format": "date-time" }
+  }
+}

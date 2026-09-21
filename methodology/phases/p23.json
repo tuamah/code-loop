@@ -1,0 +1,29 @@
+{
+  "id": "P23",
+  "macro_phase": "EVOLVE",
+  "name": "Lifecycle Decision",
+  "loop": "improvement_loop",
+  "required_inputs": [
+    "IMPROVEMENT_PROPOSAL"
+  ],
+  "required_artifacts": [
+    "LIFECYCLE_DECISION"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "human_owner"
+  ],
+  "exit_gate": {
+    "description": "A lifecycle decision (CONTINUE, MAINTAIN, START_V2, PIVOT, FREEZE, ARCHIVE, or ABANDON) is recorded. ABANDON is a valid engineering outcome.",
+    "checks": [
+      "lifecycle_decision_is_one_of_continue_maintain_start_v2_pivot_freeze_archive_abandon"
+    ]
+  },
+  "allowed_next": [],
+  "allowed_back_transitions": [
+    "P0",
+    "P21"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

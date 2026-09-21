@@ -3,8 +3,13 @@
 Expert-minimal discipline and coordination protocol for coding agents: best real result, least
 code, least tokens, lowest risk.
 
-**NoGapCode** is the product direction for the future runtime: no gap between code claims and
-verified evidence. The repository and package remain `code-loop` while the runtime contracts mature.
+**NoGapCode is a provider-neutral Trust Runtime, not another coding agent.** It keeps execution
+authority separate from acceptance authority so an agent cannot make its own work trusted merely by
+producing a passing result or issuing ACCEPT. The repository and package remain `code-loop` as the
+compatibility layer while the runtime contracts mature.
+
+The future product/repository name may become `nogabcode`; package and import names stay stable
+until a compatibility-preserving migration is explicit.
 
 `code-loop` has two layers:
 
@@ -142,7 +147,7 @@ dependencies, package scripts, supply chain, or CI/CD.
 - `Repairer`: fixes accepted findings only.
 - `Arbiter`: resolves conflicts by evidence, not confidence.
 
-## Decision Rule
+## Trust Runtime Rule
 
 Evidence outranks confidence:
 
@@ -150,11 +155,18 @@ Evidence outranks confidence:
 tests/build/lint > runtime traces > source docs > reviewer findings > model confidence
 ```
 
-Low risk: Orchestrator may accept after verification.
+Execution authority can inspect gates, edit code, run local checks, and submit claims/artifacts.
+Acceptance authority decides whether evidence is admissible. A final ACCEPT requires independent
+authoritative verification evidence tied to the frozen gate hash, and the acceptor cannot be the
+execution identity for the same run.
+
+Low risk: Orchestrator may recommend acceptance after admissible verification.
 
 Medium risk: accept after Verifier passes and Reviewer has no blocking finding.
 
 High risk: Arbiter recommends; human approves.
+
+Council coordinates roles and policy; it is not the acceptance root of trust.
 
 ## Install
 
@@ -186,14 +198,53 @@ python scripts/validate-council.py /path/to/project/.code-loop
 python scripts/nogap.py init /path/to/project --objective "Fix the bug without changing the gate"
 python scripts/nogap.py freeze /path/to/project
 python scripts/nogap.py validate /path/to/project
-python scripts/nogap.py decide /path/to/project
+python scripts/nogap.py decide /path/to/project --actor-id acceptor-1
 python scripts/nogap.py learn /path/to/project --tag gate --text "Freeze the gate before trusting evidence."
 python scripts/nogap.py recall /path/to/project --tag gate
 python scripts/nogap.py context /path/to/project --show
 ```
 
-The runtime is intentionally local-first. A frozen gate is hash-locked for the run; evidence that
-claims to prove work must reference the frozen gate hash. Lessons are scoped, tagged, and
+The visual runtime dashboard prototype is available at `dashboard/index.html`.
+Run it against a real project runtime with:
+
+```bash
+python scripts/nogap.py dashboard /path/to/project
+```
+
+The Dashboard also exposes a backend-backed `Settings / Connections` view:
+
+- `GET /api/connections` returns sanitized provider, model, and AgentRuntime status.
+- `POST /api/connections/openrouter/connect` starts local OpenRouter OAuth PKCE login in the
+  system browser, then stores the returned key in the OS credential store.
+- `POST /api/connections/openrouter` stores the OpenRouter key in the OS credential store on
+  Windows and never writes it to runtime JSON, localStorage, or event logs.
+- `POST /api/connections/openrouter/test` performs a real authenticated model-discovery probe.
+- `POST /api/connections/codex/test` probes the official local Codex CLI login and doctor output.
+- `POST /api/connections/claude/test` reports the Claude Code CLI status without copying tokens.
+  If Claude Code is installed outside `PATH`, set `CLAUDE_CODE_PATH` to the local executable.
+  If Codex is installed outside `PATH`, set `CODEX_CLI_PATH`.
+  The Claude product web page is install/sign-in guidance only; it is not an OAuth callback that can
+  authenticate NoGapCode.
+  On Windows, the native Claude Code path `~/.local/bin/claude.exe` is detected automatically.
+
+Provider, model, and AgentRuntime are separate concepts. The current build routing is: Terra plans,
+5.4 executes, and Sol judges. That is a construction-time policy, not acceptance authority.
+
+Dashboard controls must be truthful. Navigation opens runtime-backed record panels, connection
+buttons call local APIs, and unavailable product areas are shown as empty or not implemented instead
+of fake sample screens. Project selection is backed by `.nogap/projects.json`:
+
+- `GET /api/projects`
+- `POST /api/projects`
+- `POST /api/projects/select`
+- `POST /api/projects/open`
+
+Runtime validation is exposed through `POST /api/runtime/validate`, which delegates to the CLI on
+the server side with a fixed argv command.
+
+The runtime is intentionally local-first and server-ready. A frozen gate is hash-locked for the run;
+evidence that claims to prove work must reference the frozen gate hash. Authoritative evidence
+records producer identity, authority class, role, and provenance. Lessons are scoped, tagged, and
 evidence-linked. The context profile is rebuilt from gates, evidence, decisions, and lessons so the
 runtime learns from use without trusting raw memory.
 
@@ -212,11 +263,15 @@ python scripts/nogap.py literature add /path/to/project \
   --benefit accuracy \
   --benefit token-cost \
   --evidence-strength primary \
+  --acceptance-evidence evidence-literature \
   --test "python scripts/nogap.py recall PROJECT --tag context" \
   --accurate --concise --complete
 python scripts/nogap.py literature evaluate /path/to/project --id lit-context-0001
 python scripts/nogap.py literature learn /path/to/project --id lit-context-0001
 ```
+
+Literature claims can pass source/meaning checks before they are trusted, but promotion to a lesson
+requires acceptance evidence under the same decision policy.
 
 For continuous repository learning, set one active goal and let `autolearn` process only the
 available gated literature claims that match it:
@@ -310,6 +365,29 @@ Next step:
 
 Creativity is welcome. Unlabeled speculation is not.
 
+## Provider-Neutral Contracts
+
+The runtime keeps provider concepts separate: `ModelProvider`, `AgentRuntime`, `ToolProvider`,
+`AuthProvider`, and `ExecutionBackend` are distinct contracts. Routing decisions are serializable
+metadata with selected provider/runtime/model, reason, cheap alternatives, quota/cost metadata when
+known, and policy version. Commercial facts such as pricing or model rankings belong in adapters or
+config, not immutable gate meaning.
+
+The default local routing policy is recorded in `runtime/config/model-router.policy.json`:
+`gpt-5.6-terra` plans, `gpt-5.4` implements, and `gpt-5.6-sol` judges.
+
+## Deferred Runtime Work
+
+NoGapCode deliberately defers distributed workers, Kubernetes, graph databases, vector-memory
+platforms, mandatory A2A, automatic merge of learned lessons, and multi-cloud GPU control planes
+until tests or benchmarks prove they close a real trust gap.
+
+The intended product extension path is:
+
+1. CLI plus localhost Dashboard.
+2. Tauri installer that wraps the same Dashboard and starts the same local Runtime.
+3. Optional server mode for remote access with authentication.
+
 ## Validate
 
 ```bash
@@ -318,13 +396,47 @@ python scripts/install-project.py /tmp/demo-project
 python scripts/validate-council.py .code-loop-template
 python -m unittest discover -s tests
 python -m unittest discover -s benchmarks
+python scripts/build-dist.py --check
 python ~/.codex/skills/.system/plugin-creator/scripts/validate_plugin.py dist/openai-plugin
 ```
 
 ## Release Notes
 
-`code-loop.zip` is generated from the current v5 source tree. After changing the package, rerun
-validation and regenerate the archive without nesting old archives inside it.
+`dist/` and `code-loop.zip` are byte-identical copies of the source tree, rebuilt by one command:
+
+```bash
+python scripts/build-dist.py
+```
+
+Run it whenever a packaged file changes, and commit the result. CI runs
+`python scripts/build-dist.py --check` and fails if the packages and the source disagree, so a
+package can no longer quietly fall behind the code it ships.
+
+### Unreleased
+
+Turns the runtime thesis into executable contracts. Read `references/nogap-runtime.md` to use it,
+`docs/nogapcode-runtime.md` for the architecture.
+
+- **Authority separation (M6-A)**: execution authority can no longer issue ACCEPT for its own run.
+  Identity is checked on `actor_id`; a role renamed to `verifier` does not bypass it.
+- **Execution (M6-B/C/D)**: `nogap run`, `nogap execute` in an isolated git worktree, trusted agent
+  dispatch, and an independent verification pipeline that produces authoritative evidence.
+- **Methodology (M7-A..D)**: canonical P0-P23 phase contracts, adaptive process depth by project
+  intent and risk, the lifecycle state machine, and the Golden Principle enforcement map.
+- **Executable lifecycle (M7-E..H)**: P0-P11 pre-build artifacts, BUILD and VERIFY bound to the
+  frozen gate, a verification interlock closing a false-pass gap, and an evidence-preserving
+  failure repair cycle. Verification evidence is bound to its candidate: change the patch, the
+  gate, or the requirement set and the stored result is stale, not reusable.
+- **Projections (M7)**: trusted project memory, structured research and claim assessment, and the
+  release/operate/evolve lifecycle.
+- **Decision engine (M8)**: deterministic decision kernel, deep-immutable snapshots and policy
+  metadata, evidence bound to immutable claims, an append-only decision journal with checkpoint
+  verification, and semantic replay verification.
+- **Dashboard**: a localhost control plane for runtime status and provider connections. Secrets
+  stay server-side; the page never runs provider shell commands.
+- Fixes a false-pass where stale verification evidence could be reported as current when two
+  records shared a timestamp, and rebuilds `dist/` and `code-loop.zip` from source under a CI
+  check that fails on drift.
 
 ### 5.1.0
 

@@ -1,0 +1,30 @@
+{
+  "id": "P15",
+  "macro_phase": "VERIFY",
+  "name": "Verification Ladder",
+  "loop": "verify_loop",
+  "required_inputs": [
+    "EXECUTION_EVIDENCE"
+  ],
+  "required_artifacts": [
+    "VERIFICATION_PLAN"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "verifier"
+  ],
+  "exit_gate": {
+    "description": "A verification ladder appropriate to the active process depth is selected before verifying.",
+    "checks": [
+      "verification_ladder_depth_matches_active_profile_risk_and_claim_strength"
+    ]
+  },
+  "allowed_next": [
+    "P16"
+  ],
+  "allowed_back_transitions": [
+    "P14"
+  ],
+  "failure_transition": "P13",
+  "minimum_profile": "LIGHT"
+}
