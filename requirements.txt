@@ -1,0 +1,5 @@
+# F1's first and only runtime dependency, justified in T1A §6.1: the Ladder's rung 3 does not
+# reach, since Python ships hashlib/hmac and no Ed25519, and the alternatives are a shared-secret
+# MAC that cannot separate authorities or hand-rolled signatures. Everything outside F1 remains
+# dependency-free.
+cryptography>=41,<47
