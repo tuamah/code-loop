@@ -29,7 +29,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from nogap_artifacts import list_artifacts
+from nogap_artifacts import latest, list_artifacts
 from nogap_build import _frozen_gate, load_task_contract  # reused, not duplicated
 from nogap_methodology import (
     MethodologyValidationError,
@@ -68,14 +68,13 @@ def task_snapshot_hash_of(fields: dict[str, Any]) -> str:
 
 
 def latest_self_check(project: Path, task_id: str) -> dict[str, Any] | None:
-    """Sorted by created_at, NOT by artifact listing order: artifact_id carries a
-    random uuid suffix, so file-listing order does not reflect chronology once a
-    task has more than one self-check (e.g. an original attempt plus one or more
-    M7-H repair re-attempts)."""
+    """Ordered by recorded chronology (created_at, then write sequence), NOT by
+    artifact listing order: artifact_id carries a random uuid suffix, so file-listing
+    order does not reflect chronology once a task has more than one self-check (e.g.
+    an original attempt plus one or more M7-H repair re-attempts). The sequence
+    tie-break matters because two self-checks can share a timestamp."""
     checks = [r for r in list_artifacts(project, artifact_type="P14_SELF_CHECK") if r["fields"].get("task_id") == task_id]
-    if not checks:
-        return None
-    return max(checks, key=lambda r: r.get("created_at", ""))
+    return latest(checks, "created_at")
 
 
 def derive_verification_depth(project: Path) -> dict[str, Any]:
@@ -237,12 +236,13 @@ def verification_acceptance_precondition(project: Path, task_id: str | None) -> 
     ]
     if not results:
         return {"satisfied": False, "reason": f"no methodology verification result recorded for task {task_id!r}"}
-    # Sorted by updated_at, NOT list/file order (artifact_id carries a random uuid
+    # Ordered by recorded chronology (updated_at, then write sequence), NOT list/file
+    # order (artifact_id carries a random uuid
     # suffix): a task can legitimately have more than one P18_VERIFICATION_RESULT
     # over time (repeated `nogap verify` runs across distinct candidates, e.g. after
     # an M7-H repair produced a new patch) - only the most recently touched one
     # reflects the CURRENT candidate.
-    result = max(results, key=lambda r: r.get("updated_at", ""))
+    result = latest(results, "updated_at")
     if result.get("status") != "VERIFICATION_COMPLETE_AWAITING_DECISION":
         return {
             "satisfied": False,

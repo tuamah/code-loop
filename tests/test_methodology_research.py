@@ -1166,10 +1166,14 @@ class SingleOwnerCurrentAssessmentTests(ResearchFixture):
         c = self.make_claim(q["question_id"])
         first = self.assess(c["claim_id"], "INCONCLUSIVE", rationale="a")
         second = self.assess(c["claim_id"], "INCONCLUSIVE", rationale="b")
-        self.assertEqual(first["created_at"], second["created_at"])  # realistic same-second case
         self.assertEqual(second["sequence"], first["sequence"] + 1)
-        current = nr.select_current_assessment([first, second])
-        self.assertEqual(current["assessment"]["assessment_id"], second["assessment_id"])
+        # The tie is forced, not hoped for: timestamps carry sub-second precision, so
+        # two writes rarely collide on their own. What must hold is that when they DO
+        # collide, `sequence` decides - and that the input order cannot change it.
+        tied_second = {**second, "created_at": first["created_at"]}
+        for listing in ([first, tied_second], [tied_second, first]):
+            current = nr.select_current_assessment(listing)
+            self.assertEqual(current["assessment"]["assessment_id"], second["assessment_id"])
 
     def test_filesystem_order_cannot_affect_research_or_memory_current_assessment(self) -> None:
         import nogap_memory as nm

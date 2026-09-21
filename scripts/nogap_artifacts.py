@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -271,6 +272,54 @@ def get_phase_artifacts(project: Path, phase_id: str) -> list[dict[str, Any]]:
     return list_artifacts(project, phase_id=phase_id)
 
 
+def _next_sequence(project: Path) -> int:
+    """Per-project monotonic write counter, recorded on every artifact.
+
+    created_at cannot order two artifacts written in the same clock tick, and the
+    artifact_id carries a random uuid, so file listing order is not chronology. The
+    sequence is the tie-break that makes "which one is current?" a fact on disk
+    instead of an accident of the filesystem. Artifacts written before this field
+    existed report -1 and fall back to timestamp-only ordering - the behaviour they
+    already had, never worse."""
+    highest = -1
+    for record in list_artifacts(project):
+        value = record.get("sequence")
+        if isinstance(value, int):
+            highest = max(highest, value)
+    return highest + 1
+
+
+def _parse_timestamp(value: Any) -> datetime:
+    """Parsed, never string-compared: ISO timestamps of different precision do not
+    sort lexicographically ('...:19.5Z' < '...:19Z' because '.' < 'Z'), so a newer
+    microsecond stamp would lose to an older whole-second one. Unparsable or missing
+    stamps sort oldest so they can never win a "latest" lookup."""
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            pass
+    return datetime.min.replace(tzinfo=timezone.utc)
+
+
+def order_key(record: dict[str, Any], timestamp_field: str = "created_at") -> tuple[datetime, int]:
+    """Chronological sort key for records: parsed timestamp, then write sequence."""
+    sequence = record.get("sequence")
+    return (_parse_timestamp(record.get(timestamp_field)), sequence if isinstance(sequence, int) else -1)
+
+
+def latest(records: list[dict[str, Any]], timestamp_field: str = "created_at") -> dict[str, Any] | None:
+    """The chronologically newest record, or None when there is none.
+
+    Use this instead of max(..., key=lambda r: r["created_at"]): max() returns the
+    FIRST of equal keys, which on an artifact listing means the one whose random uuid
+    happened to sort first. Remaining ties resolve to the last element of the input,
+    so an append-ordered list still yields its newest entry."""
+    if not records:
+        return None
+    return max(enumerate(records), key=lambda pair: (order_key(pair[1], timestamp_field), pair[0]))[1]
+
+
 def _next_stable_id(project: Path, artifact_type: str, id_field: str, prefix: str) -> str:
     existing = list_artifacts(project, artifact_type=artifact_type)
     max_n = 0
@@ -465,6 +514,7 @@ def create_artifact(
     timestamp = _now()
     record: dict[str, Any] = {
         "artifact_id": artifact_id,
+        "sequence": _next_sequence(project),
         "artifact_type": artifact_type,
         "methodology_version": definition.version,
         "phase_id": phase_id,

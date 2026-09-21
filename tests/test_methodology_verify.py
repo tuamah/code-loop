@@ -26,9 +26,10 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import nogap  # noqa: E402
 import nogap_adapters  # noqa: E402
 import nogap_verify_binding as vb  # noqa: E402
-from nogap_artifacts import create_artifact, list_artifacts, load_artifact, update_requirement_status  # noqa: E402
+from nogap_artifacts import create_artifact, latest, list_artifacts, load_artifact, update_requirement_status  # noqa: E402
 from nogap_methodology import (  # noqa: E402
     MethodologyValidationError,
+    _now,
     downgrade_profile,
     escalate_phase,
     init_project,
@@ -459,6 +460,34 @@ class StalenessTests(unittest.TestCase):
     def gate_hash_value(self) -> str:
         return json.loads((self.project / ".code-loop" / "runtime" / "gates" / "gate-0001.json").read_text(encoding="utf-8"))["hash"]
 
+    def test_tied_self_checks_resolve_to_the_newest_written(self) -> None:
+        task_id = self.contract["fields"]["task_id"]
+        original = vb.latest_self_check(self.project, task_id)
+        self.assertIsNotNone(original)
+
+        # A repair re-attempt written in the SAME second as the original, with a
+        # genuinely different patch - exactly the M7-H repair shape.
+        repaired = json.loads(json.dumps(original))
+        repaired["artifact_id"] = "p14_self_check-000000000000"  # sorts before the uuid-named original
+        repaired["sequence"] = original["sequence"] + 1
+        repaired["created_at"] = original["created_at"]
+        repaired["updated_at"] = original["created_at"]
+        repaired["fields"] = {**repaired["fields"], "patch_hash": "a" * 64}
+        path = self.project / ".code-loop" / "methodology" / "artifacts" / f"{repaired['artifact_id']}.json"
+        path.write_text(json.dumps(repaired, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+        picked = vb.latest_self_check(self.project, task_id)
+        self.assertEqual(picked["artifact_id"], repaired["artifact_id"])
+        self.assertEqual(picked["fields"]["patch_hash"], "a" * 64)
+
+        # ... and the stale pre-repair verification result is reported as stale,
+        # not silently accepted as current.
+        reasons = vb.verification_staleness(self.project, self.result, self.gate_hash_value())
+        self.assertTrue(any("patch hash" in r for r in reasons), reasons)
+        precondition = vb.verification_acceptance_precondition(self.project, task_id)
+        self.assertFalse(precondition["satisfied"])
+        self.assertIn("stale", precondition["reason"])
+
     def test_25_candidate_hash_change_invalidates(self) -> None:
         mutated = dict(self.result)
         mutated["fields"] = {**mutated["fields"], "candidate_hash": "deadbeef"}
@@ -574,6 +603,53 @@ class ManualLiveScenarioTests(unittest.TestCase):
         # route_implementer would normally pick a DIFFERENT provider for review; force
         # the same one to simulate the identity-collision path directly.
         self.assertFalse(vb.reviewer_is_independent("agent:codex", "agent:codex"))
+
+
+class RecordOrderingTests(unittest.TestCase):
+    """The "latest" lookup must be decided by recorded chronology, never by which
+    random artifact uuid happens to sort first.
+
+    Regression for a real false-pass: _now() truncated to whole seconds, so a repair
+    self-check written in the same second as the original carried an identical
+    created_at. max(..., key=created_at) returns the FIRST of equal keys, i.e. the
+    first file in the listing, so roughly half the time the trust path read the
+    PRE-repair self-check, re-derived the pre-repair patch_hash, found it equal to
+    the stored verification result, and reported stale evidence as current.
+    """
+
+    def test_tied_timestamps_resolve_by_sequence_not_listing_order(self) -> None:
+        older = {"artifact_id": "p14-zzzz", "created_at": "2026-09-21T06:44:19Z", "sequence": 4}
+        newer = {"artifact_id": "p14-aaaa", "created_at": "2026-09-21T06:44:19Z", "sequence": 5}
+        for listing in ([older, newer], [newer, older]):
+            self.assertEqual(latest(listing, "created_at")["artifact_id"], "p14-aaaa")
+
+    def test_newer_subsecond_stamp_beats_older_whole_second_stamp(self) -> None:
+        # Guards the lexicographic trap: as strings "...:19.000001Z" < "...:19Z"
+        # because "." < "Z", so string comparison would pick the OLDER record.
+        legacy = {"artifact_id": "p14-legacy", "created_at": "2026-09-21T06:44:19Z"}
+        fresh = {"artifact_id": "p14-fresh", "created_at": "2026-09-21T06:44:19.000001Z"}
+        for listing in ([legacy, fresh], [fresh, legacy]):
+            self.assertEqual(latest(listing, "created_at")["artifact_id"], "p14-fresh")
+
+    def test_missing_or_unparsable_timestamp_never_wins(self) -> None:
+        real = {"artifact_id": "p14-real", "created_at": "2020-01-01T00:00:00Z"}
+        for broken in ({"artifact_id": "p14-broken"}, {"artifact_id": "p14-broken", "created_at": "not-a-date"}):
+            self.assertEqual(latest([broken, real], "created_at")["artifact_id"], "p14-real")
+
+    def test_latest_of_empty_listing_is_none(self) -> None:
+        self.assertIsNone(latest([], "created_at"))
+
+    def test_now_carries_subsecond_precision(self) -> None:
+        self.assertRegex(_now(), r"T\d{2}:\d{2}:\d{2}\.\d+Z$")
+
+    def test_artifacts_record_a_monotonic_write_sequence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            init_git_repo(project)
+            init_project(project, "research", "low", "low", actor="test")
+            build_p0_p11_chain(project)
+            sequences = [r["sequence"] for r in list_artifacts(project)]
+            self.assertEqual(sorted(sequences), list(range(len(sequences))), "sequence must be unique and gapless")
 
 
 if __name__ == "__main__":
