@@ -159,6 +159,37 @@ class EnvelopeTests(unittest.TestCase):
                 msg(sequence=bad)
 
 
+class VersioningSeparationTests(unittest.TestCase):
+    """Schema version controls decoding. Contract revision controls semantics. Current
+    authoritative state controls admissibility. The three are never one string.
+
+    Binding the wire schema to the contract revision would make every historical message
+    unparsable the moment T1A is reopened for a rule that does not touch the wire format — and an
+    old message must stay verifiable and parseable even when current policy refuses it. F1's own
+    principle is that retired material is never forgotten.
+    """
+
+    def test_schema_version_is_a_decoding_identity_not_a_contract_revision(self):
+        self.assertEqual(k.SCHEMA_VERSION, "1")
+        self.assertNotIn("rev", k.SCHEMA_VERSION)
+        self.assertNotIn("t1a", k.SCHEMA_VERSION.lower())
+
+    def test_contract_revision_is_not_an_envelope_field(self):
+        self.assertNotIn("contract_revision", k.ENVELOPE)
+        self.assertNotIn(k.CONTRACT_REVISION, k.canonical(msg()).decode())
+
+    def test_a_contract_reopen_does_not_make_old_messages_unparsable(self):
+        """Reopening T1A bumps CONTRACT_REVISION; SCHEMA_VERSION and the wire format do not move."""
+        sk = k.generate_key()
+        signed = k.sign(msg(), sk)
+        original = k.CONTRACT_REVISION
+        try:
+            k.CONTRACT_REVISION = "f1-t1a-rev25"
+            self.assertEqual(k.verify(signed, sk.public_key())["message_type"], "VERIFY")
+        finally:
+            k.CONTRACT_REVISION = original
+
+
 class BodySchemaTests(unittest.TestCase):
     def test_unknown_body_field_is_rejected_not_ignored(self):
         body = dict(VERIFY_BODY, authority="verification")
