@@ -286,6 +286,43 @@ ceremony recorded. An environment variable is a weaker custody story than a hard
 key storage and OS isolation are F1-T2's, and this is recorded as a limit rather than presented
 as custody.
 
+## Prebuild Barrier (`nogap run --execute`)
+
+Before any worktree is created or any process is launched, `preflight_build()` decides whether
+execution may begin, and the caller gates on its `permitted` field alone.
+
+It is **fail-closed**. Missing methodology state and unresolved methodology state are both
+refused:
+
+| state | status | permitted |
+|---|---|---|
+| initialized and ready | `READY` | yes |
+| initialized, not ready | `METHODOLOGY_BLOCKED` | no |
+| exists but will not load | `METHODOLOGY_UNRESOLVED` | no |
+| absent | `METHODOLOGY_NOT_INITIALIZED` | no |
+
+**There is no local exemption, by design.** An earlier draft of this change let a project grant
+itself an exception through an unsigned file in its own workspace. That replaced "no state
+permits" with "writing one local JSON permits" - the same hole with an extra step, because the
+executor this barrier exists to constrain has write access to that workspace and could have
+granted itself the permission it was being denied. Whoever can write the workspace must not be
+able to authorize execution in it.
+
+When an exemption is needed it belongs in an **authenticated `MIGRATION` message** - explicit,
+dated, recorded, and signed by an authority the workspace cannot forge (T1A §12) - wired through
+the F1 integration. Until that path exists there is no exemption mechanism, and therefore no
+exemption.
+
+### Historical note (erratum)
+
+`docs/f1-t1a-trust-core.md` §12 describes, in the present tense, a pre-F1 implementation in which
+`preflight_build()` returned `permitted: True` for a project with no methodology state. That was
+accurate when the contract was written and is the fail-open it cites as its motivating lesson.
+Closure item 2 changed the runtime to fail closed. The contract text is frozen and is not amended
+for this: the statement is narrative about prior implementation behaviour, not a normative
+requirement, and §12's actual rule - absent or unverifiable authentication is inadmissible, never
+"legacy compatible" - is what the runtime now implements.
+
 ## Methodology Verification Ladder (`nogap verify-methodology`) - NON-AUTHORITATIVE
 
 `nogap verify-methodology <project>` verifies a dispatch's execution evidence independently of

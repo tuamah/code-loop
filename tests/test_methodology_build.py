@@ -263,15 +263,21 @@ class PreflightTests(unittest.TestCase):
         self.assertNotIn("--skip-methodology", lowered)
         self.assertNotIn("--bypass", lowered)
 
-    def test_25_legacy_no_methodology_is_explicit_and_permitted(self) -> None:
+    def test_25_missing_methodology_state_is_never_permitted_by_default(self) -> None:
+        """The fail-open, closed. This used to assert permitted=True."""
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_git_repo(project)
             run_script("init", str(project))
             preflight = nogap_build.preflight_build(project)
-            self.assertTrue(preflight["permitted"])
+            self.assertFalse(preflight["permitted"])
             self.assertEqual(preflight["status"], "METHODOLOGY_NOT_INITIALIZED")
-            self.assertNotEqual(preflight["status"], "READY")  # never silently reported as READY
+            self.assertNotEqual(preflight["status"], "READY")
+            self.assertFalse(preflight["tracked"])
+            # The rejection says what to do about it, rather than only that it happened.
+            self.assertIn("methodology init", " ".join(preflight["reasons"]))
+            # No local override is offered, because a file the executor can write is a bypass.
+            self.assertIn("no local override", " ".join(preflight["reasons"]))
 
 
 class TaskContractTests(unittest.TestCase):

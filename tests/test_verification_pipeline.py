@@ -87,6 +87,32 @@ MULTI_FILE_PATCH = (
     '+verification smoke test\n'
 )
 
+class _ungoverned_project:
+    """TEST-ONLY seam: run a legacy fixture that has no methodology state.
+
+    Since closure item 2 the prebuild barrier refuses a project with no methodology state, and
+    there is deliberately NO production override - a file an executor could write would be a
+    bypass, which is the hole item 2 exists to close. These fixtures predate methodology
+    governance and are not about the barrier (it has its own suite), so they patch
+    `preflight_build` inside this process instead.
+
+    The seam exists only in the test process. Nothing in the shipped runtime can reach it, which
+    is the point: the production path has no exemption at all.
+    """
+
+    PERMITTED = {"permitted": True, "status": "TEST_ONLY_UNGOVERNED", "reasons": [],
+                 "profile": None, "current_phase": None, "readiness": None, "tracked": False}
+
+    def __enter__(self):
+        from unittest import mock
+        self._patch = mock.patch("nogap_build.preflight_build", return_value=self.PERMITTED)
+        self._patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._patch.stop()
+        return False
+
 
 class ExtractNewFileContentTests(unittest.TestCase):
     def test_regression_stops_at_next_files_diff_header(self) -> None:
@@ -289,7 +315,8 @@ class CmdVerifyTests(unittest.TestCase):
 
     def dispatch_with_stub_executor(self, project: Path) -> str:
         self.set_adapters(executor=StubExecutor("executor"))
-        nogap.cmd_run(argparse.Namespace(path=str(project), actor="test", execute=True, execute_timeout=60))
+        with _ungoverned_project():
+            nogap.cmd_run(argparse.Namespace(path=str(project), actor="test", execute=True, execute_timeout=60))
         runtime = project / ".code-loop" / "runtime"
         dispatch = json.loads(next((runtime / "dispatches").glob("*.json")).read_text(encoding="utf-8"))
         return dispatch["id"]
@@ -349,7 +376,8 @@ class CmdVerifyTests(unittest.TestCase):
                 executor=StubExecutor("executor"),
                 reviewer=StubReviewer("reviewer", '{"verdict": "pass", "notes": "independent review ok"}'),
             )
-            nogap.cmd_run(argparse.Namespace(path=str(project), actor="test", execute=True, execute_timeout=60))
+            with _ungoverned_project():
+                nogap.cmd_run(argparse.Namespace(path=str(project), actor="test", execute=True, execute_timeout=60))
             runtime = project / ".code-loop" / "runtime"
             dispatch = json.loads(next((runtime / "dispatches").glob("*.json")).read_text(encoding="utf-8"))
 
