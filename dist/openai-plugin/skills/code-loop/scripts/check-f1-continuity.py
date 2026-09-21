@@ -67,11 +67,15 @@ def section_digest(text: str, anchor: str) -> str | None:
         sections.append("\n".join(current))
 
     needle = " ".join(anchor.split())
-    for section in sections:
-        normalized = " ".join(section.split())
-        if needle and needle in normalized:
-            return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:12]
-    return None
+    if not needle:
+        return None
+    hits = [" ".join(s.split()) for s in sections if needle in " ".join(s.split())]
+    if len(hits) != 1:
+        # Round 19: a decoy section quoting the anchor takes the first match, and one
+        # editorial-looking --update-digests then points the watch at the decoy forever.
+        # Ambiguity is the defect, so it fails here rather than being acknowledged away.
+        return f"AMBIGUOUS:{len(hits)}"
+    return hashlib.sha256(hits[0].encode("utf-8")).hexdigest()[:12]
 
 
 def parse() -> tuple[list[dict], list[str]]:
@@ -126,6 +130,10 @@ def main() -> int:
             if digest is None:
                 problems.append(f"{am}: anchor not found in {where} — the invariant may have been "
                                 f"dropped by a rewrite: {anchor!r}")
+            elif digest.startswith("AMBIGUOUS:"):
+                problems.append(f"{am}: anchor matches {digest.split(':')[1]} sections in {where}; it "
+                                f"must identify exactly one, or the watch can be moved to a decoy: "
+                                f"{anchor!r}")
             elif digest != row["digest"]:
                 if update:
                     updates[am] = digest
@@ -167,6 +175,21 @@ def main() -> int:
     missing = sorted(set(range(1, numbers[-1] + 1)) - set(numbers))
     if missing:
         problems.append("ledger skips: " + ", ".join(f"AM-{n}" for n in missing))
+
+    # Round 19: the gap check derives the ledger's extent from the ledger, so deleting the
+    # highest row passed, and so did inventing AM-37. Extent must be declared separately: a
+    # truncation or a fabrication now contradicts a line a reviewer has to edit on purpose.
+    declared = re.search(r"^AMENDMENTS:\s*(\d+)\s+through\s+AM-(\d+)\s*$",
+                         LEDGER.read_text(encoding="utf-8"), re.M)
+    if not declared:
+        problems.append("ledger declares no extent; it needs a line `AMENDMENTS: <count> through "
+                        "AM-<highest>` so a deleted or invented row contradicts it")
+    else:
+        count, highest = int(declared.group(1)), int(declared.group(2))
+        if count != len(rows):
+            problems.append(f"ledger declares {count} amendments but carries {len(rows)} rows")
+        if highest != numbers[-1]:
+            problems.append(f"ledger declares AM-{highest} as highest but carries AM-{numbers[-1]}")
 
     if update and updates and not problems:
         text = LEDGER.read_text(encoding="utf-8")

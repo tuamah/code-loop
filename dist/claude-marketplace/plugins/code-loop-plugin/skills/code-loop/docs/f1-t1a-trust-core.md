@@ -117,6 +117,25 @@ changed text means the same thing.** No script can. What it buys is that drift c
 *silently* — the change becomes a line in a diff that a reviewer must judge. The guarantee is "no
 unacknowledged change", never "no harmful change".
 
+### The ledger is not self-attesting (AM-37)
+
+Round 19 turned the same question on the ledger AM-36 relies on. Three attacks, three passes:
+deleting the highest-numbered row (the gap check derived the ledger's extent *from* the ledger, so
+truncation at the top left no gap); inventing an AM-37 that granted the controller permission to
+delegate acceptance; and planting a decoy section quoting AM-18's anchor. The decoy failed CI once
+— as an ordinary digest change, indistinguishable from a reflow. Acknowledging it as editorial
+moved the watch to the decoy permanently, and the real rule was then inverted with AM-18 silent.
+(CI still failed, but only because AM-30 happens to live in the same section: coincidence, not a
+property.)
+
+> **An anchor must identify exactly one section; ambiguity is a failure, not something a digest
+> acknowledgment can resolve. The ledger's extent — how many amendments exist and which is
+> highest — is declared in the ledger and checked against its rows, never derived from them.**
+
+Neither rule stops a determined editor: the count is a line they can also change. What both do is
+convert a silent deletion into a contradiction CI names, which is the only guarantee AM-36 ever
+claimed.
+
 ### The rule applies to itself (AM-33)
 
 Revision 17 stated the rule and then enforced it with a fourteen-row table nothing checked. A future

@@ -12,7 +12,7 @@ repository write access by construction.
 
 ## The two contracts
 
-Eighteen adversarial review rounds produced thirty-six amendments and twenty-four named attacks. Review 7
+Nineteen adversarial review rounds produced thirty-seven amendments and twenty-seven named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
@@ -295,10 +295,23 @@ And the limit is written into the contract rather than left implied:
 > diff a reviewer must judge. The guarantee is "no unacknowledged change", never "no harmful
 > change".
 
-Still outstanding: no round has completed without a security-semantic delta. Rounds 16, 17 and 18
-each found their defect in the round before's machinery — and rounds 17 and 18 found it in the
-*guards* rather than the contract, which is a smaller and more finite surface than the contract
-itself. Round 19 runs against revision 20.
+**Round 19** attacked the ledger `check-f1-continuity.py` treats as canonical. Three of three
+landed. **A25** deleted the highest-numbered row and the audit passed: the gap check derived the
+ledger's extent from the ledger, so truncation at the top left no gap to find (deleting a *middle*
+row was caught). **A27** added an invented AM-37 granting the controller permission to delegate
+acceptance, and it passed as a peer of thirty-six reviewed amendments. **A26** planted a decoy
+section quoting AM-18's anchor; it failed CI once, as an ordinary digest change indistinguishable
+from a reflow, and acknowledging it as editorial moved the watch to the decoy permanently.
+
+AM-37 makes anchors unambiguous and the ledger's extent declared rather than derived. Enforcing
+the first rule immediately found that **AM-15, AM-19 and AM-27 had been watching the wrong
+sections all along** — their anchors matched the closure manifest and the §6 domain table before
+reaching §10.3, §6 and §12, so those three invariants could have been rewritten with CI green.
+That was a live false negative in the shipped ledger, not a hypothetical.
+
+Still outstanding: no round has completed without a security-semantic delta. But rounds 17, 18 and
+19 each found their defect in the *guards* rather than in the contract, and round 19's contract
+text was untouched except to record the rule. Round 20 runs against revision 21.
 
 ## Standing constraints
 
