@@ -674,7 +674,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     phase_note = f" phase={preflight['current_phase']}" if preflight["current_phase"] else ""
     profile_note = f" profile={preflight['profile']}" if preflight["profile"] else ""
     print(f"methodology: status={preflight['status']}{profile_note}{phase_note}")
-    if preflight["status"] == "METHODOLOGY_BLOCKED":
+    if not preflight["permitted"]:
         for item in preflight["reasons"]:
             print(f"  - {item}")
 
@@ -775,11 +775,16 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     # M7-F PREBUILD BARRIER: this is the one place real implementation execution can
     # begin, so it is the one place the gate is enforced - before any worktree or
-    # process is created. A project with methodology initialized cannot bypass this via
-    # any CLI flag; a project that never initialized methodology at all keeps its
-    # pre-M7 behavior (see preflight_build()'s METHODOLOGY_NOT_INITIALIZED policy).
-    methodology_tracked = preflight["status"] != "METHODOLOGY_NOT_INITIALIZED"
-    if methodology_tracked and not preflight["permitted"]:
+    # process is created. There is no CLI flag that bypasses it.
+    #
+    # The gate is `permitted` and ONLY `permitted`. It used to be
+    # `methodology_tracked and not permitted`, which meant this caller decided for itself
+    # which statuses to enforce and quietly exempted every project with no methodology
+    # state - a second implicit permit sitting one layer above the first. Whether a project
+    # is methodology-TRACKED is a separate question from whether it may EXECUTE, and
+    # conflating them is what reopened the hole.
+    methodology_tracked = preflight["tracked"]
+    if not preflight["permitted"]:
         print(f"execution BLOCKED by methodology: {preflight['status']}")
         for item in preflight["reasons"]:
             print(f"  - {item}")

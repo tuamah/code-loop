@@ -13,12 +13,28 @@ Three authorities stay separate, on purpose:
   self-check evidence is never authoritative for ACCEPT; only independent
   verification (M6-D) plus 'nogap decide' can produce that.
 
-LEGACY COMPATIBILITY POLICY: a project with no methodology state at all is
-not silently treated as READY - preflight_build() reports it under its own
-explicit status, METHODOLOGY_NOT_INITIALIZED, distinct from READY. It is the
-one case execution remains permitted in, preserving pre-M7 behavior for
-projects that never opted into the MethodologyEngine. Once a project *has*
-run `methodology init`, this barrier is fully fail-closed: BUILD_PHASES may
+PREFLIGHT IS FAIL-CLOSED. Missing or unresolved methodology state is never
+permitted. It used to be: a project with no state returned permitted=True under
+METHODOLOGY_NOT_INITIALIZED, and `nogap run --execute` additionally skipped the
+barrier entirely for that status. Two layers of implicit permit, either of which
+alone reopened the hole, and both are gone.
+
+THERE IS NO LOCAL EXEMPTION. An earlier revision of this change let a project
+grant itself an exception through an unsigned file in its own workspace. That
+replaced "no state permits" with "writing one local JSON permits", which is the
+same hole with an extra step: the executor this barrier exists to constrain has
+write access to that workspace, so it could grant itself the permission it was
+being denied. Whoever can write the workspace must not be able to authorize
+execution in it.
+
+The exemption path therefore does not exist here at all. When one is needed it
+belongs in an AUTHENTICATED MIGRATION message (T1A §12: explicit, dated,
+recorded, and signed by an authority the workspace cannot forge), wired through
+the F1 integration. Until that exists, there is no exemption mechanism, so there
+is no exemption - a weaker stand-in offered "for legacy support" is exactly what
+was just removed.
+
+Once a project *has* run `methodology init`, this barrier is fully fail-closed: BUILD_PHASES may
 only be entered when prebuild_readiness() holds, current_phase is one this
 module recognizes as BUILD-eligible, and (when comparable) a methodology P11
 gate plan agrees with any already-frozen Trust Runtime gate. There is no
@@ -44,6 +60,7 @@ from nogap_methodology import (
     load_state,
     transition,
 )
+
 
 # P11 is included because "prebuild readiness satisfied" means BUILD may begin from
 # there; P12-P14 are already inside BUILD and remain governed the same way (a project
@@ -105,19 +122,41 @@ def preflight_build(project: Path) -> dict[str, Any]:
     """"May execution begin?" - the one function `nogap run --execute` must consult
     before creating a worktree or launching any process. Never raises: always returns
     a structured, auditable result so a caller can print/log WHY, never just "blocked".
+
+    FAIL-CLOSED. Missing or unresolved state does not permit execution. The caller must gate
+    on `permitted` alone: a caller that reads `status` and decides for itself which statuses
+    to enforce reintroduces the hole one layer up, which is exactly how this one survived.
     """
-    state = load_state(project)
+    try:
+        state = load_state(project)
+    except MethodologyValidationError as exc:
+        # "Never raises" has to be true for the barrier to be reachable at all. An exception
+        # escaping here is not a permit, but it is also not a decision - and a traceback is a
+        # worse rejection path than a sentence saying what is wrong.
+        return {
+            "permitted": False,
+            "status": "METHODOLOGY_UNRESOLVED",
+            "reasons": [f"methodology state exists but will not load: {exc}"],
+            "profile": None,
+            "current_phase": None,
+            "readiness": None,
+            "tracked": True,
+        }
+
     if state is None:
         return {
-            "permitted": True,
+            "permitted": False,
             "status": "METHODOLOGY_NOT_INITIALIZED",
             "reasons": [
-                "no methodology state at this project (methodology was never initialized); "
-                "executing without pre-build governance (legacy compatibility mode)"
+                "no methodology state at this project; execution without pre-build governance "
+                "is not permitted. Run 'nogap methodology init'. There is deliberately no local "
+                "override: anything that can write this workspace must not be able to authorize "
+                "execution in it."
             ],
             "profile": None,
             "current_phase": None,
             "readiness": None,
+            "tracked": False,
         }
 
     definition = load_methodology()
@@ -132,6 +171,7 @@ def preflight_build(project: Path) -> dict[str, Any]:
             "profile": state["effective_profile"],
             "current_phase": state["current_phase"],
             "readiness": None,
+            "tracked": True,
         }
 
     from nogap_artifacts import prebuild_readiness  # local import: avoids a cycle at module load
@@ -155,6 +195,7 @@ def preflight_build(project: Path) -> dict[str, Any]:
         "profile": readiness["profile"],
         "current_phase": current_phase,
         "readiness": readiness,
+        "tracked": True,
     }
 
 

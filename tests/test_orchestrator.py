@@ -72,6 +72,32 @@ def run_script(*args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
     )
 
+class _ungoverned_project:
+    """TEST-ONLY seam: run a legacy fixture that has no methodology state.
+
+    Since closure item 2 the prebuild barrier refuses a project with no methodology state, and
+    there is deliberately NO production override - a file an executor could write would be a
+    bypass, which is the hole item 2 exists to close. These fixtures predate methodology
+    governance and are not about the barrier (it has its own suite), so they patch
+    `preflight_build` inside this process instead.
+
+    The seam exists only in the test process. Nothing in the shipped runtime can reach it, which
+    is the point: the production path has no exemption at all.
+    """
+
+    PERMITTED = {"permitted": True, "status": "TEST_ONLY_UNGOVERNED", "reasons": [],
+                 "profile": None, "current_phase": None, "readiness": None, "tracked": False}
+
+    def __enter__(self):
+        from unittest import mock
+        self._patch = mock.patch("nogap_build.preflight_build", return_value=self.PERMITTED)
+        self._patch.start()
+        return self
+
+    def __exit__(self, *exc):
+        self._patch.stop()
+        return False
+
 
 class OrchestratorTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -152,7 +178,8 @@ class OrchestratorTests(unittest.TestCase):
             result = run_script("init", str(project), "--objective", "execute flag smoke")
             self.assertEqual(result.returncode, 0, result.stderr)
 
-            nogap.cmd_run(run_namespace(str(project), execute=True))
+            with _ungoverned_project():
+                nogap.cmd_run(run_namespace(str(project), execute=True))
 
             runtime = project / ".code-loop" / "runtime"
             dispatch = json.loads(next((runtime / "dispatches").glob("*.json")).read_text(encoding="utf-8"))
@@ -196,7 +223,8 @@ class OrchestratorTests(unittest.TestCase):
             init_git_repo(project)
             run_script("init", str(project), "--objective", "golden regression: clean exit, zero effect")
 
-            nogap.cmd_run(run_namespace(str(project), execute=True))
+            with _ungoverned_project():
+                nogap.cmd_run(run_namespace(str(project), execute=True))
 
             runtime = project / ".code-loop" / "runtime"
             evidence = json.loads(next((runtime / "evidence").glob("*.json")).read_text(encoding="utf-8"))
@@ -226,7 +254,8 @@ class OrchestratorTests(unittest.TestCase):
             init_git_repo(project)
             run_script("init", str(project), "--objective", "golden regression: partial effect then crash")
 
-            nogap.cmd_run(run_namespace(str(project), execute=True))
+            with _ungoverned_project():
+                nogap.cmd_run(run_namespace(str(project), execute=True))
 
             runtime = project / ".code-loop" / "runtime"
             evidence = json.loads(next((runtime / "evidence").glob("*.json")).read_text(encoding="utf-8"))
