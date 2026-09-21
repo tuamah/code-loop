@@ -1,24 +1,23 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: FROZEN, revision 23, after the AM-39 regression.** Revision 22 was frozen at commit
-`b667d64` after review 21 completed clean, then reopened by **AM-39** — the first use of the
-reopen-by-amendment rule the freeze was written with. The first adversarial review of T1B found
-three defects in the *seam* between the contracts, which neither document's own audit could see
-because every guard read one document: `NOGAP::APPLICABILITY::v1` was defined in both, agreeing on
-two fields out of eleven; `predicate_identity -> obligation_class` had no representation anywhere;
-and obligation birth offered two derivations, one of them through an authority that did not exist.
+**Status: FROZEN, revision 24, after the AM-40 regression.** T1A was frozen at revision 22
+(`b667d64`), reopened by **AM-39** when T1B review 1 found the contracts defining one schema twice,
+re-frozen at revision 23, and reopened again by **AM-40** when T1B review 2 found that its
+supersession rule had no owner, no representation and no enforcement point — six of seven questions
+about that override had no answer. Both reopenings came from the seam between the contracts, which
+is the one place neither document's own audit could look.
 
-AM-39 is deliberately narrow: T1A becomes the single canonical source for every schema, two
-representation gaps are closed, and the guards read T1A and T1B as one closure set. Nothing else in
-T1A changed. The regression — the ten attacks over the changed surface, the seventeen legacy
-attacks, representability both ways, closure across both contracts, continuity, and ten adversarial
-guard probes — completed with zero semantic regression, zero duplicate canonical schema, zero
-unrepresented policy fact and no security-semantic delta outside AM-39.
+AM-40 is narrow: `VERIFY` gains `supersedes`, §10's Stage 2 gains the supersession conditions and
+the acceptance rule it never carried, and the decider is made a reporter of supersessions rather
+than their author. Nothing else in T1A changed. The regression — the nine T1B attacks, the six
+lineage shapes, the seventeen legacy attacks, both representability directions, closure across both
+contracts, continuity, and the guard probes — completed with zero successful, zero partial and zero
+ambiguous results and no security-semantic delta outside AM-40.
 
 **What FROZEN means.** No semantic change may be made to this document except through a new
 numbered amendment that explicitly reopens T1A, is recorded in `f1-amendment-ledger.md`, and states
-which invariant it changes and why. The `b667d64` freeze is not annulled: it was correct on the
-evidence available then, and AM-39 is the case that rule exists for.
+which invariant it changes and why. Neither earlier freeze is annulled: each was correct on the
+evidence then available, and reopen-by-amendment exists for exactly what followed.
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
@@ -129,6 +128,38 @@ bounded and worth stating plainly: **a digest proves text did not change; it can
 changed text means the same thing.** No script can. What it buys is that drift cannot happen
 *silently* — the change becomes a line in a diff that a reviewer must judge. The guarantee is "no
 unacknowledged change", never "no harmful change".
+
+### An override with no owner is not a rule (AM-40)
+
+T1B's second adversarial review put seven questions to its supersession rule — who owns the act,
+what exactly it changes, can it lower a burden or only raise one, is it current-head bound, can it
+be replayed, can it erase adverse history, can it make an obligation non-existent rather than
+non-applicable. Three had answers. **Six did not**, and the reason was one defect wearing three
+faces.
+
+`VERIFY` had no field asserting that one verdict supersedes another, so the relation was not
+representable — AM-27's shape again. With nothing to sign, the only place a supersession could be
+asserted was `DECISION`'s `superseded_adverse_verdicts`, which made the decider the author of its
+own repair history. And §10's Stage 2 clause for `VERIFY` said nothing about the four conditions
+T1B requires, while `DECISION`'s said nothing about the acceptance rule at all — so the single most
+important sentence in T1B, *"ACCEPT requires a current authenticated PASS on every applicable
+obligation, for the exact candidate being accepted"*, was enforced by no step of the procedure that
+decides admissibility. AM-22 already named this failure inside one contract; this is the same
+failure across two.
+
+> **A supersession is asserted by the verification authority in a signed `VERIFY`, never inferred
+> by the decider. The decider reports the supersessions the snapshot resolves and may not add to
+> them. A supersession may only raise the burden of a decision, never lower it: it selects which
+> verdict is current, and the acceptance rule still requires a current PASS bound to the exact
+> candidate being accepted.**
+
+The four conditions are now Stage 2 clauses rather than prose in another document, with a fifth the
+review found missing: **a superseded verdict may not be superseded again.** Without it the same
+adverse verdict can be cleared by many descendants in parallel — A24's shape applied to verdicts,
+and AM-29 already makes the verdict set stateful and headed, so the race is real.
+
+What this does *not* do is decide that a supersession is a repair. That remains policy's, and §16's
+R5 states the limit.
 
 ### A schema defined twice is defined nowhere (AM-39)
 
@@ -273,7 +304,7 @@ MESSAGE_TYPES: 11 83a0451d68e9
 ILLUSTRATIVE_ENTRIES: 17
 5136ae3f44f8  read or copy any private authority key
 afb2fd6b7067  key_id ->
-49fb6562aefa  Common Signed Envelope
+c99c8949d83b  Common Signed Envelope
 10676bcc2bad  PROJECT        genesis
 4b7a4e474a5d  NOGAP::PROJECT::v1
 7dae20087cdd  authorization_id
@@ -281,7 +312,7 @@ c7fc43fc51bd  NEW_TASK |
 d267b9ac86d8  Project Genesis Commitment
 fa38c582729d  Trusted Run Manifest
 7b25e7e9069a  authorized freeze request
-015970710e9f  STAGE 1 — every message, in order
+887f972939ec  STAGE 1 — every message, in order
 f89feebc61bf  begin
 009cb2d63cdf  Trusted Decision State Snapshot
 ac32e0d6fba8  derive the decision from snapshot S
@@ -603,7 +634,8 @@ Message-specific body             validated against the schema for message_type,
   GATE           run_commitment, gate_content_digest, baseline_match | human_authorization,
                  freeze_policy_version
   VERIFY         run_commitment, gate_commitment, candidate_fingerprint, obligation_id,
-                 verification_method, verdict, observation_digest
+                 verification_method, verdict, observation_digest,
+                 supersedes (a prior adverse verdict, or absent)             (AM-40)
   DECISION       run_commitment, candidate_fingerprint, decision, decision_snapshot_digest,
                  superseded_adverse_verdicts, policy_head
   POLICY         project_commitment, epoch, previous_commitment, class_authority_map_digest,
@@ -984,8 +1016,18 @@ STAGE 2 — by message_type
  VERIFY         gate_commitment is the authenticated commitment for this run           else INADMISSIBLE
                 candidate_fingerprint matches the live candidate                       else STALE
                 producer_identity is not an execution identity of this run             else INADMISSIBLE
+                if supersedes is present (AM-40): same obligation_id; this candidate
+                is a TCB-recorded descendant of the superseded one; the gate and
+                policy in force at THIS head are equal or stronger; this verdict is
+                a PASS; the superseded verdict is not already superseded else INADMISSIBLE
  DECISION       decision_snapshot_digest resolves and its heads were current at CAS    else INADMISSIBLE
                 producer_identity is not an execution identity of this run             else INADMISSIBLE
+                accept only with a current PASS on every obligation the named
+                Obligation-Set Commitment makes applicable, each bound to THIS
+                candidate_fingerprint (T1B §B3, AM-40)                    else INADMISSIBLE
+                superseded_adverse_verdicts equals what the snapshot resolves;
+                the decider reports supersessions, never asserts them (AM-40)
+                                                                       else INADMISSIBLE
  GATE           names a TCB-held Run Commitment; baseline match OR a HUMAN
                 authorization admissible for THIS gate content (§8)                    else INADMISSIBLE
  HUMAN          purpose-binding holds: action_type, target_message_type, subject_digest

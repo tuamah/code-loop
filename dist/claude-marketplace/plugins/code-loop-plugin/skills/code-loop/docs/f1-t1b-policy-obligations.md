@@ -1,6 +1,6 @@
 # F1-T1B — Trusted Policy & Obligation Semantics
 
-**Status: DRAFT, revision 9. NOT FROZEN.** Adversarial review 1 produced four findings; three required AM-39 in T1A and are closed, and the fourth — T1B had no closure rules at all — is closed by §B0. Split out of the single F1-T1 contract after adversarial
+**Status: DRAFT, revision 10. NOT FROZEN.** Reviews 1 and 2 are done. Review 1 produced AM-39 (one schema defined in both contracts); review 2 produced AM-40 (supersession had no owner, no representation and no enforcement point). Both were cross-contract and reopened T1A.
 review 7. Builds on `f1-t1a-trust-core.md`, whose adversary model (T1A §1), authorities (T1A §4), trust root
 (T1A §5), payload and domain separation (T1A §6), and decision-snapshot consistency apply here unchanged and
 are not restated.
@@ -122,10 +122,28 @@ FAIL(obligation O, candidate A, run R1)
 PASS(obligation O, candidate B, run R2)
 ```
 
-A later verdict may be recorded as superseding an earlier adverse one only when all hold: it is on
-the **same `obligation_id`**; the candidate is a **TCB-recorded descendant** of the adverse one
-(structural under AM-9, not claimed); the gate/policy in force is **equal or stronger**; and it is a
-PASS. Policy — not the trust root — then decides whether that supersession counts as repair. Every
+**A supersession is an override, so it has an owner (AM-40).** Review 2 asked seven questions of
+this rule and six had no answer, because the relation was not representable: nothing in any message
+said "this verdict supersedes that one", so the decider was left to assert its own repair history.
+The assertion now lives in `VERIFY.supersedes` (T1A §6), signed by the verification authority, and
+T1A §10's Stage 2 enforces the conditions — they are not prose in this document that the
+admissibility procedure never reads.
+
+A later verdict supersedes an earlier adverse one only when all hold: same **`obligation_id`**; the
+candidate is a **TCB-recorded descendant** of the adverse one (structural under AM-9, not claimed);
+the gate and policy in force **at the current head** are equal or stronger; it is a **PASS**; and
+the superseded verdict is **not already superseded** — otherwise one adverse verdict is cleared by
+many descendants at once, which is A24's race applied to verdicts.
+
+> **A supersession may only raise the burden of a decision, never lower it.**
+
+It selects which verdict is current; it never substitutes for one. The acceptance rule is
+unchanged and unconditional: a current PASS on every applicable obligation, bound to the exact
+candidate being accepted. So a supersession cannot be replayed into credit — replaying it changes
+which verdict is current for a candidate that must still pass on its own — and it cannot make an
+obligation non-existent rather than non-applicable, which §B4 and AM-16 govern separately.
+
+Policy — not the trust root — then decides whether that supersession counts as repair. Every
 decision record carries the adverse verdicts it superseded, so a candidate that passed on attempt 47
 is visibly that.
 
@@ -258,3 +276,11 @@ terminates where AM-12 says it does: at the Project Genesis ceremony. Without th
   passes, or require human sign-off to supersede nominated obligation classes. This is the exact
   seam between *cryptographically valid* and *engineering-valid*, and NoGapCode must state which one
   it is claiming.
+
+  **R5 is a declared boundary, not a gap to read past (AM-40).** `FAIL` then `PASS` establishes
+  exactly one thing: that the current verdict for this obligation on this candidate is a PASS under
+  the policy in force. It does not establish that the change caused the repair, and no sequence of
+  verdicts ever will. A system that needs causal repair must **declare that burden here** — a
+  named policy obligation with its own predicate, deterministic or N-of-N or human-signed — and
+  never infer it from the order of the records. An unstated causal claim is the one place this
+  contract could be read as promising more than it proves.
