@@ -266,7 +266,13 @@ _SCORE_TO_PROFILE = {0: "LIGHT", 1: "STANDARD", 2: "STRICT"}
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    """Microsecond precision, not whole seconds: these timestamps order trust-bearing
+    records (which self-check is current, which verification result reflects the live
+    candidate). Two records written inside the same second used to carry an identical
+    created_at, and every "latest" lookup then fell back to arbitrary file/list order.
+    Precision alone is not the guarantee - see order_key() - but it removes the common
+    tie instead of leaving correctness to a coin flip."""
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 @dataclass

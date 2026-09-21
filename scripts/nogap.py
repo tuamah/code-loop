@@ -1857,6 +1857,7 @@ def _cmd_methodology_artifacts(args: argparse.Namespace) -> None:
     from nogap_artifacts import (
         ARTIFACT_TYPES,
         create_artifact,
+        latest as latest_artifact,
         list_artifacts,
         load_artifact,
         prebuild_readiness,
@@ -1923,7 +1924,7 @@ def _cmd_methodology_artifacts(args: argparse.Namespace) -> None:
                     )
                 self_checks = list_artifacts(project, artifact_type="P14_SELF_CHECK")
                 if result["current_phase"] == "P14" and self_checks:
-                    latest = max(self_checks, key=lambda r: r.get("created_at", ""))
+                    latest = latest_artifact(self_checks, "created_at")
                     print(
                         f"BUILD_COMPLETE_AWAITING_VERIFICATION: task_id={latest['fields']['task_id']} "
                         f"execution_evidence_ids={latest['fields']['execution_evidence_ids']}"

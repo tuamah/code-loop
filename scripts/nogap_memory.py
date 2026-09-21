@@ -58,7 +58,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from nogap_artifacts import ARTIFACT_TYPES, _resolve_reference, artifacts_dir, load_artifact
+from nogap_artifacts import ARTIFACT_TYPES, _resolve_reference, artifacts_dir, latest as latest_artifact, load_artifact
 from nogap_failure import PARK_STATES, failures_dir
 from nogap_methodology import (
     MethodologyValidationError,
@@ -465,13 +465,13 @@ def _derive_project_identity(sources: dict[str, Any]) -> dict[str, Any]:
     intents = sources["artifacts"].get("P0_PROJECT_INTENT", [])
     if not intents:
         return {"project_name": None, "intent_type": None, "owner": None, "source_refs": []}
-    latest = max(intents, key=lambda r: r.get("updated_at", ""))
-    fields = latest.get("fields", {})
+    newest = latest_artifact(intents, "updated_at")
+    fields = newest.get("fields", {})
     return {
         "project_name": fields.get("project_name"),
         "intent_type": fields.get("intent_type"),
         "owner": fields.get("owner"),
-        "source_refs": [latest["artifact_id"]],
+        "source_refs": [newest["artifact_id"]],
     }
 
 
