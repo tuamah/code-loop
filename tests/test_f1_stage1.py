@@ -96,13 +96,14 @@ class OrderTests(Fixture):
     """The steps run in order, and the FIRST failure decides."""
 
     def test_a_message_failing_early_and_late_reports_the_early_step(self):
-        # Unknown key (step 6) and a stale head (step 10) at once: step 6 must decide.
+        # An unresolvable key (step 5's condition) and a stale head (step 10) at once: the
+        # earlier step decides.
         stranger = k.generate_key()
         self.grant(["VERIFY"], key_id="key-2", pub=stranger.public_key().public_bytes_raw().hex())
         signed = self.a_verify(signer=cm.CommitmentSigner(
             self.registry, "key-2", stranger, "a2", sequences=cm.SequenceSource()))
         signed["message"]["key_id"] = "nobody"
-        self.assertEqual(self.stage1.check(signed).step, 6)
+        self.assertEqual(self.stage1.check(signed).step, 5)
 
     def test_signature_failure_precedes_registry_grant_failure(self):
         self.grant(["VERIFY"], actions={"VERIFY": ["attest"]}, projects=["proj-9"],
@@ -163,10 +164,42 @@ class StepTests(Fixture):
         signed["signature"] = "00" * 64
         self.assertEqual(self.stage1.check(signed).step, 5)
 
-    def test_step_6_unknown_key_id(self):
+    def test_unknown_key_id_refuses_at_step_5_not_from_a_lookup(self):
+        """Resolving the key is a prerequisite, not step 6's decision.
+
+        With no key material step 5's condition — "signature verifies under key_id" — cannot be
+        met, and in an ordered procedure the first failing condition decides. An earlier draft
+        issued a step 6 verdict straight from the lookup, which ran the contract's steps out of
+        order.
+        """
         signed = self.a_verify()
         signed["message"]["key_id"] = "ghost"
-        self.assertEqual(self.stage1.check(signed).step, 6)
+        v = self.stage1.check(signed)
+        self.assertEqual((v.status, v.step), (s1.INADMISSIBLE, 5))
+        self.assertIn("unknown key_id", v.reason)
+
+    def test_step_6_decides_current_head_membership_after_step_5(self):
+        """Step 6 is a separate, later decision: resolvable is not present-at-the-current-head."""
+        class HeadlessRegistry:
+            """Resolves key material but holds no accepted head — a state a durable store can be
+            in mid-recovery, which I5 makes real."""
+
+            def __init__(self, inner):
+                self._inner = inner
+
+            head = None
+
+            def verification_key(self, key_id):
+                return self._inner.verification_key(key_id)
+
+            def authorize(self, *a, **kw):                     # pragma: no cover - never reached
+                raise AssertionError("step 6 must refuse before the grant is consulted")
+
+        signed = self.a_verify()
+        stage1 = self.build(registry=HeadlessRegistry(self.registry))
+        v = stage1.check(signed)
+        self.assertEqual((v.status, v.step), (s1.INADMISSIBLE, 6))
+        self.assertIn("no accepted head", v.reason)
 
     def test_step_7_retired_key(self):
         signed = self.a_verify()

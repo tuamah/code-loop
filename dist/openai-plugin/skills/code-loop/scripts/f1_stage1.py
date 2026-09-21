@@ -184,24 +184,44 @@ class Stage1:
 
         key_id = message["key_id"]
 
-        # Step 6 before step 5, deliberately: the verifying key comes from the registry, never from
-        # the message, so there is nothing to verify *with* until the registry has resolved it.
-        # The contract's order is preserved in what each step decides, not in which object is
-        # fetched first — a signature checked against a caller-supplied key would be no check.
+        # PREREQUISITE, not a step. Resolving the verification key is a dependency lookup: the
+        # key comes from the registry and never from the message, so there is nothing to verify
+        # *with* until it is fetched. Fetching it early is an implementation detail; it does not
+        # decide anything, and no verdict is issued here.
+        #
+        # An earlier draft returned a step 6 verdict straight from this lookup, which really did
+        # run the contract's steps out of order — Stage 6's decision was being issued before
+        # Stage 5's. The lookup and the decision are now separate.
+        key_material: Ed25519PublicKey | None = None
+        resolution_failure = ""
         try:
-            public_key_hex = self._registry.verification_key(key_id)
+            key_material = Ed25519PublicKey.from_public_bytes(
+                bytes.fromhex(self._registry.verification_key(key_id)))
         except RegistryError as exc:
-            return Verdict(INADMISSIBLE, 6, str(exc))
-        try:
-            public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(public_key_hex))
+            resolution_failure = str(exc)
         except (ValueError, TypeError) as exc:
-            return Verdict(INADMISSIBLE, 6, f"registry holds an unusable public key: {exc}")
+            resolution_failure = f"registry holds an unusable public key: {exc}"
 
-        # Step 5: signature verifies under key_id.
+        # Step 5: signature verifies under key_id. With no key material the condition cannot be
+        # met, so this step refuses — in the contract's order, the first step whose condition
+        # fails decides, and that is this one, not a step 6 verdict issued from a lookup.
+        if key_material is None:
+            return Verdict(INADMISSIBLE, 5,
+                           f"signature cannot verify under {key_id!r}: {resolution_failure}")
         try:
-            message = kernel.verify(signed, public_key)
+            message = kernel.verify(signed, key_material)
         except kernel.MessageError as exc:
             return Verdict(INADMISSIBLE, 5, str(exc))
+
+        # Step 6: key_id resolves in the authenticated registry AT ITS CURRENT HEAD. Distinct from
+        # step 5 and decided after it: resolving a key to check an old signature is not the same
+        # as that key being present in the authoritative state now (I2's retention rule). A
+        # registry that can still resolve key material while holding no accepted head — a state a
+        # durable store can genuinely be in mid-recovery — fails here, fail-closed.
+        if self._registry.head is None:
+            return Verdict(INADMISSIBLE, 6,
+                           "the registry holds no accepted head, so nothing resolves at a current "
+                           "head; unverifiable authority is inadmissible (§12)")
 
         action = message["action"]
         project = self._project_of(message)
