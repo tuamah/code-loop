@@ -20,7 +20,7 @@ together**, so they are now separate and freeze independently:
 |---|---|---|---|
 | **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | **FROZEN rev 24** (reopened twice: AM-39, AM-40) |
 | **Ledger** | [`f1-amendment-ledger.md`](f1-amendment-ledger.md) | What every amendment established, where it lives now, and whether it is still in force | canonical, CI-checked |
-| **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 10, not frozen — reviews 1-2 done |
+| **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | **FROZEN rev 10** |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
 T1B. A T1B rule enforced over unauthenticated state is decoration; a T1A substrate with no T1B
@@ -46,6 +46,21 @@ rev23  re-frozen
 rev24  re-frozen: 9/9 T1B attacks blocked, 6/6 lineage shapes blocked,
        17/17 legacy attacks blocked, 0 security-semantic delta outside AM-40
 ```
+
+```
+FROZEN — F1-T1B, revision 10, after adversarial review 3
+sha256  docs/f1-t1b-policy-obligations.md  46e54cef6d4569043291b9d7444955c8f0ae9030da05b9952025dc6b3dd66b7e
+
+review 1  AM-39 — one schema defined in both contracts (reopened T1A)
+review 2  AM-40 — supersession had no owner, representation or enforcement point
+review 3  confirmatory, no prior edit: 9/9 attacks, 8/8 lineage shapes,
+          13/13 override questions, R5, representability both ways,
+          state/effect, closure, continuity, canonical uniqueness — 0 gaps
+```
+
+**F1's contract design is closed.** Both contracts are frozen and the seam between them is checked
+mechanically. What is frozen is the design, not an implementation: no code in this repository
+implements any of it yet, and §16's residual limits (R1-R5) stand as stated.
 
 No semantic change may be made to T1A except through a new numbered amendment that explicitly
 reopens it, is recorded in the ledger, and names the invariant it changes. An editorial change is
