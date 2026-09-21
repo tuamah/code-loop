@@ -1,7 +1,9 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 17 — Enumeration Closure Pass. NOT FROZEN, and no attack round has been
-run against this revision.**
+**Status: DRAFT, revision 18, after adversarial review 16. NOT FROZEN.** Round 16 ran the full
+seven-part package against revision 17: seventeen attacks blocked, all four earlier audits clean,
+both automated guards green. The closure audit itself failed it — §-1 forbade security by
+remembered list and was enforced by a remembered list, the same self-exemption as A14 and A17.
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
@@ -92,7 +94,58 @@ deciding whether it is stateful (AM-29).
 
 `scripts/check-f1-enumerations.py` enforces the CLOSED + CHECKED rows; `scripts/check-f1-continuity.py`
 enforces that no amendment's invariant is lost to a rewrite (see `f1-amendment-ledger.md`). Both run
-in CI. A closure rule that was itself a remembered list would be the joke writing itself.
+in CI.
+
+### The rule applies to itself (AM-33)
+
+Revision 17 stated the rule and then enforced it with a fourteen-row table nothing checked. A future
+amendment adding a list — which is what AM-19, AM-23, AM-25 and AM-27 each did — could simply not
+appear in that table, and both guards would stay green. The rule against remembered lists was
+enforced by a remembered list: the same self-exemption as A14, where a policy object set its own
+protection, and A17, where an obligation chose its own class. **The governing object is not exempt
+from its own governance.**
+
+The manifest below is the canonical source, and the checker requires **every** fenced block in this
+document to match one of its prefixes. A block that is neither governed nor declared illustrative
+fails CI, so a new enumeration cannot enter silently.
+
+```
+GOVERNED      read or copy any private authority key        Mode B test vectors — DERIVED (AM-31)
+GOVERNED      key_id ->                                     registry grant schema — CLOSED
+GOVERNED      Common Signed Envelope                        envelope + body schemas — CLOSED+CHECKED
+GOVERNED      PROJECT        genesis                        action enum — CLOSED+CHECKED
+GOVERNED      NOGAP::PROJECT::v1                            domain list — CLOSED+CHECKED
+GOVERNED      authorization_id                              HUMAN body schema — CLOSED
+GOVERNED      NEW_TASK |                                    task relations — CLOSED
+GOVERNED      Project Genesis Commitment                    genesis schema — CLOSED
+GOVERNED      Trusted Run Manifest                          run manifest schema — CLOSED
+GOVERNED      authorized freeze request                     freeze inputs — CLOSED
+GOVERNED      STAGE 1 — every message, in order             admissibility — CLOSED+CHECKED (AM-22)
+GOVERNED      begin                                         transaction steps — DERIVED (AM-25)
+GOVERNED      Trusted Decision State Snapshot               snapshot — DERIVED (AM-30)
+GOVERNED      derive the decision from snapshot S           CAS procedure — DERIVED (AM-15)
+GOVERNED      epoch                                         anti-rollback fields — CLOSED (AM-18)
+GOVERNED      verify(request_id)                            verification sequence — DERIVED (AM-5)
+GOVERNED      PERMITTED   verify(request_id)                permitted/forbidden interfaces — CLOSED
+ILLUSTRATIVE  mallory:                                      reproduction transcript
+ILLUSTRATIVE  mallory executes for real                     reproduction transcript
+ILLUSTRATIVE  edit rules, leave hash                        reproduction transcript
+ILLUSTRATIVE  TRUSTED VERIFICATION CONTROLLER               architecture diagram
+ILLUSTRATIVE  Registry Root ·                               authority names; grants decide (AM-28)
+ILLUSTRATIVE  task A   -> adverse lineage                   attack illustration
+ILLUSTRATIVE  Project Genesis           (Project            trust chain diagram
+ILLUSTRATIVE  FORBIDDEN   create_run(task_digest)           interface contrast
+ILLUSTRATIVE  A24   POLICY head = P10                       attack illustration
+ILLUSTRATIVE  A23   Request A:                              attack illustration
+ILLUSTRATIVE  no epoch, but changes current_head            bypasses AM-29 closes
+ILLUSTRATIVE  FORBIDDEN OUTCOME                             attack illustration
+ILLUSTRATIVE  read PASS for O1                              attack illustration
+ILLUSTRATIVE  Policy v1   valid signature                   attack illustration
+ILLUSTRATIVE  Mechanism exists:                             audit verdict restatement
+ILLUSTRATIVE  GOVERNED      read or copy                    this manifest
+```
+
+A closure rule that was itself a remembered list would be the joke writing itself.
 
 ## 0. What this fixes, stated honestly
 
@@ -229,9 +282,19 @@ section that defines the security boundary.
 >
 > 1. obtain authority secrets;
 > 2. mutate authoritative state outside an authorized transaction (§10.1);
-> 3. influence trusted computation except through the defined hostile-input interfaces (§2);
+> 3. influence the **outcome** of trusted computation except through the defined hostile-input
+>    interfaces (§2);
 > 4. bypass or modify the trusted control plane, its binaries or its configuration;
 > 5. cross the worker/controller isolation boundary.
+
+Clause 3 says *outcome* deliberately (AM-34). Revision 17 forbade influencing trusted computation
+at all, which no co-resident process can satisfy: timing and resource pressure are influence, and
+they exist on any shared host. An invariant that can never be literally true is as useless as one
+that is always true — and §-1's DERIVED form depends on the property being meaningful, since the
+membership it derives is otherwise empty or arbitrary. What the threat model actually needs is
+narrower: resource pressure and delay drive a check toward timeout and therefore toward
+fail-closed, which is availability and out of scope by §1. What must be impossible is influence
+that moves the outcome *toward acceptance*.
 
 The nine are retained as **test vectors for that invariant, never as its definition**. A deployment
 satisfies Mode B by the invariant; these are where checking starts, not where it stops:

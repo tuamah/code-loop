@@ -49,3 +49,5 @@ decision that was reconsidered, and why.
 | AM-30 | LIVE | T1A | `S is a definition, not a list (AM-30)` | The snapshot is the set of facts the decision reads; a read fact absent is a defect |
 | AM-31 | LIVE | T1A | `Mode B is an invariant, not a list of nine prohibitions (AM-31)` | Mode B is a five-clause invariant; the nine capabilities are test vectors for it |
 | AM-32 | LIVE | T1A | `Closure rules for this contract (AM-32)` | Every security-significant enumeration is DERIVED, CLOSED+CHECKED, or NON-NORMATIVE |
+| AM-33 | LIVE | T1A | `The rule applies to itself (AM-33)` | The closure manifest is canonical and checked; no enumeration enters undeclared |
+| AM-34 | LIVE | T1A | `Clause 3 says *outcome* deliberately (AM-34)` | Mode B forbids influence that moves the outcome toward acceptance, not all influence |
