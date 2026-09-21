@@ -28,8 +28,10 @@ semantics authenticates statements that mean nothing in particular.
 
 ### T1A FREEZE
 
-Round 21 completed clean against revision 22 and T1A is frozen at that content. The digests below
-pin it; the freeze commit is tagged `f1-t1a-freeze-rev22`.
+Round 21 completed clean against revision 22 and T1A is frozen at that content. The digests below pin
+the content. The freeze commit is `b667d64` on `claude/affectionate-edison-6ph9cf`; the local tag
+`f1-t1a-freeze-rev22` marks it, but this remote refuses tag refs, so the commit hash is the
+authoritative pin.
 
 ```
 FROZEN — F1-T1A, revision 22, after adversarial review 21
