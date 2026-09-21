@@ -1,9 +1,10 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 12, after adversarial review 11. NOT FROZEN.** Review 11 ran the full
-seventeen-attack round: fifteen blocked outright, and A23/A24 came out **ambiguous** on the
-cross-authority composed case — AM-25 demanded one atomic transition across state that §3.1 permits
-to be partitioned, and never said where that state lives. AM-26 resolves it. Split out of the single F1-T1
+**Status: DRAFT, revision 13, after adversarial review 12. NOT FROZEN.** Review 12 ran the full
+seventeen-attack round: **all seventeen blocked**, including both concurrency composed cases. The
+round nevertheless produced one amendment, found outside the attack list: §12's migration grant —
+the single sanctioned exemption from fail-closed — had no representation in §6's closed message and
+action model, so it could only have lived in unsigned configuration. Split out of the single F1-T1
 contract after review 7, which established where the seam lies. Review 8 attacked the core alone and
 found three defects in it — A19 missing domain separation for the newest commitments, A20 a registry
 that granted nothing, A21 human approvals replayable across operations — all three inside message
@@ -327,6 +328,7 @@ DECISION       accept | repair | abstain | human_review
 POLICY         create | update | weaken
 APPLICABILITY  activate | deactivate | narrow | reclassify
 REGISTRY       add_key | revoke_key | retire_key | rotate_root
+MIGRATION      grant | revoke
 HUMAN          authorize
 ```
 
@@ -354,6 +356,7 @@ NOGAP::DECISION::v1       || canonical_payload
 NOGAP::POLICY::v1         || canonical_payload
 NOGAP::APPLICABILITY::v1  || canonical_payload
 NOGAP::REGISTRY::v1       || canonical_payload
+NOGAP::MIGRATION::v1      || canonical_payload
 NOGAP::HUMAN::v1          || canonical_payload
 ```
 
@@ -688,6 +691,8 @@ STAGE 2 — by message_type
  APPLICABILITY  epoch chains; authorization_ref is an admissible HUMAN or policy-granted
                 authorization for this class and transition (T1B §B4)                  else INADMISSIBLE
  REGISTRY       signed by the trust root; epoch chains (§5)                            else INADMISSIBLE
+ MIGRATION      authorization_ref is an admissible HUMAN authorization for THIS grant;
+                projects enumerated; expiry present; epoch chains (§12)                else INADMISSIBLE
 ```
 
 Stage 1 step 8 is what makes a key a *scoped* principal rather than a TCB master key, and the HUMAN
@@ -896,8 +901,31 @@ project with no methodology state, and that fail-open is precisely why GP-1/GP-2
 today. The trust root must not repeat it.
 
 Migration is therefore **explicit, dated and recorded**: an operator decision naming the projects
-and an expiry, written as a decision record — never a silent default, never an environment variable
-that flips it. A runtime that cannot reach its registry **fails closed**.
+and an expiry — never a silent default, never an environment variable that flips it. A runtime that
+cannot reach its registry **fails closed**.
+
+**And migration must be representable (AM-27).** Revision 12 said "written as a decision record"
+while §6's closed message list had no migration message and `DECISION`'s closed action enum offers
+only `accept | repair | abstain | human_review`. So the one sanctioned exemption from fail-closed
+was the single thing in the contract that could not be expressed as an authenticated message — it
+would have had to live in unsigned configuration, which is the legacy-compatibility hole §12 exists
+to prevent, arriving through §12 itself.
+
+```
+NOGAP::MIGRATION::v1   || canonical_payload
+  action        grant | revoke
+  body          project_commitments (enumerated, never a wildcard)
+                reason
+                expiry               a bound, never open-ended
+                authorization_ref    an admissible HUMAN authorization (§6.1) for THIS grant
+                epoch, previous_commitment
+```
+
+Stage 2 adds: a `MIGRATION` is admissible only with a human authorization purpose-bound to this
+grant, and any check relying on a migration grant must re-resolve it as a current, unexpired head
+(§10.3) at the moment it is relied upon — not merely at the moment it was issued. An expired or
+revoked grant fails closed with no further ceremony, which is the same rule as everything else here
+rather than an exception to it.
 
 ## 13. Consequent restatement of the audit verdicts
 
