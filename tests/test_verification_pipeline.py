@@ -296,14 +296,14 @@ class CmdVerifyTests(unittest.TestCase):
 
     def test_verify_requires_existing_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            result = run_script("verify", tmp)
+            result = run_script("verify-methodology", tmp)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("no runtime", result.stdout + result.stderr)
 
     def test_verify_requires_execution_evidence_for_a_dispatch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = self.setup_project_with_gate(tmp)
-            result = run_script("verify", str(project))
+            result = run_script("verify-methodology", str(project))
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("no dispatch records", result.stdout + result.stderr)
 
@@ -315,7 +315,7 @@ class CmdVerifyTests(unittest.TestCase):
             )
             dispatch_id = self.dispatch_with_stub_executor(project)
 
-            result = run_script("verify", str(project))
+            result = run_script("verify-methodology", str(project))
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
             runtime = project / ".code-loop" / "runtime"
@@ -338,7 +338,7 @@ class CmdVerifyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = self.setup_project_with_gate(tmp)
             self.dispatch_with_stub_executor(project)
-            run_script("verify", str(project))
+            run_script("verify-methodology", str(project))
             runtime = project / ".code-loop" / "runtime"
             self.assertEqual(list((runtime / "decisions").glob("*.json")), [])
 
@@ -355,7 +355,7 @@ class CmdVerifyTests(unittest.TestCase):
 
             # in-process, not run_script: a subprocess would not see the monkeypatched
             # nogap_adapters.ADAPTERS and would fall back to the real codex/claude.
-            nogap.cmd_verify(verify_namespace(str(project), review=True))
+            nogap.cmd_verify_methodology(verify_namespace(str(project), review=True))
 
             evidence_items = [json.loads(p.read_text(encoding="utf-8")) for p in (runtime / "evidence").glob("*.json")]
             execution_item = next(item for item in evidence_items if item["kind"] == "execution")
@@ -378,7 +378,7 @@ class CmdVerifyTests(unittest.TestCase):
             self.dispatch_with_stub_executor(project)  # only "executor" registered, no other adapter
             buffer = io.StringIO()
             with contextlib.redirect_stdout(buffer):
-                nogap.cmd_verify(verify_namespace(str(project), review=True))
+                nogap.cmd_verify_methodology(verify_namespace(str(project), review=True))
             self.assertIn("no other ready AgentRuntime", buffer.getvalue())
 
 

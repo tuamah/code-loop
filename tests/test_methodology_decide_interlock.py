@@ -209,7 +209,7 @@ class InterlockFixture(unittest.TestCase):
 class BlockedAcceptTests(InterlockFixture):
     def test_1_standard_independent_review_inconclusive_cannot_accept(self) -> None:
         nogap_adapters.ADAPTERS["claude"] = silent_reviewer("claude")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         self.assertEqual(self.latest_result()["status"], "VERIFICATION_INCONCLUSIVE")
         # The methodology interlock alone would reach "abstain: methodology
         # verification precondition not satisfied"; here the pre-existing
@@ -227,7 +227,7 @@ class BlockedAcceptTests(InterlockFixture):
         PASSES, required independent review is never attempted at all (not even a
         failed/inconclusive evidence record exists for it - only a methodology-level
         skip/gap). Before the fix this reached ACCEPT; after the fix it must not."""
-        nogap.cmd_verify(verify_namespace(str(self.project), review=False))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=False))
         result = self.latest_result()
         self.assertEqual(result["fields"]["deterministic_result"], "passed")
         self.assertEqual(result["fields"]["independent_review_result"], "inconclusive")
@@ -239,7 +239,7 @@ class BlockedAcceptTests(InterlockFixture):
     def test_2_strict_missing_required_review_cannot_accept(self) -> None:
         from nogap_methodology import escalate_phase
         escalate_phase(self.project, "VERIFY", "STRICT", actor="human:owner")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=False))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=False))
         decision = self.decide()
         self.assertNotEqual(decision["decision"], "accept")
 
@@ -250,7 +250,7 @@ class BlockedAcceptTests(InterlockFixture):
         # (the exact shape _finalize_verification would never let reach COMPLETE) is
         # constructed directly, proving decide's interlock honors that status.
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result = self.latest_result()
         path = self.project / ".code-loop" / "methodology" / "artifacts" / f"{result['artifact_id']}.json"
         record = json.loads(path.read_text(encoding="utf-8"))
@@ -272,7 +272,7 @@ class StalePreconditionTests(InterlockFixture):
     def setUp(self) -> None:
         super().setUp()
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         self.result = self.latest_result()
         self.assertEqual(self.result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
         self.task_id = self.contract["fields"]["task_id"]
@@ -340,7 +340,7 @@ class LightSkipSatisfiesPreconditionTests(unittest.TestCase):
             try:
                 nogap.cmd_run(run_namespace(str(project), execute=True, task_id=contract["fields"]["task_id"]))
                 run_script("freeze", str(project))
-                nogap.cmd_verify(verify_namespace(str(project), review=False))
+                nogap.cmd_verify_methodology(verify_namespace(str(project), review=False))
 
                 result = list_artifacts(project, artifact_type="P18_VERIFICATION_RESULT")[-1]
                 self.assertEqual(result["fields"]["reproducibility_result"], "SKIPPED_PER_PROFILE_POLICY")
@@ -364,7 +364,7 @@ class NecessaryNotSufficientTests(InterlockFixture):
         ACCEPT - the Trust Runtime's own independent-evidence/identity checks still
         apply on top of it."""
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         self.assertEqual(self.latest_result()["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
         precondition = vb.verification_acceptance_precondition(self.project, self.contract["fields"]["task_id"])
         self.assertTrue(precondition["satisfied"])
@@ -411,7 +411,7 @@ class LegacyCompatibilityTests(unittest.TestCase):
                 nogap.cmd_run(run_namespace(str(project), execute=True))
                 run_script("freeze", str(project))
                 nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
-                nogap.cmd_verify(verify_namespace(str(project), review=True))
+                nogap.cmd_verify_methodology(verify_namespace(str(project), review=True))
                 result = run_script("decide", str(project))
                 decision = json.loads((project / ".code-loop" / "runtime" / "decisions" / "decision-0001.json").read_text(encoding="utf-8"))
                 self.assertEqual(decision["decision"], "accept")

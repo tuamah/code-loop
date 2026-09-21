@@ -105,7 +105,13 @@ def provision(store: AuthoritativeStore, *, project_id: str, repository_identity
     facts["trust_root_key_id"] = ROOT_KEY_ID
     facts.setdefault("provisioning", {})[project_id] = {
         "repository_identity": repository_identity, "provisioned_by": operator,
-        "root_public_key": root_public}
+        "root_public_key": root_public,
+        # Recorded so a later process can find the trust root WITHOUT being told where it is by
+        # the caller: a loader that takes the root key from its invoker verifies against whatever
+        # key the invoker chose.
+        "verification_key_id": verification_key_id,
+        "verification_public_key": verification_public,
+        "verification_identity": verification_identity}
     facts.setdefault("maps", {})[policy_baseline] = {"kind": "policy_baseline"}
     facts.setdefault("base_commitments", {})[initial_base_digest] = {"kind": "initial_base"}
     with store._exclusive():
