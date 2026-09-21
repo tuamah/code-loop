@@ -16,6 +16,15 @@ CI, reflowing a line does not. **Inherits** is how supersession works — an ame
 retired if exactly one live amendment declares it and carries its invariant forward, so
 "superseded" can never mean "we stopped talking about it".
 
+**Extent** is declared, not derived. Round 19 deleted the highest-numbered row and the audit
+passed: the gap check asked the ledger how many amendments the ledger has. It also accepted an
+invented AM-37 granting an authority nobody agreed to. The count below is the external pin — a
+truncation or a fabrication now contradicts a line someone has to edit deliberately.
+
+```
+AMENDMENTS: 37 through AM-37
+```
+
 Status is `LIVE` (the invariant is in force and located) or `SUPERSEDED` (replaced by a later
 amendment, named in the Where column). A superseded amendment is never deleted: it records a
 decision that was reconsidered, and why.
@@ -36,11 +45,11 @@ decision that was reconsidered, and why.
 | AM-12 | LIVE | T1A | `Project genesis and the initial base (AM-12)` | `382eab97ee83` |  | Genesis records a digest, never a ref, under a human-authorized ceremony |
 | AM-13 | LIVE | T1B | `pre-declared, never read off the current state (AM-13)` | `938631eb338a` |  | Protection level is fixed by class in advance, not by current red/green state |
 | AM-14 | LIVE | T1A | `the Policy Root (AM-14)` | `382eab97ee83` |  | A protected object may not define the authority required to weaken it |
-| AM-15 | LIVE | T1A | `Trusted Decision State Snapshot` | `99f5db7cde64` |  | A decision derives from one coherent snapshot and CAS-checks before signing |
+| AM-15 | LIVE | T1A | `snapshot-consistent, not merely individually authenticated` | `88e9b7728f9e` |  | A decision derives from one coherent snapshot and CAS-checks before signing |
 | AM-16 | LIVE | T1B | `born, not merely not-killed (AM-16)` | `124ad53827dc` |  | Silence cannot prevent an obligation's birth any more than cause deactivation |
 | AM-17 | LIVE | T1B | `never chosen by the object (AM-17)` | `124ad53827dc` |  | A protected object may not choose its own protection class |
 | AM-18 | LIVE | T1A | `A valid head is not the current head (AM-18)` | `88e9b7728f9e` |  | Only the current authoritative head may be used, never any valid one |
-| AM-19 | LIVE | T1A | `(AM-19)` | `9b3e59ac8cc9` |  | Ten closed domains; common envelope plus a per-type body schema |
+| AM-19 | LIVE | T1A | `One payload shape for every message type was a defect (AM-19)` | `8c25dedd318e` |  | Ten closed domains; common envelope plus a per-type body schema |
 | AM-20 | LIVE | T1A | `A valid key is not every authority (AM-20)` | `d9f1a62b5744` |  | The registry grants message types, actions and scope per key |
 | AM-21 | LIVE | T1A | `Authorization is not authentication (AM-21)` | `2a66269deee8` |  | A human authorization is purpose-bound and consumed once |
 | AM-22 | LIVE | T1A | `The procedure is normative and complete (AM-22)` | `5fc70996bac7` |  | Admissibility is a two-stage procedure; a rule absent from it is not enforced |
@@ -48,7 +57,7 @@ decision that was reconsidered, and why.
 | AM-24 | LIVE | T1A | `(AM-24, AM-25)` | `9938f798d27a` |  | A single-use authorization is a linear capability, consumed atomically |
 | AM-25 | LIVE | T1A | `assert current_head == expected_previous` | `9938f798d27a` |  | Validation and mutation of authoritative state are one transaction |
 | AM-26 | LIVE | T1A | `One transactional domain` | `9938f798d27a` |  | All such state lives in one serialized domain; authorities are scopes over it |
-| AM-27 | LIVE | T1A | `NOGAP::MIGRATION::v1` | `8c25dedd318e` |  | The one sanctioned fail-closed exemption is a representable, authenticated message |
+| AM-27 | LIVE | T1A | `Its body schema lives with the others in` | `c5bed291a665` |  | The one sanctioned fail-closed exemption is a representable, authenticated message |
 | AM-28 | LIVE | T1A | `The class is not the gate; the registry grant is (AM-28)` | `3a4aedf4542c` |  | Migration is atomic and headed; §4 is a summary; a grant never elevates trust |
 | AM-29 | LIVE | T1A | `Statefulness is defined by effect, not by fields (AM-29)` | `9938f798d27a` |  | Statefulness is decided by effect, never by shape and never by the author |
 | AM-30 | LIVE | T1A | `S is a definition, not a list (AM-30)` | `88e9b7728f9e` |  | The snapshot is the set of facts the decision reads; a read fact absent is a defect |
@@ -58,3 +67,4 @@ decision that was reconsidered, and why.
 | AM-34 | LIVE | T1A | `Clause 3 says *outcome* deliberately (AM-34)` | `b5179f931ea0` |  | Mode B forbids influence that moves the outcome toward acceptance, not all influence |
 | AM-36 | LIVE | T1A | `Continuity is a guard, not a memory (AM-36)` | `8f86d8f91d08` |  | Invariants are digested; supersession must be inherited by exactly one live amendment |
 | AM-35 | LIVE | T1A | `bijection, not mere coverage` | `99f5db7cde64` |  | The closure manifest is a bijection; enumerations are blocks or tables, both scanned |
+| AM-37 | LIVE | T1A | `The ledger is not self-attesting (AM-37)` | `e16846724046` |  | Anchors must be unambiguous; the ledger's extent is declared, never derived |
