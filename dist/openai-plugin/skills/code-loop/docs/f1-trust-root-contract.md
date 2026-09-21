@@ -12,13 +12,13 @@ repository write access by construction.
 
 ## The two contracts
 
-Thirteen adversarial review rounds produced twenty-eight amendments and twenty-four named attacks. Review 7
+Fourteen adversarial review rounds produced twenty-nine amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 14, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 15, not frozen |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
@@ -92,6 +92,7 @@ had just added — which is why the split matters more than another amendment wo
 | 11 | full 17-attack round on T1A: **15 blocked, A23/A24 ambiguous** on the cross-authority case. AM-25 required one atomic transition across state §3.1 permits to be partitioned | AM-26 |
 | 12 | full 17-attack round: **17/17 blocked**, both concurrency composed cases included. One amendment still required, found outside the attack list: §12's migration grant had no representable message | AM-27 |
 | 13 | 17/17 blocked again, plus a systematic representability audit in both directions: 3 gaps, all created or exposed by the previous round's own amendment | AM-28 |
+| 14 | 17/17 blocked, both representability audits clean. A **semantic statefulness** audit failed it: statefulness was defined by fields, and the decision CAS covered only elements named `*_head` | AM-29 |
 
 Three properties turned out to be distinct, and the contract needed each separately:
 
@@ -161,10 +162,24 @@ contract rather than in this history: a list of what must be atomic is a list to
 AM-28 replaces it with a property of the message itself — a body carrying a head transitions
 authoritative state, and a type added without answering that question is inadmissible.
 
-Still outstanding as evidence: no round has yet completed without an amendment. Thirteen rounds,
-and every one of the last five found its defect in machinery the round before had just added. Attack
-coverage is demonstrated twice over; what remains unproven is that an amendment can be added without
-opening something.
+Round 14 added the last of the audit forms: **statefulness by effect rather than by shape**. A rule
+that tests for the presence of a field admits anything that achieves the same effect differently,
+and a rule that leaves classification to whoever adds a type is A17 wearing another hat. The
+concrete instance was inside AM-15's own fix — the decision CAS asserted the elements named
+`*_head`, while the snapshot also carried a mutable verdict set that no head covered.
+
+That produced the sixth and last property this contract needed, and it is a meta-property rather
+than another mechanism:
+
+```
+effect        a rule is about what a message does, never about what it looks like
+```
+
+Still outstanding as evidence: no round has yet completed without an amendment. Fourteen rounds, and
+every one of the last six found its defect in machinery the round before had just added. Attack
+coverage is demonstrated three times over; what remains unproven is that an amendment can be added
+without opening something — and rounds 13 and 14 are evidence *against* that proposition, not for
+it.
 
 ## Standing constraints
 

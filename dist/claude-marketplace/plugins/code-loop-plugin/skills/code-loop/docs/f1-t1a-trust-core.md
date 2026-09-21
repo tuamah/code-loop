@@ -1,11 +1,16 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 14, after adversarial review 13. NOT FROZEN.**
+**Status: DRAFT, revision 15, after adversarial review 14. NOT FROZEN.**
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
 
-Review 13 re-ran all seventeen attacks — **all blocked** — and added a systematic representability
+Review 14 re-ran the seventeen attacks (**all blocked**) and both representability audits (**clean**),
+and added a semantic statefulness audit that revision 14 failed: statefulness was defined by the
+presence of `epoch` fields rather than by effect, and the decision CAS asserted only elements named
+`*_head`, leaving the mutable verdict set unprotected inside AM-15's own fix. AM-29 closes both.
+
+Review 13 had re-run all seventeen attacks — all blocked — and added a systematic representability
 audit in both directions: every normative rule traced forward to a message, domain, action,
 producer, grant, admissibility clause, state head, atomic transition and enforcement point; and
 every message type traced back to its producer, consumer, and the security decision that depends on
@@ -768,12 +773,36 @@ DECISION's problem.
 have forked the migration head: A24's shape, on the newest message type, one round after it was
 introduced. The list above is therefore a consequence, not the rule:
 
-> **Any message type whose body carries `epoch`/`previous_commitment`, or whose admission is
-> constrained by uniqueness, transitions authoritative state and runs under this transaction. A
-> message type added without deciding this question is inadmissible.**
+**Statefulness is defined by effect, not by fields (AM-29).** Revision 14 tested for
+`epoch`/`previous_commitment` in the body, which is a test on *shape*. A message with no such field
+can still change what a later reader treats as true — by changing a mapping, a grant, a consumption
+record, or which of several append-only records is the operative one. And "a type added without
+deciding this question is inadmissible" left the deciding to whoever adds the type, which is A17's
+self-classification wearing yet another hat.
 
-`VERIFY` and `DECISION` are the exceptions by construction, not by omission: a verdict is an
-append-only attestation with no head to fork, and `DECISION` is covered by §10.3's own CAS.
+> **If accepting a message changes any authoritative fact that a later verifier or acceptor reads,
+> it is a state transition: it runs under this transaction, and the fact it changes carries a head
+> with a monotonic epoch. The effect decides this, never the message's shape and never its
+> author.**
+
+Four bypasses this closes, each of which the field test admits:
+
+```
+no epoch, but changes current_head indirectly
+append-only record whose later reinterpretation changes the effective state
+changes a mapping, grant or consumption that admissibility reads afterwards
+a new type declaring itself non-stateful while carrying an authoritative side effect
+```
+
+**`VERIFY` is therefore not the exception revision 14 claimed.** The verdict *records* are
+append-only and no record is rewritten — but "the current verdict for this obligation on this
+candidate" is an authoritative fact: T1B's acceptance rule requires a *current* PASS on every
+applicable obligation, and supersession selects which verdict is current. A selection over
+append-only records is state. So the verdict set carries a head and an epoch like every other
+authoritative input, and a verdict arriving is a transition.
+
+`DECISION` remains genuinely covered by §10.3's own CAS, which is a different claim from being
+stateless.
 
 **One transactional domain, or the requirement is unachievable (AM-26).** A transition routinely
 spans authorities: validate the current `POLICY` head, check the `REGISTRY` grant, consume a
@@ -851,7 +880,7 @@ Trusted Decision State Snapshot
 ```
 derive the decision from snapshot S
   ↓
-before signing, assert every head is unchanged   (compare-and-swap)
+before signing, assert EVERY MUTABLE ELEMENT of S is unchanged   (compare-and-swap)
   ↓
 sign the decision, binding S's digest into the payload
 ```
@@ -861,6 +890,13 @@ sign the decision, binding S's digest into the payload
 - `decision_snapshot_digest` is part of the signed payload, so a later reader can re-derive the
   decision from the same state instead of trusting that it was coherent.
 - A verdict arriving mid-decision belongs to the next snapshot, never half of this one.
+- **"Every head" was too narrow (AM-29).** Revision 14 asserted only the elements named `*_head`,
+  while the snapshot also carries `verification_verdict_set` and `obligation_set_commitment` — both
+  mutable, neither named a head, so a verdict arriving between derivation and commit was invisible
+  to the compare-and-swap. That is A15's torn read surviving inside A15's own fix. Every mutable
+  element of the snapshot carries a head with an epoch, and the CAS covers all of them; the
+  per-run commitments (`task`, `run`, `gate`, `authorized_base`, `candidate_fingerprint`) are
+  immutable by construction and need none.
 
 Equivalently, a single monotonic event-log head covering all of this state satisfies the rule; what
 matters is that one coherent point in time is named, not how it is implemented.
