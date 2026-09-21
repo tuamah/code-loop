@@ -22,3 +22,7 @@ jobs:
         run: python scripts/validate-council.py .code-loop-template
       - name: Package sync
         run: python scripts/build-dist.py --check
+      - name: F1 contract continuity
+        run: python scripts/check-f1-continuity.py
+      - name: F1 enumeration closure
+        run: python scripts/check-f1-enumerations.py

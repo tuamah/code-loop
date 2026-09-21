@@ -1,13 +1,21 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 16, after adversarial review 15. NOT FROZEN.**
+**Status: DRAFT, revision 17 — Enumeration Closure Pass. NOT FROZEN, and no attack round has been
+run against this revision.**
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
 
-Review 15 re-ran the seventeen attacks (**all blocked**), both representability audits (**clean**)
-and the statefulness audit (**clean**), and added a snapshot-mutability audit that revision 15
-failed: two authoritative facts a decision reads — migration state and authorization consumption
+Revision 17 is not an attack round. It is the Enumeration Closure Pass: §-1 forbids security by
+remembered list, Mode B became an invariant rather than nine prohibitions (AM-31), and every
+security-significant enumeration in this contract is now classified DERIVED, CLOSED + CHECKED or
+NON-NORMATIVE. Two scripts enforce it and both found real drift on their first run — a message type
+with a signing domain but no body schema in the canonical source, and three amendments cited
+nowhere in either contract. Round 16 attacks this revision.
+
+Review 15 had re-run the seventeen attacks (**all blocked**), both representability audits
+(**clean**) and the statefulness audit (**clean**), and added a snapshot-mutability audit that
+revision 15 failed: two authoritative facts a decision reads — migration state and authorization consumption
 state — were absent from the decision snapshot entirely, so nothing protected them between
 derivation and commit. AM-30 replaces the enumeration with a definition.
 
@@ -43,6 +51,48 @@ Scope boundary, so nothing falls between the two documents:
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
 T1B.
+
+## -1. Closure rules for this contract (AM-32)
+
+Rounds 13, 14 and 15 each found the same defect in a different place, and AM-28, AM-29, AM-30 and
+AM-31 are all the same move: a list somebody had to remember to update, replaced by a property.
+The discriminating evidence is which enumerations failed — the ones declared closed and checked by
+a script produced **zero** findings across those three rounds; every finding came from an informal
+prose list. The anti-pattern has a name and it is now forbidden here:
+
+> **Security by remembered list.** No security-significant enumeration may exist in this contract
+> unless it is one of exactly three forms.
+
+| Form | Requirement |
+|---|---|
+| **DERIVED** | Membership follows from a stated property or invariant. There is no list to maintain; a list, if shown, is a consequence and says so. |
+| **CLOSED + CHECKED** | Explicitly closed, with one canonical source, and a mechanical check proving every dependent site agrees. Adding a member is a contract change. |
+| **NON-NORMATIVE** | Examples or commentary, marked incomplete, on which no security decision depends. |
+
+An enumeration in none of these three forms is a defect, found before the attack round rather than
+by it. Adding a list without classifying it is the same error as adding a message type without
+deciding whether it is stateful (AM-29).
+
+| Enumeration | Form | Where |
+|---|---|---|
+| what runs under an atomic transaction | DERIVED | effect test, §10.1 (AM-29) |
+| decision snapshot elements | DERIVED | what the decision reads, §10.3 (AM-30) |
+| Mode B capabilities | DERIVED | the five-clause invariant, §3 (AM-31) |
+| adversary capabilities, IN scope | DERIVED | full control of the workspace and whatever the executor's own permissions reach, §1 |
+| adversary capabilities, OUT of scope | CLOSED | §1 — this is the trust assumption itself and is deliberately exhaustive |
+| `message_type` domains | CLOSED + CHECKED | §6 |
+| action enum per message type | CLOSED + CHECKED | §6 (AM-23) |
+| body schema fields per message type | CLOSED + CHECKED | §6 (AM-19) |
+| Stage-2 handler coverage | CLOSED + CHECKED | §10 (AM-22) |
+| key states | CLOSED | §11 |
+| `deployment_mode` values | CLOSED | §3 |
+| §4 authority/key table | NON-NORMATIVE | a summary of the common case; the registry grant decides (AM-28) |
+| §16 residual limits | NON-NORMATIVE | disclosures, not gates |
+| §14 resolved decisions | NON-NORMATIVE | a record of choices already made |
+
+`scripts/check-f1-enumerations.py` enforces the CLOSED + CHECKED rows; `scripts/check-f1-continuity.py`
+enforces that no amendment's invariant is lost to a rewrite (see `f1-amendment-ledger.md`). Both run
+in CI. A closure rule that was itself a remembered list would be the joke writing itself.
 
 ## 0. What this fixes, stated honestly
 
@@ -169,18 +219,33 @@ a function call, not a principal. Making it a principal is the work.
 **Mode B is defined by what the executor cannot do, never by a technology name.** A container that
 does not deliver these properties is Mode A no matter what it is called.
 
-Mode B requires that the executor, and any code it authors, cannot:
+**Mode B is an invariant, not a list of nine prohibitions (AM-31).** Revision 16 enumerated nine
+capabilities the executor must lack. A tenth — a new debugger interface, a new IPC mechanism, a
+kernel feature nobody had in mind — would not have been on the list, and Mode B would have been
+declared satisfied while the property it stands for was false. Security by remembered list, in the
+section that defines the security boundary.
+
+> **The executor, and all executor-controlled code, must possess no capability that can:**
+>
+> 1. obtain authority secrets;
+> 2. mutate authoritative state outside an authorized transaction (§10.1);
+> 3. influence trusted computation except through the defined hostile-input interfaces (§2);
+> 4. bypass or modify the trusted control plane, its binaries or its configuration;
+> 5. cross the worker/controller isolation boundary.
+
+The nine are retained as **test vectors for that invariant, never as its definition**. A deployment
+satisfies Mode B by the invariant; these are where checking starts, not where it stops:
 
 ```
-read or copy any private authority key
-write, replace or reorder the authority registry
-modify the signer binary, its libraries, or its configuration
-attach to, debug, trace, or dump the memory of any TCB process
-invoke an arbitrary signing operation
-alter the verification policy or the check plan
-write or edit verification observations after the worker returns
-escape the worker into the verification controller
-mutate the candidate snapshot the controller materialized (§7)
+read or copy any private authority key                            (1)
+write, replace or reorder the authority registry                  (2)
+modify the signer binary, its libraries, or its configuration     (4)
+attach to, debug, trace, or dump the memory of any TCB process    (1, 4)
+invoke an arbitrary signing operation                             (4)
+alter the verification policy or the check plan                   (2, 4)
+write or edit verification observations after the worker returns  (3)
+escape the worker into the verification controller                (5)
+mutate the candidate snapshot the controller materialized (§7)    (2)
 ```
 
 | Mode | What it is | Stops a file-forging executor | Stops a same-principal executor | May assert `AUTHENTICATED_TRUST` |
@@ -331,6 +396,8 @@ Message-specific body             validated against the schema for message_type,
   APPLICABILITY  project_commitment, obligation_id, obligation_class, transition, epoch,
                  previous_commitment, authorization_ref
   REGISTRY       epoch, previous_commitment, key_grants_digest
+  MIGRATION      project_commitments (enumerated, never a wildcard), reason, expiry,
+                 authorization_ref, epoch, previous_commitment          (§12)
   HUMAN          authorization body (§6.1)
 ```
 
@@ -999,15 +1066,12 @@ was the single thing in the contract that could not be expressed as an authentic
 would have had to live in unsigned configuration, which is the legacy-compatibility hole §12 exists
 to prevent, arriving through §12 itself.
 
-```
-NOGAP::MIGRATION::v1   || canonical_payload
-  action        grant | revoke
-  body          project_commitments (enumerated, never a wildcard)
-                reason
-                expiry               a bound, never open-ended
-                authorization_ref    an admissible HUMAN authorization (§6.1) for THIS grant
-                epoch, previous_commitment
-```
+`NOGAP::MIGRATION::v1`, action `grant | revoke`. Its body schema lives with the others in §6 —
+one canonical source per §-1, since the checker found this very message defined here and missing
+there on its first run. The fields carry: enumerated project commitments and never a wildcard, a
+reason, an expiry that is a bound rather than open-ended, an `authorization_ref` naming an
+admissible HUMAN authorization (§6.1) for **this** grant, and the epoch chain every headed message
+carries.
 
 Stage 2 adds: a `MIGRATION` is admissible only with a human authorization purpose-bound to this
 grant, and any check relying on a migration grant must re-resolve it as a current, unexpired head
