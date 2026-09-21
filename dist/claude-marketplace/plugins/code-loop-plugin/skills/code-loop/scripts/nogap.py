@@ -1098,6 +1098,55 @@ def _finalize_verification(project_root: Path, verification_result: dict[str, An
 
 
 def cmd_verify(args: argparse.Namespace) -> None:
+    """The trusted verification path: a request id in, a signed attestation out.
+
+    This is a THIN ADAPTER and nothing else. It loads the provisioned pipeline, hands the
+    controller a request id, and renders what comes back. It deliberately has no parameter for
+    `actor_id`, `authority`, `candidate_fingerprint`, `verdict` or a gate fingerprint, because an
+    adapter that accepts those is the adapter through which they are forged - the controller
+    resolves every one of them from trusted state itself.
+
+    It reads NOTHING from `.code-loop/runtime/`. The dispatch records, execution evidence, patch
+    artifacts and frozen gates under that directory are writable by anything that can write to the
+    project, which is precisely why they are no longer on this path.
+
+    If the trust runtime is not provisioned it FAILS CLOSED. It does not provision, and it does
+    not create a root on first use.
+    """
+    import f1_runtime
+
+    try:
+        controller = f1_runtime.load_controller(Path(args.path))
+    except f1_runtime.NotProvisionedError as exc:
+        raise SystemExit(f"FAIL: {exc}") from exc
+
+    from f1_controller import ControllerError
+
+    try:
+        outcome = controller.verify(args.request_id)
+    except (ControllerError, f1_runtime.ObjectError) as exc:
+        # Refused or aborted: no attestation was produced, and none is invented here.
+        raise SystemExit(f"FAIL: verification refused: {exc}") from exc
+
+    result = outcome["result"]
+    print(f"request={args.request_id}")
+    print(f"candidate_fingerprint={outcome['candidate_fingerprint']}")
+    print(f"verdict={outcome['verdict']}")
+    print(f"admissible={result.admissible}" + (f" ({result.reason})" if result.reason else ""))
+    print("verification attestation is not ACCEPT: only a DECISION can accept, and only from "
+          "authenticated authoritative evidence.")
+    if not result.admissible or outcome["verdict"] != "pass":
+        raise SystemExit(1)
+
+
+def cmd_verify_methodology(args: argparse.Namespace) -> None:
+    """The pre-F1 methodology verification ladder. NON-AUTHORITATIVE.
+
+    Kept because the P15-P18 ladder it drives is real work that nothing else does yet, and moved
+    off the `verify` name because everything it reads - dispatches, evidence, patch artifacts,
+    frozen gates - comes out of `.code-loop/runtime/`, an untrusted directory. That is the surface
+    the original spoofing exploit used. Its output is project bookkeeping, not authority.
+    """
     root = runtime_root(Path(args.path))
     status = compute_status(root)
     if not status["runtime_exists"]:
@@ -2442,7 +2491,8 @@ def cmd_lifecycle(args: argparse.Namespace) -> None:
     _print(record)
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """The CLI surface, built separately so tests can assert what an option accepts."""
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -2484,14 +2534,28 @@ def main() -> None:
     )
     run_cmd.set_defaults(func=cmd_run)
 
-    verify = sub.add_parser("verify")
+    verify = sub.add_parser(
+        "verify",
+        description="Trusted verification. Takes a verification request id and nothing else; "
+        "the identity, the candidate fingerprint and the verdict are resolved and derived "
+        "inside the trust boundary, never supplied here.",
+    )
+    verify.add_argument("request_id", help="verification request id held in trusted state")
     verify.add_argument("path", nargs="?", default=".")
-    verify.add_argument("--dispatch", help="dispatch id to verify (default: most recent)")
-    verify.add_argument("--timeout", type=int, default=300, help="per deterministic command timeout")
-    verify.add_argument("--review", action="store_true", help="also dispatch an independent AgentRuntime to review the patch")
-    verify.add_argument("--review-timeout", type=int, default=300)
-    verify.add_argument("--actor", default="nogap verify")
     verify.set_defaults(func=cmd_verify)
+
+    verify_m = sub.add_parser(
+        "verify-methodology",
+        description="NON-AUTHORITATIVE: runs the P15-P18 methodology ladder over workspace "
+        "evidence. Produces project bookkeeping, never authority.",
+    )
+    verify_m.add_argument("path", nargs="?", default=".")
+    verify_m.add_argument("--dispatch", help="dispatch id to verify (default: most recent)")
+    verify_m.add_argument("--timeout", type=int, default=300, help="per deterministic command timeout")
+    verify_m.add_argument("--review", action="store_true", help="also dispatch an independent AgentRuntime to review the patch")
+    verify_m.add_argument("--review-timeout", type=int, default=300)
+    verify_m.add_argument("--actor", default="nogap verify-methodology")
+    verify_m.set_defaults(func=cmd_verify_methodology)
 
     execute = sub.add_parser(
         "execute",
@@ -2678,7 +2742,13 @@ def main() -> None:
     lifecycle.add_argument("--fields-json", help="entity-specific structured fields")
     lifecycle.set_defaults(func=cmd_lifecycle)
 
-    argv = sys.argv[1:]
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
+    argv = list(sys.argv[1:])
+
     worktree_command: list[str] = []
     if argv and argv[0] == "execute" and "--" in argv:
         # argparse.REMAINDER is ambiguous when mixed with named options like --timeout, and its

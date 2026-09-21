@@ -203,7 +203,7 @@ class MemoryFixture(unittest.TestCase):
         nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.task_id))
         run_script("freeze", str(self.project))
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.assertEqual(mstatus(self.project)["current_phase"], "P18")
         self.exec_evidence_id = next((self.project / ".code-loop" / "runtime" / "evidence").glob("evidence-exec-*.json")).stem
 
@@ -247,7 +247,7 @@ class MemoryFixture(unittest.TestCase):
         failure = nf.record_repaired(self.project, failure["failure_id"], repair_evidence_refs=[new_evidence], actor="qa", reason="applied")
         failure = nf.record_regression(self.project, failure["failure_id"], result="passed", actor="qa", reason="fixed")
         run_script("freeze", str(self.project))
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         failure = nf.record_revalidation(self.project, failure["failure_id"], actor="qa", reason="revalidated")
         return nf.resolve_failure(self.project, failure["failure_id"], actor="human:owner", reason="confirmed")
 

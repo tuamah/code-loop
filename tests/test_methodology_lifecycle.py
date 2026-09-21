@@ -199,7 +199,7 @@ class LifecycleFixture(unittest.TestCase):
         nogap_adapters.ADAPTERS["codex"] = StubAdapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.task_id))
         run_script("freeze", str(self.project))
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.assertEqual(mstatus(self.project)["current_phase"], "P18")
         self.exec_evidence_id = next((self.project / ".code-loop" / "runtime" / "evidence").glob("evidence-exec-*.json")).stem
         nogap.cmd_decide(decide_namespace(str(self.project)))
@@ -299,7 +299,7 @@ class StandardProfileLifecycleFixture(LifecycleFixture):
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.task_id))
         run_script("freeze", str(self.project))
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result_path = next((self.project / ".code-loop" / "methodology" / "artifacts").glob("p18_verification_result-*.json"))
         self.verification_status = json.loads(result_path.read_text(encoding="utf-8"))["status"]
         if self.profile_args[1:] == ("medium", "low"):  # STANDARD: external validation is not required, so this always reaches COMPLETE

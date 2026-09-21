@@ -26,7 +26,8 @@ tests/build/lint > runtime traces > source docs > reviewer findings > model conf
 python scripts/nogap.py init .          # create the runtime workspace
 python scripts/nogap.py freeze .        # freeze the gate for this run - hashed, immutable
 python scripts/nogap.py run . --execute # plan, route, dispatch, collect the patch
-python scripts/nogap.py verify .        # independent verification against the frozen gate
+python scripts/nogap.py verify-methodology .   # P15-P18 ladder over workspace evidence (NON-AUTHORITATIVE)
+python scripts/nogap.py verify <request-id> .  # trusted verification; fails closed without a provisioned trust root
 python scripts/nogap.py decide .        # accept / repair / abstain / human-review
 python scripts/nogap.py status .        # where this run stands
 ```
@@ -45,7 +46,8 @@ gate hash, from an identity that did not execute the run.
 |---|---|
 | `init`, `freeze` | starting a run that will produce claims someone must trust |
 | `run`, `execute` | dispatching work to an agent runtime, or running one command in an isolated worktree |
-| `verify` | producing authoritative evidence, independently of whoever executed |
+| `verify` | the trusted path: a verification request id in, a signed attestation out; fails closed without a provisioned trust root |
+| `verify-methodology` | NON-AUTHORITATIVE: the P15-P18 ladder over workspace evidence |
 | `decide` | issuing the final accept / repair / abstain / human-review |
 | `status` | checking run state before assuming anything about it |
 | `methodology` | driving the P0-P23 lifecycle and its artifacts (`init`, `transition`, `readiness`, `artifact-*`) |

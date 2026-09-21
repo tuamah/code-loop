@@ -268,13 +268,34 @@ message, rather than fabricating a route to something that is not actually ready
 dispatch, patch collection, independent verification, and the bounded repair loop remain
 NOT_IMPLEMENTED until the runtime carries those stages end to end.
 
-## Independent Verification Pipeline (`nogap verify`)
+## Trusted Verification (`nogap verify`)
 
-`nogap verify <project>` verifies a dispatch's execution evidence independently of
+`nogap verify <request_id> [project]` is the authoritative verification path. It is a thin
+adapter over the F1 Trusted Verification Controller and takes a verification request id and
+nothing else: no actor, no authority, no candidate fingerprint, no verdict and no gate
+fingerprint. Those are resolved from trusted state and derived inside the trust boundary, because
+an interface that accepts them is the interface through which they are forged. It reads nothing
+from `.code-loop/runtime/`.
+
+If the project has no provisioned F1 trust root, it **fails closed**. It never provisions, and
+never creates a root on first use (T1A §5).
+
+**Known limit until F1-T2:** the verification signing key is supplied out of band through
+`NOGAP_F1_VERIFICATION_KEY` (a hex Ed25519 seed) and checked against the key the provisioning
+ceremony recorded. An environment variable is a weaker custody story than a hardware-backed key;
+key storage and OS isolation are F1-T2's, and this is recorded as a limit rather than presented
+as custody.
+
+## Methodology Verification Ladder (`nogap verify-methodology`) - NON-AUTHORITATIVE
+
+`nogap verify-methodology <project>` verifies a dispatch's execution evidence independently of
 whatever worktree originally produced it. It applies the patch to a *fresh* isolated
 worktree and runs two layers, each writing its own `authority: verification` evidence
 (never `authority: acceptance` - a verifier only ever reports passed/failed/
 inconclusive; `nogap decide` alone accepts):
+
+Its output is project bookkeeping, never authority: everything it reads comes out of
+`.code-loop/runtime/`, which anything able to write to the project can write.
 
 - **Deterministic layer** (always runs): re-checks the patch against the frozen
   gate's `rules.forbidden_paths` (an effect/scope check), then runs every command in

@@ -223,7 +223,7 @@ class PreflightAndPlanTests(VerifyCandidateBuilder):
 
     def test_2_and_3_plan_binds_real_task_and_requirements(self) -> None:
         self.freeze_gate()
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         plan = self.latest_plan()
         self.assertEqual(plan["fields"]["task_id"], self.contract["fields"]["task_id"])
         self.assertEqual(plan["fields"]["requirement_refs"], [self.chain["P6"]["fields"]["requirement_id"]])
@@ -249,7 +249,7 @@ class PreflightAndPlanTests(VerifyCandidateBuilder):
 
     def test_6_and_7_and_8_result_binds_candidate_gate_and_version(self) -> None:
         self.freeze_gate()
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         result = self.latest_result()
         fields = result["fields"]
         expected_candidate = vb.compute_candidate_hash(self.contract["fields"]["task_id"], fields["patch_hash"])
@@ -260,7 +260,7 @@ class PreflightAndPlanTests(VerifyCandidateBuilder):
 
     def test_9_level_1_required_and_satisfied_at_light(self) -> None:
         self.freeze_gate()
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         plan = self.latest_plan()
         self.assertEqual(plan["fields"]["required_validation_levels"], ["LEVEL_1_CONTROLLED"])
         result = self.latest_result()
@@ -268,21 +268,21 @@ class PreflightAndPlanTests(VerifyCandidateBuilder):
 
     def test_31_p18_completion_stops_at_awaiting_decision(self) -> None:
         self.freeze_gate()
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.assertEqual(mstatus(self.project)["current_phase"], "P18")
         result = self.latest_result()
         self.assertEqual(result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
 
     def test_12_light_explicit_skip_recorded(self) -> None:
         self.freeze_gate()
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         result = self.latest_result()
         self.assertEqual(result["fields"]["reproducibility_result"], "SKIPPED_PER_PROFILE_POLICY")
         self.assertEqual(result["fields"]["independent_review_result"], "SKIPPED_PER_PROFILE_POLICY")
 
     def test_32_and_33_verifier_and_reviewer_never_write_accept(self) -> None:
         self.freeze_gate()
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         evidence_dir = self.project / ".code-loop" / "runtime" / "evidence"
         for path in evidence_dir.glob("*.json"):
             record = json.loads(path.read_text(encoding="utf-8"))
@@ -292,7 +292,7 @@ class PreflightAndPlanTests(VerifyCandidateBuilder):
 
     def test_34_self_check_does_not_satisfy_independent_verification(self) -> None:
         self.freeze_gate()
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self_checks = list_artifacts(self.project, artifact_type="P14_SELF_CHECK")
         self.assertEqual(self_checks[0]["fields"]["self_check_authority"], "execution")
         # nothing in the M6 evidence ledger's authoritative-evidence computation ever
@@ -318,7 +318,7 @@ class DeterministicAndReproducibilityTests(VerifyCandidateBuilder):
         # its content at that moment.
         self._mutate_gate_rules_before_freeze(required_commands=[f"{sys.executable} -c \"import sys; sys.exit(1)\""])
 
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.assertEqual(mstatus(self.project)["current_phase"], "P16")  # never advanced past P16
         result = self.latest_result()
         self.assertEqual(result["fields"]["deterministic_result"], "failed")
@@ -330,19 +330,19 @@ class DeterministicAndReproducibilityTests(VerifyCandidateBuilder):
         # The candidate (writer_adapter) always writes marker.txt - declare exactly
         # that path forbidden in the frozen gate rather than rebuilding a new candidate.
         self._mutate_gate_rules_before_freeze(forbidden_paths=["marker.txt"])
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         result = self.latest_result()
         self.assertEqual(result["fields"]["deterministic_result"], "failed")
 
     def test_16_required_command_failure_remains_failed(self) -> None:
         self._mutate_gate_rules_before_freeze(required_commands=[f"{sys.executable} -c \"raise SystemExit(1)\""])
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         result = self.latest_result()
         self.assertEqual(result["fields"]["deterministic_result"], "failed")
 
     def test_17_fresh_worktree_still_used_for_deterministic_layer(self) -> None:
         self.freeze_gate()
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         # cleanup unaffected by this milestone: no leftover worktree SUBDIRECTORIES
         # after verification (the parent .nogap/worktrees container itself may persist).
         worktrees_dir = self.project / ".nogap" / "worktrees"
@@ -380,7 +380,7 @@ class StandardProfileReproducibilityTests(unittest.TestCase):
         return list_artifacts(self.project, artifact_type="P18_VERIFICATION_RESULT")[-1]
 
     def test_10_standard_requires_level_2(self) -> None:
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         plan = list_artifacts(self.project, artifact_type="P15_VERIFICATION_PLAN")[-1]
         self.assertIn("LEVEL_2_REPRESENTATIVE", plan["fields"]["required_validation_levels"])
         self.assertTrue(plan["fields"]["reproducibility_required"])
@@ -395,7 +395,7 @@ class StandardProfileReproducibilityTests(unittest.TestCase):
 
     def test_18_and_20_executor_cannot_verify_itself_different_actor_accepted(self) -> None:
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result = self.latest_result()
         self.assertEqual(result["fields"]["independent_review_result"], "passed")
         self.assertEqual(result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
@@ -406,7 +406,7 @@ class StandardProfileReproducibilityTests(unittest.TestCase):
         self.assertTrue(vb.reviewer_is_independent("agent:codex", "agent:claude"))
 
     def test_21_required_independent_review_unavailable_is_inconclusive(self) -> None:
-        nogap.cmd_verify(verify_namespace(str(self.project), review=False))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=False))
         result = self.latest_result()
         self.assertEqual(result["fields"]["independent_review_result"], "inconclusive")
         self.assertEqual(result["status"], "VERIFICATION_INCONCLUSIVE")
@@ -415,20 +415,20 @@ class StandardProfileReproducibilityTests(unittest.TestCase):
         nogap_adapters.ADAPTERS["claude"] = StubAdapter(
             "claude", command_builder=lambda prompt, worktree: [sys.executable, "-c", "open('.nogap-review.json','w').write('not json')"],
         )
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result = self.latest_result()
         self.assertEqual(result["fields"]["independent_review_result"], "inconclusive")
 
     def test_23_reproducibility_enforced_when_required(self) -> None:
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result = self.latest_result()
         self.assertEqual(result["fields"]["reproducibility_result"], "passed")
 
     def test_24_external_validation_unavailable_at_strict(self) -> None:
         escalate_phase(self.project, "VERIFY", "STRICT", actor="human:owner")
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result = self.latest_result()
         self.assertEqual(result["fields"]["reproducibility_result"], "inconclusive")
         self.assertNotEqual(result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
@@ -448,7 +448,7 @@ class StalenessTests(unittest.TestCase):
         nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.contract["fields"]["task_id"]))
         run_script("freeze", str(self.project))
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.result = list_artifacts(self.project, artifact_type="P18_VERIFICATION_RESULT")[-1]
         self.assertEqual(self.result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
 
@@ -566,7 +566,7 @@ class ManualLiveScenarioTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_scenario_a_deterministic_verification_no_accept(self) -> None:
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.assertEqual(mstatus(self.project)["current_phase"], "P18")
         result = list_artifacts(self.project, artifact_type="P18_VERIFICATION_RESULT")[-1]
         self.assertEqual(result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
@@ -575,13 +575,13 @@ class ManualLiveScenarioTests(unittest.TestCase):
 
     def test_scenario_b_independent_review_reaches_awaiting_decision(self) -> None:
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
-        nogap.cmd_verify(verify_namespace(str(self.project), review=True))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result = list_artifacts(self.project, artifact_type="P18_VERIFICATION_RESULT")[-1]
         self.assertEqual(result["fields"]["independent_review_result"], "passed")
         self.assertEqual(result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
 
     def test_scenario_c_gate_change_after_verification_requires_reverification(self) -> None:
-        nogap.cmd_verify(verify_namespace(str(self.project)))
+        nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         result = list_artifacts(self.project, artifact_type="P18_VERIFICATION_RESULT")[-1]
         self.assertEqual(result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
 
