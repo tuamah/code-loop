@@ -12,7 +12,7 @@ repository write access by construction.
 
 ## The two contracts
 
-Nineteen adversarial review rounds produced thirty-seven amendments and twenty-seven named attacks. Review 7
+Twenty adversarial review rounds produced thirty-eight amendments and thirty-five named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
@@ -309,9 +309,24 @@ sections all along** — their anchors matched the closure manifest and the §6 
 reaching §10.3, §6 and §12, so those three invariants could have been rewritten with CI green.
 That was a live false negative in the shipped ledger, not a hypothetical.
 
-Still outstanding: no round has completed without a security-semantic delta. But rounds 17, 18 and
-19 each found their defect in the *guards* rather than in the contract, and round 19's contract
-text was untouched except to record the rule. Round 20 runs against revision 21.
+**Round 20** attacked `check-f1-enumerations.py`, the last unexamined proof surface, along eight
+paths. Six landed, with one root cause: **the guard derived the universe, the canonical source, the
+representation and the content from the material it was checking.** Deleting HUMAN from all four
+sites passed and adding a twelfth type passed, because eleven was only ever "what we found today".
+A "revised action enum" placed earlier in the file became canonical, because the source was found
+by document order. The same set written as an indented code block was never scanned. Widening an
+action enum with `bypass` passed, because the guard checked agreement, not content. Declaring a
+real enumeration ILLUSTRATIVE exempted it. Only the shadow and laundering paths were already
+blocked, by AM-35's bijection.
+
+AM-38 pins all four in §-1's commitment block. Enforcing it found nothing pre-existing — unlike
+round 19 — and the contract's normative text was again untouched except to record the rule.
+
+Still outstanding: no round has completed without a security-semantic delta. But rounds 17 through
+20 each found their defect in the *guards*, and that surface is now exhausted: both guards have
+been attacked at the same intensity, neither attests to itself, and neither derives its legal
+extent from matter that could be truncated or forged. **T1A is a freeze candidate**, pending a
+round that completes clean. T1B has not yet been attacked independently.
 
 ## Standing constraints
 

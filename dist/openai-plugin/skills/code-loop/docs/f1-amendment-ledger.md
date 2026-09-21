@@ -22,7 +22,7 @@ invented AM-37 granting an authority nobody agreed to. The count below is the ex
 truncation or a fabrication now contradicts a line someone has to edit deliberately.
 
 ```
-AMENDMENTS: 37 through AM-37
+AMENDMENTS: 38 through AM-38
 ```
 
 Status is `LIVE` (the invariant is in force and located) or `SUPERSEDED` (replaced by a later
@@ -63,8 +63,9 @@ decision that was reconsidered, and why.
 | AM-30 | LIVE | T1A | `S is a definition, not a list (AM-30)` | `88e9b7728f9e` |  | The snapshot is the set of facts the decision reads; a read fact absent is a defect |
 | AM-31 | LIVE | T1A | `Mode B is an invariant, not a list of nine prohibitions (AM-31)` | `b5179f931ea0` |  | Mode B is a five-clause invariant; the nine capabilities are test vectors for it |
 | AM-32 | LIVE | T1A | `Closure rules for this contract (AM-32)` | `9b3e59ac8cc9` |  | Every security-significant enumeration is DERIVED, CLOSED+CHECKED, or NON-NORMATIVE |
-| AM-33 | LIVE | T1A | `The rule applies to itself (AM-33)` | `99f5db7cde64` |  | The closure manifest is canonical and checked; no enumeration enters undeclared |
+| AM-33 | LIVE | T1A | `The rule applies to itself (AM-33)` | `0634e774ea00` |  | The closure manifest is canonical and checked; no enumeration enters undeclared |
 | AM-34 | LIVE | T1A | `Clause 3 says *outcome* deliberately (AM-34)` | `b5179f931ea0` |  | Mode B forbids influence that moves the outcome toward acceptance, not all influence |
 | AM-36 | LIVE | T1A | `Continuity is a guard, not a memory (AM-36)` | `8f86d8f91d08` |  | Invariants are digested; supersession must be inherited by exactly one live amendment |
-| AM-35 | LIVE | T1A | `bijection, not mere coverage` | `99f5db7cde64` |  | The closure manifest is a bijection; enumerations are blocks or tables, both scanned |
+| AM-35 | LIVE | T1A | `bijection, not mere coverage` | `0634e774ea00` |  | The closure manifest is a bijection; enumerations are blocks or tables, both scanned |
 | AM-37 | LIVE | T1A | `The ledger is not self-attesting (AM-37)` | `e16846724046` |  | Anchors must be unambiguous; the ledger's extent is declared, never derived |
+| AM-38 | LIVE | T1A | `The guard may not derive what it is guarding (AM-38)` | `136295e8ca7d` |  | Universe, source, representation and content of every governed enumeration are pinned in advance |
