@@ -137,6 +137,108 @@ class Grant:
             raise RegistryError(f"{self.key_id} is not granted project scope {project!r}")
 
 
+class RegistryStore:
+    """Where registry state lives. The semantics above never assume how.
+
+    I2 proves the semantics — head, epoch, previous_commitment, grants, rotation, retirement,
+    revocation, historical resolution — against an in-memory backend. I5 replaces the backend with
+    durable, atomic storage and must not have to change a single rule above it, so the seam is here
+    rather than a `dict` the registry reaches into directly.
+
+    `transaction()` is part of the interface from the start, not a later addition: §10.1 requires
+    validating and mutating authoritative state to be one operation, and a store that cannot
+    express a transaction boundary cannot be made to satisfy that later without reshaping every
+    caller. The in-memory implementation stages and swaps; a durable one commits.
+    """
+
+    def transaction(self) -> "RegistryStore":
+        raise NotImplementedError
+
+    def commit(self) -> None:
+        raise NotImplementedError
+
+    def head(self) -> str | None:
+        raise NotImplementedError
+
+    def epoch(self) -> int:
+        raise NotImplementedError
+
+    def acceptance_epoch(self) -> int:
+        raise NotImplementedError
+
+    def set_head(self, commitment: str, epoch: int) -> None:
+        raise NotImplementedError
+
+    def next_acceptance_epoch(self) -> int:
+        raise NotImplementedError
+
+    def get_key(self, key_id: str) -> "_KeyState | None":
+        raise NotImplementedError
+
+    def put_key(self, key_id: str, state: "_KeyState") -> None:
+        raise NotImplementedError
+
+    def append_chain(self, entry: dict[str, Any]) -> None:
+        raise NotImplementedError
+
+
+class InMemoryRegistryStore(RegistryStore):
+    """I2's backend. Deliberately temporary; it holds no durability claim.
+
+    `transaction()` returns a staged copy and `commit()` swaps it in, so a refused commitment
+    leaves nothing behind. That is not the atomicity §10.1 asks for — there is no crash recovery
+    here — but a half-applied commitment is a defect at any level of durability: a probe found a
+    rejected `apply()` leaving a key ACTIVE that the registry had never accepted, which would
+    authorize as soon as any later commitment set a head.
+    """
+
+    def __init__(self, keys=None, chain=None, head=None, epoch=0, acceptance_epoch=0):
+        self._keys = dict(keys or {})
+        self._chain = list(chain or [])
+        self._head = head
+        self._epoch = epoch
+        self._acceptance = acceptance_epoch
+        self._parent: "InMemoryRegistryStore | None" = None
+
+    def transaction(self) -> "InMemoryRegistryStore":
+        staged = InMemoryRegistryStore(self._keys, self._chain, self._head,
+                                       self._epoch, self._acceptance)
+        staged._parent = self
+        return staged
+
+    def commit(self) -> None:
+        if self._parent is None:
+            raise RegistryError("commit() outside a transaction")
+        parent = self._parent
+        parent._keys, parent._chain = self._keys, self._chain
+        parent._head, parent._epoch, parent._acceptance = self._head, self._epoch, self._acceptance
+
+    def head(self):
+        return self._head
+
+    def epoch(self) -> int:
+        return self._epoch
+
+    def acceptance_epoch(self) -> int:
+        return self._acceptance
+
+    def set_head(self, commitment: str, epoch: int) -> None:
+        self._head, self._epoch = commitment, epoch
+
+    def next_acceptance_epoch(self) -> int:
+        self._acceptance += 1
+        return self._acceptance
+
+    def get_key(self, key_id: str):
+        return self._keys.get(key_id)
+
+    def put_key(self, key_id: str, state) -> None:
+        self._keys[key_id] = state
+
+    def append_chain(self, entry: dict[str, Any]) -> None:
+        self._chain.append(entry)
+
+
 class _KeyState:
     __slots__ = ("grant", "state", "registered_at", "retired_at", "compromised_after")
 
@@ -151,26 +253,28 @@ class _KeyState:
 class AuthorityRegistry:
     """The TCB-held registry: an append-only, headed chain of accepted REGISTRY commitments."""
 
-    def __init__(self, root_public_key: Any, root_key_id: str = "registry-root"):
+    def __init__(self, root_public_key: Any, root_key_id: str = "registry-root",
+                 store: RegistryStore | None = None):
         self._root_public_key = root_public_key
         self._root_key_id = root_key_id
-        self._keys: dict[str, _KeyState] = {}
-        self._chain: list[dict[str, Any]] = []
-        self._head: str | None = None
-        self._epoch = 0
-        # The TCB's own monotonic ordering. Not a clock, and never the signer's.
-        self._acceptance_epoch = 0
+        # I2 defaults to memory; I5 passes a durable, atomic store and changes no rule below.
+        self._store = store if store is not None else InMemoryRegistryStore()
 
     # -- head -----------------------------------------------------------------------------------
 
     @property
     def head(self) -> str | None:
         """The current authoritative head. There is no setter, and no API takes one (AM-18)."""
-        return self._head
+        return self._store.head()
+
+    @property
+    def epoch(self) -> int:
+        """The chain epoch of the current head. Read-only, like the head itself."""
+        return self._store.epoch()
 
     @property
     def acceptance_epoch(self) -> int:
-        return self._acceptance_epoch
+        return self._store.acceptance_epoch()
 
     # -- mutation -------------------------------------------------------------------------------
 
@@ -179,6 +283,10 @@ class AuthorityRegistry:
 
         `grants` is the material the commitment's `key_grants_digest` commits to; it is checked
         against that digest, so the caller cannot hand over different material than was signed.
+
+        The whole acceptance runs in one store transaction: a refused commitment leaves no key, no
+        epoch and no head behind. Durability and crash recovery are I5's; not half-applying is
+        this module's, at any level of durability.
         """
         message = verify(signed, self._root_public_key)
         if message["message_type"] != "REGISTRY":
@@ -188,29 +296,33 @@ class AuthorityRegistry:
                 f"registry commitments are signed by the trust root, not {message['key_id']!r}")
         body = message["body"]
 
+        staged = self._store.transaction()
+
         # AM-18 / §10.3: the head this extends must be the current one, and the epoch must chain.
         # A fork from an old-but-correctly-signed head is refused here, not reconciled later.
-        if body["previous_commitment"] != (self._head or ""):
+        if body["previous_commitment"] != (staged.head() or ""):
             raise RegistryError(
                 f"previous_commitment {body['previous_commitment']!r} is not the current head "
-                f"{self._head!r}; a valid head is not the current head (AM-18)")
-        if body["epoch"] != self._epoch + 1:
+                f"{staged.head()!r}; a valid head is not the current head (AM-18)")
+        if body["epoch"] != staged.epoch() + 1:
             raise RegistryError(
-                f"epoch {body['epoch']!r} does not chain from {self._epoch}")
+                f"epoch {body['epoch']!r} does not chain from {staged.epoch()}")
         if body["key_grants_digest"] != digest(grants):
             raise RegistryError("key_grants_digest does not commit to the grants supplied")
 
-        self._acceptance_epoch += 1
+        accepted_at = staged.next_acceptance_epoch()
         for entry in grants:
-            self._apply_grant(entry, self._acceptance_epoch, message["action"])
+            self._apply_grant(staged, entry, accepted_at, message["action"])
 
-        self._epoch = body["epoch"]
-        self._head = digest(message)
-        self._chain.append({"commitment": self._head, "epoch": self._epoch,
-                            "accepted_at": self._acceptance_epoch, "message": message})
-        return self._acceptance_epoch
+        commitment = digest(message)
+        staged.set_head(commitment, body["epoch"])
+        staged.append_chain({"commitment": commitment, "epoch": body["epoch"],
+                             "accepted_at": accepted_at, "message": message})
+        staged.commit()
+        return accepted_at
 
-    def _apply_grant(self, entry: dict[str, Any], at: int, action: str) -> None:
+    def _apply_grant(self, store: RegistryStore, entry: dict[str, Any], at: int,
+                     action: str) -> None:
         key_id = entry.get("key_id")
         if action == "add_key":
             grant = Grant(
@@ -219,17 +331,17 @@ class AuthorityRegistry:
                 allowed_message_types=entry["allowed_message_types"],
                 allowed_actions=entry["allowed_actions"],
                 allowed_projects=entry["allowed_projects"])
-            existing = self._keys.get(key_id)
+            existing = store.get_key(key_id)
             if existing is not None and existing.grant.public_key_hex != grant.public_key_hex:
                 # A key_id is an identity, not a label. Rebinding it to another public key would
                 # silently re-attribute every signature it ever made.
                 raise RegistryError(
                     f"{key_id} is already bound to a different public key; a key_id is never "
                     f"rebound. Rotation mints a NEW key_id (§11)")
-            self._keys[key_id] = _KeyState(grant, registered_at=at)
+            store.put_key(key_id, _KeyState(grant, registered_at=at))
             return
 
-        state = self._keys.get(key_id)
+        state = store.get_key(key_id)
         if state is None:
             raise RegistryError(f"{action} names unknown key_id {key_id!r}")
         if action == "retire_key":
@@ -252,15 +364,16 @@ class AuthorityRegistry:
         """The public key for historical verification. Retired and revoked keys resolve here.
 
         §11 retention: forgetting a key makes every decision it signed unverifiable, which silently
-        rewrites history. Resolving a key for verification is not authorizing it to sign.
+        rewrites history. Resolving a key for verification is never authorizing it to sign — that
+        is `authorize()`, and the separation is the point.
         """
-        state = self._keys.get(key_id)
+        state = self._store.get_key(key_id)
         if state is None:
             raise RegistryError(f"unknown key_id {key_id!r}")
         return state.grant.public_key_hex
 
     def state_of(self, key_id: str) -> str:
-        state = self._keys.get(key_id)
+        state = self._store.get_key(key_id)
         if state is None:
             raise RegistryError(f"unknown key_id {key_id!r}")
         return state.state
@@ -269,13 +382,13 @@ class AuthorityRegistry:
                   project: str | None = None) -> str:
         """§5.1's grant check at the current head, evaluated at the TCB acceptance epoch.
 
-        Returns ADMISSIBLE, or DISPUTED for a signature already accepted before a compromise
-        bound. Raises RegistryError otherwise. It never returns "valid" for an unknown anything.
+        Returns ADMISSIBLE. Raises RegistryError otherwise. It never returns "valid" for an
+        unknown anything.
         """
-        if self._head is None:
+        if self._store.head() is None:
             raise RegistryError("registry has no accepted head; unverifiable authority is "
                                 "inadmissible, never legacy-compatible (§12)")
-        state = self._keys.get(key_id)
+        state = self._store.get_key(key_id)
         if state is None:
             raise RegistryError(f"unknown key_id {key_id!r}")
         state.grant.covers(message_type, action, project)
@@ -300,7 +413,7 @@ class AuthorityRegistry:
         not silently void, requiring human re-affirmation. The runtime never asserts a precise
         compromise instant it cannot establish.
         """
-        state = self._keys.get(key_id)
+        state = self._store.get_key(key_id)
         if state is None:
             raise RegistryError(f"unknown key_id {key_id!r}")
         if state.state != REVOKED:

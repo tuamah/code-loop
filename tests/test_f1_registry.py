@@ -40,7 +40,7 @@ class RegistryFixture(unittest.TestCase):
         message = k.message(
             "REGISTRY", action, key_id="registry-root", producer_identity="trust-root",
             sequence=self.seq, signed_at="2026-09-21T00:00:00Z", deployment_mode="B",
-            body={"epoch": epoch if epoch is not None else registry._epoch + 1,
+            body={"epoch": epoch if epoch is not None else registry.epoch + 1,
                   "previous_commitment": previous if previous is not None
                   else (registry.head or ""),
                   "key_grants_digest": r.digest(grants)})
@@ -262,6 +262,99 @@ class LifecycleTests(RegistryFixture):
         with self.assertRaises(r.RegistryError) as caught:
             self.commit("rotate_root", [{"key_id": "key-1"}])
         self.assertIn("F1-T2", str(caught.exception))
+
+
+class StoreBoundaryTests(RegistryFixture):
+    """I2 proves semantics; I5 swaps the backend without touching a rule above it."""
+
+    def test_a_refused_commitment_leaves_nothing_behind(self):
+        """Found by probing, not by a test: a rejected apply() used to half-commit.
+
+        One bad entry in a batch left the earlier keys ACTIVE and burned an acceptance epoch while
+        the head stayed unset — so a key the registry had never accepted would authorize as soon as
+        any later commitment set a head.
+        """
+        good = grant_entry("key-1", self.pub)
+        bad = grant_entry("key-2", self.pub, actions={"VERIFY": ["accept"]})   # not VERIFY's verb
+        before = self.registry.acceptance_epoch
+        with self.assertRaises(r.RegistryError):
+            self.commit("add_key", [good, bad])
+        self.assertIsNone(self.registry.head)
+        self.assertEqual(self.registry.acceptance_epoch, before, "a refused apply burned an epoch")
+        with self.assertRaises(r.RegistryError):
+            self.registry.state_of("key-1")
+
+    def test_a_refused_commitment_does_not_disturb_existing_state(self):
+        self.add_key()
+        head, epoch, accepted = self.registry.head, self.registry.epoch, \
+            self.registry.acceptance_epoch
+        with self.assertRaises(r.RegistryError):
+            self.commit("add_key", [grant_entry("key-2", self.pub),
+                                    grant_entry("key-3", self.pub, actions={"VERIFY": ["accept"]})])
+        self.assertEqual((self.registry.head, self.registry.epoch,
+                          self.registry.acceptance_epoch), (head, epoch, accepted))
+        with self.assertRaises(r.RegistryError):
+            self.registry.state_of("key-2")
+        self.assertEqual(self.registry.state_of("key-1"), r.ACTIVE)
+
+    def test_the_registry_reaches_into_no_concrete_storage(self):
+        source = (Path(__file__).resolve().parents[1] / "scripts" / "f1_registry.py").read_text()
+        registry_class = source[source.index("class AuthorityRegistry"):]
+        for leak in ("self._keys", "self._chain", "self._head", "self._epoch =",
+                     "self._acceptance"):
+            self.assertNotIn(leak, registry_class,
+                             f"AuthorityRegistry touches {leak!r} directly; I5 could not swap the "
+                             f"backend without changing the semantics above it")
+
+    def test_the_store_interface_can_express_a_transaction(self):
+        # §10.1 requires validate-and-mutate to be one operation. A store that cannot express a
+        # transaction boundary cannot be made to satisfy that later without reshaping callers.
+        for required in ("transaction", "commit"):
+            self.assertTrue(callable(getattr(r.RegistryStore, required, None)))
+
+    def test_commit_outside_a_transaction_is_refused(self):
+        # Found by mutation. Nothing in I2's flow reaches it, but I5 writes the next store against
+        # this interface, and a commit() that silently no-ops outside a transaction is how a
+        # durable backend quietly loses a write.
+        with self.assertRaises(r.RegistryError):
+            r.InMemoryRegistryStore().commit()
+
+    def test_semantics_do_not_depend_on_the_backend_being_in_memory(self):
+        """The same rules must hold against any store implementing the interface."""
+        class Recording(r.InMemoryRegistryStore):
+            calls: list[str] = []
+
+            def transaction(self):
+                Recording.calls.append("transaction")
+                staged = Recording(self._keys, self._chain, self._head,
+                                   self._epoch, self._acceptance)
+                staged._parent = self
+                return staged
+
+        registry = r.AuthorityRegistry(self.root_sk.public_key(), store=Recording())
+        self.commit("add_key", [grant_entry("key-1", self.pub)], registry=registry)
+        self.assertEqual(registry.authorize("key-1", "VERIFY", "attest", "proj-1"), r.ADMISSIBLE)
+        with self.assertRaises(r.RegistryError):
+            registry.authorize("key-1", "DECISION", "accept", "proj-1")
+        self.assertIn("transaction", Recording.calls)
+
+
+class VerificationIsNotAuthorizationTests(RegistryFixture):
+    """Resolving a key to check an old signature is never permission to sign new material."""
+
+    def test_revoked_key_verifies_history_but_authorizes_nothing(self):
+        self.add_key()
+        self.commit("revoke_key", [{"key_id": "key-1", "compromised_after_epoch": 1}])
+        self.assertEqual(self.registry.verification_key("key-1"), self.pub)
+        with self.assertRaises(r.RegistryError):
+            self.registry.authorize("key-1", "VERIFY", "attest", "proj-1")
+
+    def test_retired_key_verifies_history_but_authorizes_nothing(self):
+        self.add_key()
+        self.commit("retire_key", [{"key_id": "key-1"}])
+        self.assertEqual(self.registry.verification_key("key-1"), self.pub)
+        with self.assertRaises(r.RegistryError):
+            self.registry.authorize("key-1", "VERIFY", "attest", "proj-1")
 
 
 class ScopeBoundaryTests(unittest.TestCase):
