@@ -1,9 +1,17 @@
 # F1-T1B — Trusted Policy & Obligation Semantics
 
-**Status: DRAFT, revision 10. NOT FROZEN.** Reviews 1 and 2 are done. Review 1 produced AM-39 (one schema defined in both contracts); review 2 produced AM-40 (supersession had no owner, no representation and no enforcement point). Both were cross-contract and reopened T1A.
-review 7. Builds on `f1-t1a-trust-core.md`, whose adversary model (T1A §1), authorities (T1A §4), trust root
-(T1A §5), payload and domain separation (T1A §6), and decision-snapshot consistency apply here unchanged and
-are not restated.
+**Status: FROZEN, revision 10, after adversarial review 3.** Review 1 produced AM-39 (one schema
+defined in both contracts) and review 2 produced AM-40 (supersession had no owner, no
+representation and no enforcement point); both were cross-contract and reopened T1A. Review 3 was
+confirmatory against this revision with no prior edit: the nine semantic attacks, the eight-shape
+lineage matrix, the thirteen-question override matrix, the R5 boundary, both representability
+directions, semantic state/effect, closure across T1A and T1B, continuity, and canonical-schema
+uniqueness — **zero gaps**, and every probe mutation-tested to fail when its rule is removed.
+
+**What FROZEN means.** No semantic change may be made to this document except through a new
+numbered amendment that explicitly reopens T1B, is recorded in `f1-amendment-ledger.md`, and states
+which invariant it changes and why. T1B defines no message schema; T1A §6 remains the single
+canonical source (AM-39), so a schema change reopens T1A, not this document.
 
 T1B answers the question T1A deliberately does not: **what do the authenticated statements mean?**
 Which obligations exist, what class they carry, when they apply, how that may change, and what may
