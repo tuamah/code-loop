@@ -1,9 +1,9 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 11, after adversarial review 10. NOT FROZEN.** Review 10 found three more,
-all inside the core: the granted action was never carried in the signed message, and both
-authorization consumption and authoritative-state transitions were written as check-then-act, which
-are races. It also caught §10 testing key validity at a timestamp §11 says cannot be trusted. Split out of the single F1-T1
+**Status: DRAFT, revision 12, after adversarial review 11. NOT FROZEN.** Review 11 ran the full
+seventeen-attack round: fifteen blocked outright, and A23/A24 came out **ambiguous** on the
+cross-authority composed case — AM-25 demanded one atomic transition across state that §3.1 permits
+to be partitioned, and never said where that state lives. AM-26 resolves it. Split out of the single F1-T1
 contract after review 7, which established where the seam lies. Review 8 attacked the core alone and
 found three defects in it — A19 missing domain separation for the newest commitments, A20 a registry
 that granted nothing, A21 human approvals replayable across operations — all three inside message
@@ -741,7 +741,38 @@ commit atomically                                  (any failure aborts the whole
 This covers, at minimum: `REGISTRY`, `POLICY`, `APPLICABILITY`, project state transitions, `TASK`
 and `RUN` genesis wherever uniqueness matters, `GATE` freeze under §8's first-commitment-wins, and
 `HUMAN` consumption. AM-15's CAS was written for DECISION alone; it was never only DECISION's
-problem. Both were the round-9
+problem.
+
+**One transactional domain, or the requirement is unachievable (AM-26).** A transition routinely
+spans authorities: validate the current `POLICY` head, check the `REGISTRY` grant, consume a
+`HUMAN` authorization, install the new commitment. §3.1 permits authorities to be separate
+processes, and revision 11 demanded that all of this commit atomically without saying where the
+state lives. Across separate stores that is a distributed commit, which this contract neither
+specifies nor wants — and an unspecified distributed commit is exactly how a half-transition
+happens:
+
+```
+FORBIDDEN OUTCOME    authorization consumed ✓   policy transition failed ✗
+FORBIDDEN OUTCOME    policy transition installed ✓   authorization not consumed ✗
+```
+
+Therefore:
+
+> **All authoritative state subject to AM-25 lives in one serialized transactional domain with a
+> single monotonic ordering. Authorities are scopes over that state, never owners of separate
+> states.**
+
+This is the requirement §10.3 already gestured at when it allowed "a single monotonic event-log head
+covering all of this state"; it is no longer an equivalent option but the rule. It also sharpens
+§3.1: co-locating authorities is permitted, *partitioning their state* is not. Cross-store
+distributed commit is out of scope for v1, and a deployment that cannot provide a single
+serialization point cannot satisfy AM-25 and so cannot claim the guarantee.
+
+**The loser's obligation.** A transition that loses the CAS aborts entirely — nothing installed,
+nothing consumed — and must re-read the new head and re-derive before retrying. It may not retry
+with the stale expectation. Note that a purpose-bound authorization naming `requested_transition:
+P10 -> P11b` is thereby invalid once the head is `P11a`: the retry fails closed and needs a fresh
+authorization, which is the correct outcome rather than an inconvenience. Both were the round-9
 composed attacks.
 
 The checks the audit confirmed genuine — `acceptability()`'s executor-identity rejection,
