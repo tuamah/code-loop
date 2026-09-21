@@ -77,21 +77,39 @@ def main() -> int:
 
     # AM-33: the closure rule applies to itself. Every fenced block must be declared in §-1's
     # manifest, so a new enumeration cannot enter the document without being classified.
-    manifest = re.search(r"```\n((?:GOVERNED|ILLUSTRATIVE).*?)\n```", text, re.S)
+    manifest = re.search(r"```\n((?:GOVERNED|ILLUSTRATIVE)\s*::.*?)\n```", text, re.S)
     if not manifest:
         problems.append("§-1's closure manifest is missing — AM-33 requires it as the canonical source")
     else:
         prefixes = []
         for line in manifest.group(1).splitlines():
-            mm = re.match(r"(GOVERNED|ILLUSTRATIVE)\s{2,}(\S.*?)\s{2,}\S", line)
+            mm = re.match(r"(GOVERNED|ILLUSTRATIVE)\s*::\s*(.+?)\s*::", line)
             if mm:
                 prefixes.append(mm.group(2).strip())
         if not prefixes:
             problems.append("§-1's closure manifest has no parsable entries")
-        for block in re.findall(r"```\n(.*?)\n```", text, re.S):
-            first = block.splitlines()[0].strip()
-            if not any(first.startswith(prefix) for prefix in prefixes):
-                problems.append(f"undeclared enumeration block, not in §-1's manifest: {first[:64]!r}")
+
+        # AM-35: security-significant enumerations are fenced blocks or tables (§-1), so scanning
+        # both is complete. A bulleted list is non-normative by construction.
+        firsts = [b.splitlines()[0].strip() for b in re.findall(r"```\n(.*?)\n```", text, re.S)]
+        firsts += [f"TABLE |{h.strip()}" for h in re.findall(r"\n\|(.+?)\|\n\|[-| :]+\|\n", text)]
+
+        # A prefix that matches more than one enumeration gives false coverage: a new block
+        # starting with a short declared prefix would pass undeclared. Require a bijection.
+        for prefix in prefixes:
+            hits = [f for f in firsts if f.startswith(prefix)]
+            if len(hits) == 0:
+                problems.append(f"manifest entry matches nothing — stale declaration: {prefix!r}")
+            elif len(hits) > 1:
+                problems.append(
+                    f"manifest prefix {prefix!r} matches {len(hits)} enumerations; it must identify "
+                    f"exactly one, or a new one enters undeclared behind it")
+        for first in firsts:
+            matched = [p for p in prefixes if first.startswith(p)]
+            if not matched:
+                problems.append(f"undeclared enumeration, not in §-1's manifest: {first[:64]!r}")
+            elif len(matched) > 1:
+                problems.append(f"enumeration {first[:48]!r} is claimed by {len(matched)} manifest entries")
 
     if problems:
         print("FAIL: F1-T1A closed vocabularies disagree", file=sys.stderr)

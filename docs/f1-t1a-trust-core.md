@@ -1,9 +1,11 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 18, after adversarial review 16. NOT FROZEN.** Round 16 ran the full
-seven-part package against revision 17: seventeen attacks blocked, all four earlier audits clean,
-both automated guards green. The closure audit itself failed it — §-1 forbade security by
-remembered list and was enforced by a remembered list, the same self-exemption as A14 and A17.
+**Status: DRAFT, revision 19, after adversarial review 17. NOT FROZEN.** Round 17 attacked AM-33
+and AM-34 directly. AM-34 held. AM-33's guard did not: two of its declared prefixes were short
+enough to swallow a new undeclared enumeration, and the scan covered fenced blocks while ignoring
+tables. Both attacks were run, both succeeded, and both now fail. AM-35 makes the manifest a
+bijection and constrains security-significant enumerations to blocks and tables so the scan is
+complete.
 
 Split out of the single F1-T1 contract after review 7, which established where the seam lies. See
 `f1-trust-root-contract.md` for F1's overall status, the full review history, and F1-T1B.
@@ -105,44 +107,56 @@ enforced by a remembered list: the same self-exemption as A14, where a policy ob
 protection, and A17, where an obligation chose its own class. **The governing object is not exempt
 from its own governance.**
 
-The manifest below is the canonical source, and the checker requires **every** fenced block in this
-document to match one of its prefixes. A block that is neither governed nor declared illustrative
-fails CI, so a new enumeration cannot enter silently.
+A security-significant enumeration **must** be a fenced block or a table; a bulleted list is
+non-normative by construction. That makes the scanner's reach complete rather than a matter of
+where someone happened to put a list.
+
+The manifest below is the canonical source. The checker requires **every** fenced block and table in
+this document to match exactly one entry, and every entry to match exactly one enumeration — a
+bijection, not mere coverage. Round 17 found why: `epoch` and `Project Genesis` were declared as
+short prefixes, and a new undeclared block beginning with either passed silently behind them. A
+prefix that covers two things covers the next thing too.
 
 ```
-GOVERNED      read or copy any private authority key        Mode B test vectors — DERIVED (AM-31)
-GOVERNED      key_id ->                                     registry grant schema — CLOSED
-GOVERNED      Common Signed Envelope                        envelope + body schemas — CLOSED+CHECKED
-GOVERNED      PROJECT        genesis                        action enum — CLOSED+CHECKED
-GOVERNED      NOGAP::PROJECT::v1                            domain list — CLOSED+CHECKED
-GOVERNED      authorization_id                              HUMAN body schema — CLOSED
-GOVERNED      NEW_TASK |                                    task relations — CLOSED
-GOVERNED      Project Genesis Commitment                    genesis schema — CLOSED
-GOVERNED      Trusted Run Manifest                          run manifest schema — CLOSED
-GOVERNED      authorized freeze request                     freeze inputs — CLOSED
-GOVERNED      STAGE 1 — every message, in order             admissibility — CLOSED+CHECKED (AM-22)
-GOVERNED      begin                                         transaction steps — DERIVED (AM-25)
-GOVERNED      Trusted Decision State Snapshot               snapshot — DERIVED (AM-30)
-GOVERNED      derive the decision from snapshot S           CAS procedure — DERIVED (AM-15)
-GOVERNED      epoch                                         anti-rollback fields — CLOSED (AM-18)
-GOVERNED      verify(request_id)                            verification sequence — DERIVED (AM-5)
-GOVERNED      PERMITTED   verify(request_id)                permitted/forbidden interfaces — CLOSED
-ILLUSTRATIVE  mallory:                                      reproduction transcript
-ILLUSTRATIVE  mallory executes for real                     reproduction transcript
-ILLUSTRATIVE  edit rules, leave hash                        reproduction transcript
-ILLUSTRATIVE  TRUSTED VERIFICATION CONTROLLER               architecture diagram
-ILLUSTRATIVE  Registry Root ·                               authority names; grants decide (AM-28)
-ILLUSTRATIVE  task A   -> adverse lineage                   attack illustration
-ILLUSTRATIVE  Project Genesis           (Project            trust chain diagram
-ILLUSTRATIVE  FORBIDDEN   create_run(task_digest)           interface contrast
-ILLUSTRATIVE  A24   POLICY head = P10                       attack illustration
-ILLUSTRATIVE  A23   Request A:                              attack illustration
-ILLUSTRATIVE  no epoch, but changes current_head            bypasses AM-29 closes
-ILLUSTRATIVE  FORBIDDEN OUTCOME                             attack illustration
-ILLUSTRATIVE  read PASS for O1                              attack illustration
-ILLUSTRATIVE  Policy v1   valid signature                   attack illustration
-ILLUSTRATIVE  Mechanism exists:                             audit verdict restatement
-ILLUSTRATIVE  GOVERNED      read or copy                    this manifest
+GOVERNED     :: read or copy any private authority key :: Mode B test vectors — DERIVED (AM-31)
+GOVERNED     :: key_id -> :: registry grant schema — CLOSED
+GOVERNED     :: Common Signed Envelope :: envelope + body schemas — CLOSED+CHECKED
+GOVERNED     :: PROJECT        genesis :: action enum — CLOSED+CHECKED
+GOVERNED     :: NOGAP::PROJECT::v1 :: domain list — CLOSED+CHECKED
+GOVERNED     :: authorization_id :: HUMAN body schema — CLOSED
+GOVERNED     :: NEW_TASK | :: task relations — CLOSED
+GOVERNED     :: Project Genesis Commitment :: genesis schema — CLOSED
+GOVERNED     :: Trusted Run Manifest :: run manifest schema — CLOSED
+GOVERNED     :: authorized freeze request :: freeze inputs — CLOSED
+GOVERNED     :: STAGE 1 — every message, in order :: admissibility — CLOSED+CHECKED (AM-22)
+GOVERNED     :: begin :: transaction steps — DERIVED (AM-25)
+GOVERNED     :: Trusted Decision State Snapshot :: snapshot — DERIVED (AM-30)
+GOVERNED     :: derive the decision from snapshot S :: CAS procedure — DERIVED (AM-15)
+GOVERNED     :: epoch                      monotonic :: anti-rollback fields — CLOSED (AM-18)
+GOVERNED     :: verify(request_id)            request names :: verification sequence — DERIVED (AM-5)
+GOVERNED     :: PERMITTED   verify(request_id) :: permitted/forbidden interfaces — CLOSED
+GOVERNED     :: TABLE |T1A owns :: scope partition; nothing falls between — CLOSED
+GOVERNED     :: TABLE |Form | Requirement :: the three closure forms — CLOSED
+GOVERNED     :: TABLE |Enumeration | Form | Where :: enumeration classification — CLOSED+CHECKED
+GOVERNED     :: TABLE |Mode | What it is :: deployment modes — CLOSED
+GOVERNED     :: TABLE |Separation | Nature :: which separations may be co-resident — CLOSED
+ILLUSTRATIVE :: TABLE |Identity class :: summary; the registry grant decides (AM-28)
+ILLUSTRATIVE :: mallory: :: reproduction transcript
+ILLUSTRATIVE :: mallory executes for real :: reproduction transcript
+ILLUSTRATIVE :: edit rules, leave hash :: reproduction transcript
+ILLUSTRATIVE :: TRUSTED VERIFICATION CONTROLLER :: architecture diagram
+ILLUSTRATIVE :: Registry Root · :: authority names; grants decide (AM-28)
+ILLUSTRATIVE :: task A   -> adverse lineage :: attack illustration
+ILLUSTRATIVE :: Project Genesis           (Project :: trust chain diagram
+ILLUSTRATIVE :: FORBIDDEN   create_run(task_digest) :: interface contrast
+ILLUSTRATIVE :: A24   POLICY head = P10 :: attack illustration
+ILLUSTRATIVE :: A23   Request A: :: attack illustration
+ILLUSTRATIVE :: no epoch, but changes current_head :: bypasses AM-29 closes
+ILLUSTRATIVE :: FORBIDDEN OUTCOME :: attack illustration
+ILLUSTRATIVE :: read PASS for O1 :: attack illustration
+ILLUSTRATIVE :: Policy v1   valid signature :: attack illustration
+ILLUSTRATIVE :: Mechanism exists: :: audit verdict restatement
+ILLUSTRATIVE :: GOVERNED     :: this manifest
 ```
 
 A closure rule that was itself a remembered list would be the joke writing itself.
