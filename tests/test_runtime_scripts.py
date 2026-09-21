@@ -487,5 +487,37 @@ class RuntimeScriptTests(unittest.TestCase):
             self.assertIn("references missing plan", result.stderr + result.stdout)
 
 
+class RuntimeReferenceAccuracyTests(unittest.TestCase):
+    """references/nogap-runtime.md is what an agent reads before touching the runtime.
+
+    SKILL.md and AGENTS.md carry one pointer line each to it - that is all the always-loaded
+    budget allows - so if the reference names commands that do not exist, or misses ones that
+    do, the pointer sends the agent somewhere wrong. lint-instructions.py checks the pointer is
+    present; this checks the destination is true.
+    """
+
+    def documented_commands(self) -> set[str]:
+        text = (ROOT / "references" / "nogap-runtime.md").read_text(encoding="utf-8")
+        commands = set()
+        for line in text.splitlines():
+            if line.startswith("| `"):
+                cell = line.split("|")[1]
+                commands.update(part.strip().strip("`") for part in cell.split(",") if "`" in part)
+        return {c for c in commands if c}
+
+    def actual_commands(self) -> set[str]:
+        usage = run_script("scripts/nogap.py", "--help").stdout
+        listed = usage.split("{", 1)[1].split("}", 1)[0]
+        return set(listed.split(","))
+
+    def test_every_documented_command_exists(self) -> None:
+        unknown = self.documented_commands() - self.actual_commands()
+        self.assertEqual(unknown, set(), "reference documents commands the CLI does not have")
+
+    def test_every_command_is_documented(self) -> None:
+        undocumented = self.actual_commands() - self.documented_commands()
+        self.assertEqual(undocumented, set(), "CLI has commands the reference never mentions")
+
+
 if __name__ == "__main__":
     unittest.main()

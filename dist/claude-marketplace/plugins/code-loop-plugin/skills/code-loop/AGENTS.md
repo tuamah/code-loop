@@ -52,6 +52,8 @@ Evidence outranks confidence:
 tests/build/lint > runtime traces > source docs > reviewer findings > model confidence
 ```
 
+`.code-loop/runtime/` present? Read `references/nogap-runtime.md`: the executor never ACCEPTs.
+
 ## CLO commands
 
 Treat `clo/` inputs as shortcuts: `clo/on`, `clo/off`, `clo/council`, `clo/security`,
