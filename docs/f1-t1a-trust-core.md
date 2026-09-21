@@ -1,8 +1,9 @@
 # F1-T1A — Authenticated Trust Core
 
-**Status: DRAFT, revision 10, after adversarial review 9. NOT FROZEN.** Review 9 ran the full
-fourteen-attack round: twelve blocked, and the two composed attacks introduced by review 8 passed —
-because §10's procedure had not been rebuilt when AM-19 replaced the payload it was written against. Split out of the single F1-T1
+**Status: DRAFT, revision 11, after adversarial review 10. NOT FROZEN.** Review 10 found three more,
+all inside the core: the granted action was never carried in the signed message, and both
+authorization consumption and authoritative-state transitions were written as check-then-act, which
+are races. It also caught §10 testing key validity at a timestamp §11 says cannot be trusted. Split out of the single F1-T1
 contract after review 7, which established where the seam lies. Review 8 attacked the core alone and
 found three defects in it — A19 missing domain separation for the newest commitments, A20 a registry
 that granted nothing, A21 human approvals replayable across operations — all three inside message
@@ -280,6 +281,7 @@ envelope and a message-specific body, and a body is validated against its own sc
 Common Signed Envelope            present in every message, identical meaning in every message
   schema_version                  unknown version -> inadmissible
   message_type                    one of the domains below; must equal the signed prefix
+  action                          the exact operation, from that type's closed enum (AM-23)
   key_id                          resolves to identity, grants and validity in the registry
   producer_identity               the asserting principal, as recorded in the registry
   sequence                        per-signing-identity, atomic, durable; ordering, not freshness
@@ -307,6 +309,33 @@ Message-specific body             validated against the schema for message_type,
 
 A field absent from a body's schema is not optional — it is **rejected**. There is no shared
 grab-bag in which an unused field can quietly acquire meaning.
+
+**The action must be signed, not inferred (AM-23).** AM-20 had the registry grant
+`allowed_actions`, and §10 dutifully required the grant to cover "this message_type and action" —
+but nothing in the message said which action it was. Several operations live under one
+`message_type`, so a key granted a narrow operation could emit a structurally valid message that is
+then read as a stronger one (A22). `action` is therefore an envelope field, inside the canonical
+payload and covered by the signature, drawn from a closed enum per type:
+
+```
+PROJECT        genesis
+TASK           create | relate
+RUN            create
+GATE           freeze
+VERIFY         attest
+DECISION       accept | repair | abstain | human_review
+POLICY         create | update | weaken
+APPLICABILITY  activate | deactivate | narrow | reclassify
+REGISTRY       add_key | revoke_key | retire_key | rotate_root
+HUMAN          authorize
+```
+
+An `action` outside its type's enum is inadmissible, and adding one is a contract change. The
+action stays an envelope field rather than part of the domain prefix: the prefix separates
+cryptographic domains so a VERIFY can never be read as a DECISION, while the action narrows
+authority *within* a domain, which is a registry-grant question (§5.1) and is enforced as one.
+
+The binding is now complete: **who · which message type · which exact action · in which scope.**
 
 **Canonicalization**: RFC 8785 (JSON Canonicalization Scheme). It is a published, testable
 specification rather than a local convention, so independent implementations agree. The contract
@@ -631,7 +660,8 @@ STAGE 1 — every message, in order
  4. body validates against THAT message_type's schema; unknown fields reject           else INADMISSIBLE
  5. signature verifies under key_id                                                    else INADMISSIBLE
  6. key_id resolves in the authenticated registry at its current head                  else INADMISSIBLE
- 7. key state permits a signature at signed_at (§11)                     else INADMISSIBLE / DISPUTED
+ 7. key state permits this signature at its TCB acceptance epoch, NOT at signed_at (§11)
+                                                                        else INADMISSIBLE / DISPUTED
  8. registry grants this key_id THIS message_type and action (§5.1)                    else INADMISSIBLE
  9. registry grant covers this project scope (§5.1)                                    else INADMISSIBLE
 10. every head the body names is the current authoritative head (§10.3, AM-18)         else INADMISSIBLE
@@ -661,7 +691,57 @@ STAGE 2 — by message_type
 ```
 
 Stage 1 step 8 is what makes a key a *scoped* principal rather than a TCB master key, and the HUMAN
-clause is what makes an approval an authorization rather than a token. Both were the round-9
+clause is what makes an approval an authorization rather than a token.
+
+### 10.1 Validation and mutation must be one operation (AM-24, AM-25)
+
+Every check in §10 reads authoritative state. Revision 10 never said that reading it and acting on
+it are indivisible, and admissibility procedures written as "check, then do" are races:
+
+```
+A24   POLICY head = P10
+      Update A: previous == P10 ✓        Update B: previous == P10 ✓
+      A installs P11a                    B installs P11b
+                 P10
+                /    \
+             P11a    P11b
+```
+
+Both signatures verify, both authorizations are genuine, both `previous_commitment` values were
+correct when read — and "one current authoritative head", which AM-15 and AM-18 both rest on, is
+gone. The same shape defeats single-use authorization:
+
+```
+A23   Request A: authorization_id not consumed ✓
+      Request B: authorization_id not consumed ✓
+      A consumes                          B consumes
+```
+
+A `single-use` human approval spent twice, with every signature and every purpose-binding correct.
+This is not new semantics; it is A21 and A18 in the concurrent case.
+
+> **Whenever an operation's validity depends on authoritative state remaining unchanged, validating
+> against that state and mutating it must be atomic.**
+
+A single-use authorization is a **linear capability**: checking and consuming it is one operation,
+`consume_if_unconsumed(authorization_id)`, never a check followed by a write.
+
+Every authoritative state transition runs as one transaction:
+
+```
+begin
+  assert current_head == expected_previous        else ABORT
+  validate authorization for this action and scope
+  consume any single-use capabilities it spends
+  allocate the next epoch / sequence
+  install the new commitment and head
+commit atomically                                  (any failure aborts the whole transition)
+```
+
+This covers, at minimum: `REGISTRY`, `POLICY`, `APPLICABILITY`, project state transitions, `TASK`
+and `RUN` genesis wherever uniqueness matters, `GATE` freeze under §8's first-commitment-wins, and
+`HUMAN` consumption. AM-15's CAS was written for DECISION alone; it was never only DECISION's
+problem. Both were the round-9
 composed attacks.
 
 The checks the audit confirmed genuine — `acceptability()`'s executor-identity rejection,
@@ -765,6 +845,14 @@ must not pretend otherwise.
   actually leaked. Signatures at or after that bound are **definitely invalid**. Earlier signatures
   are **DISPUTED**: not silently valid, not silently void, requiring human re-affirmation. The
   runtime never asserts a precise compromise instant it cannot establish.
+- **Key state is evaluated at the TCB's acceptance epoch, never at `signed_at`.** Revision 10's
+  procedure contradicted this section: it tested key validity at a timestamp the signer chose. That
+  is harmless while the signer is honest and exactly wrong when it is not — revocation is the one
+  case where the adversary *does* hold the key, and can backdate `signed_at` to just before the
+  compromise bound. A signature first accepted into TCB state at or after the compromise epoch is
+  inadmissible whatever it claims about when it was made; only signatures already accepted before
+  that epoch fall under the DISPUTED rule above. The TCB's monotonic ordering (§10.3) is the only
+  clock this contract trusts.
 - **Retention**: retired and revoked keys are never forgotten. Forgetting a key makes every decision
   it signed unverifiable, which silently rewrites history.
 

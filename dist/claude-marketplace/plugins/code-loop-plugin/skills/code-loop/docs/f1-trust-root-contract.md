@@ -12,13 +12,13 @@ repository write access by construction.
 
 ## The two contracts
 
-Eight adversarial review rounds produced twenty-one amendments and twenty-one named attacks. Review 7
+Ten adversarial review rounds produced twenty-five amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 10, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 11, not frozen |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
@@ -35,7 +35,7 @@ attack T1B with the policy and obligation attacks
   → only then is F1 closed, and only after implementation
 ```
 
-## The twenty-one attacks, and where each now lives
+## The twenty-four attacks, and where each now lives
 
 ```
 T1A — Authenticated Trust Core
@@ -53,6 +53,9 @@ T1A — Authenticated Trust Core
   A19  Missing Domain Separation for Core Commitments
   A20  Authority-Class Gap / Genesis Signer Ambiguity
   A21  Authorization Replay / Human Approval Reuse
+  A22  Action Confusion / Unbound Action
+  A23  Human Authorization Double-Spend
+  A24  Authoritative Head Fork / Transition TOCTOU
 
 T1B — Trusted Policy & Obligation Semantics
   A5   Fresh-Run Laundering              (obligation half)
@@ -85,6 +88,7 @@ had just added — which is why the split matters more than another amendment wo
 | 7 | A16, A17, A18 succeeded; established the T1A/T1B seam | AM-16…18 |
 | 8 | A19, A20, A21 succeeded — all three inside the core, no new semantic layer | AM-19…21 |
 | 9 | first full 14-attack round on T1A: **12 blocked, 2 composed attacks passed**. §10's procedure still tested a field AM-19 had deleted and tested neither AM-20's grants nor AM-21's binding | AM-22 |
+| 10 | A22, A23, A24 — the granted action was never carried in the signed message, and consumption and head transitions were check-then-act, which are races | AM-23…25 |
 
 Three properties turned out to be distinct, and the contract needed each separately:
 
@@ -114,6 +118,20 @@ Round 9 also surfaced the maintenance hazard behind it: AM-19 replaced the paylo
 admissibility list written against the old payload was left in place, still testing a field that no
 longer existed. Amendments are not additive — each one must be checked against the procedure it
 touches.
+
+Round 10 added a fifth property, orthogonal to the other four:
+
+```
+atomicity      validation and mutation of authoritative state are one operation
+```
+
+A single-use authorization is a linear capability, and a head is a single-writer register. Rules
+written as "check, then act" hold against a sequential adversary and fail against a concurrent one,
+so A23 and A24 are the concurrent cases of A21 and A18 rather than new semantics.
+
+Rounds 8 through 10 introduced no new semantic layer: message identity, signer authority,
+authorization binding, then action binding and atomicity. The findings are converging on the
+substrate rather than expanding past it.
 
 ## Standing constraints
 
