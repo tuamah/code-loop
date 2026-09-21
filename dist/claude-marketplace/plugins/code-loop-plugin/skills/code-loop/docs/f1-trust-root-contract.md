@@ -12,13 +12,13 @@ repository write access by construction.
 
 ## The two contracts
 
-Eleven adversarial review rounds produced twenty-six amendments and twenty-four named attacks. Review 7
+Twelve adversarial review rounds produced twenty-seven amendments and twenty-four named attacks. Review 7
 established that the growth was not one contract getting stronger but **two contracts tangled
 together**, so they are now separate and freeze independently:
 
 | | Document | Question it answers | Status |
 |---|---|---|---|
-| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 12, not frozen |
+| **T1A** | [`f1-t1a-trust-core.md`](f1-t1a-trust-core.md) | Can any statement be authenticated, bound to an identity, a scope and an order, and read as part of a coherent state? | DRAFT rev 13, not frozen |
 | **T1B** | [`f1-t1b-policy-obligations.md`](f1-t1b-policy-obligations.md) | What do the authenticated statements mean — which obligations exist, when they apply, what may be concluded? | DRAFT rev 8, not frozen |
 
 T1A guarantees a Policy Commitment is authenticated, rooted and non-rollbackable. What it *says* is
@@ -90,6 +90,7 @@ had just added — which is why the split matters more than another amendment wo
 | 9 | first full 14-attack round on T1A: **12 blocked, 2 composed attacks passed**. §10's procedure still tested a field AM-19 had deleted and tested neither AM-20's grants nor AM-21's binding | AM-22 |
 | 10 | A22, A23, A24 — the granted action was never carried in the signed message, and consumption and head transitions were check-then-act, which are races | AM-23…25 |
 | 11 | full 17-attack round on T1A: **15 blocked, A23/A24 ambiguous** on the cross-authority case. AM-25 required one atomic transition across state §3.1 permits to be partitioned | AM-26 |
+| 12 | full 17-attack round: **17/17 blocked**, both concurrency composed cases included. One amendment still required, found outside the attack list: §12's migration grant had no representable message | AM-27 |
 
 Three properties turned out to be distinct, and the contract needed each separately:
 
@@ -136,8 +137,24 @@ must live. The findings are converging on the substrate rather than expanding pa
 is the first whose single finding was a **consistency defect between two existing sections** rather
 than a missing rule — §3.1 permitted a topology §10.1 could not survive.
 
-Still outstanding as evidence: no round has yet completed without an amendment. The shape of the
-findings is inductive support for convergence; only a clean round is proof of it.
+Round 12 is the first in which **every attack was blocked**. It still produced an amendment, and
+the amendment came from a direction the attack list does not cover: reading the contract for
+internal representability rather than attacking it. §12 sanctioned exactly one exemption from
+fail-closed and described it as "a decision record", while §6's closed model had no migration
+message and `DECISION`'s closed action enum could not express one — so the only sanctioned exemption
+was the only thing in the contract that could not be an authenticated message.
+
+That is worth naming as a third failure mode alongside the other two the reviews have produced:
+
+```
+a missing rule            rounds 1-8
+a rule the enforcing procedure does not implement   round 9
+a rule two sections contradict                      round 11
+a rule nothing in the model can express             round 12
+```
+
+Still outstanding as evidence: no round has yet completed without an amendment. Attack coverage is
+now demonstrated; representational completeness is what round 13 must show.
 
 ## Standing constraints
 
