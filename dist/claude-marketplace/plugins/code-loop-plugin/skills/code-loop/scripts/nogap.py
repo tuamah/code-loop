@@ -1308,9 +1308,14 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
 
             self_check_evidence_id = self_check["fields"]["execution_evidence_ids"][0]
             if state["current_phase"] == "P14":
+                # F2a migration: P14's declared required artifact is EXECUTION_EVIDENCE, which
+                # resolves against the runtime evidence ledger. This used to cite only the P15
+                # plan - an artifact of the phase being ENTERED, not proof of the work being
+                # LEFT - and nothing noticed, because the old rule accepted any non-empty list.
                 _transition(
                     project_root, "P15", args.actor, "BUILD candidate awaiting verification; entering verification ladder",
-                    artifact_refs=[plan["artifact_id"]], evidence_refs=[self_check_evidence_id], authority_class="tool",
+                    artifact_refs=[self_check_evidence_id, plan["artifact_id"]],
+                    evidence_refs=[self_check_evidence_id], authority_class="tool",
                 )
                 state = _load_state(project_root)
             if state["current_phase"] == "P15":
@@ -1377,9 +1382,13 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
             halted = True
 
     if methodology_tracked and not halted:
+        # F2a migration: P16 requires DETERMINISTIC_VERIFICATION_EVIDENCE, resolved against the
+        # evidence ledger. This cited only the P18 result - a record ABOUT the verification
+        # rather than the evidence OF it - which the old any-non-empty-list rule accepted.
         _transition(
             project_root, "P17", args.actor, "deterministic verification passed; entering reproducibility",
-            artifact_refs=[verification_result["artifact_id"]], evidence_refs=list(written), authority_class="tool",
+            artifact_refs=list(written) + [verification_result["artifact_id"]],
+            evidence_refs=list(written), authority_class="tool",
         )
         state = _load_state(project_root)
 
@@ -1421,9 +1430,11 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
             print(f"verification_status={label}")
             halted = True
         else:
+            # F2a migration: P17 requires REPRODUCIBILITY_EVIDENCE, same reasoning as P16.
             _transition(
                 project_root, "P18", args.actor, "reproducibility satisfied; entering independent review",
-                artifact_refs=[verification_result["artifact_id"]], evidence_refs=evidence_refs_p17, authority_class="tool",
+                artifact_refs=list(evidence_refs_p17) + [verification_result["artifact_id"]],
+                evidence_refs=evidence_refs_p17, authority_class="tool",
             )
             state = _load_state(project_root)
 

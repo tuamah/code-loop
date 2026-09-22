@@ -627,9 +627,47 @@ def _evaluate_transition(
                 )
 
     if current.required_evidence and not evidence_refs:
+        # Deliberately NOT conditioned on obligation_mode. required_evidence keeps its
+        # existing direction semantics; whether evidence is also a completion-only
+        # obligation is a separate question the contract does not answer, and changing
+        # both under one ruling would decide it by accident.
         reasons.append(f"{current_id} requires evidence ({current.required_evidence}) but none was supplied")
-    if current.required_artifacts and not artifact_refs:
+
+    # F2a semantic clarification: required_artifacts are COMPLETION OBLIGATIONS - what a
+    # phase must have produced to be finished with. They therefore bind when the edge means
+    # "this phase is complete, leave it forward", and not when it means "this phase could
+    # not be completed, recover out of it".
+    #
+    # Demanding a completion artifact on a recovery edge makes recovery impossible by
+    # construction: you go back from P20 precisely because RELEASE_READINESS_CHECKLIST could
+    # not be produced, so requiring it to leave traps the run in a phase it cannot finish
+    # and cannot exit. Before F2a nobody noticed the rule applied to backward edges at all,
+    # because any non-empty list satisfied it.
+    #
+    # The decision is made from the edge's DECLARED SOURCE, never from transition_type's
+    # name. `_classify_edge` labels an edge LOOP_ENTRY whenever the target belongs to a loop,
+    # including edges that are in `allowed_next` - so excluding LOOP_ENTRY by name would let
+    # a completed phase enter the next loop without the artifacts it owes. What matters is
+    # whether the edge came from allowed_next (or a profile forward skip), not what it is
+    # called once it gets there.
+    is_profile_forward_skip = transition_type == "SKIP"
+    obligation_mode = (
+        "COMPLETION" if (to in current.allowed_next or is_profile_forward_skip) else "RECOVERY")
+
+    if obligation_mode == "RECOVERY":
+        pass  # recovery exits owe no completion artifact
+    elif current.required_artifacts and not artifact_refs:
         reasons.append(f"{current_id} requires artifacts ({current.required_artifacts}) but none was supplied")
+    elif current.required_artifacts:
+        # F2a: each declared semantic KIND is proven independently against the references
+        # supplied. The old rule was satisfied by any non-empty list; "the artifact is of this
+        # phase's type" would only have been a more elegant version of the same hole, since a
+        # container of the right type does not prove the required meaning is inside it.
+        from nogap_required_kinds import blocking, check_required_kinds
+
+        for verdict in blocking(
+                check_required_kinds(project, list(current.required_artifacts), artifact_refs)):
+            reasons.append(f"{current_id} required artifact {verdict}")
 
     known_evidence = _runtime_evidence_ids(project)
     if known_evidence is not None and evidence_refs:
