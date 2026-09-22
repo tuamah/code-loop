@@ -626,7 +626,10 @@ def evaluate_release_readiness(
     would_be_ready = not drift_reasons and not blocking and verification_status != "INCOMPLETE"
     needs_transition = would_be_ready and state is not None and state["current_phase"] != "P20"
     if needs_transition:
-        dry_run = can_transition(project, "P20", artifact_refs=[readiness_id])
+        # F2a migration: P19 requires RELEASE_CANDIDATE. This cited only readiness_id - the
+        # record of the phase being ENTERED, not the candidate P19 is about.
+        _p19_refs = [release_candidate_id, readiness_id]
+        dry_run = can_transition(project, "P20", artifact_refs=_p19_refs)
         if not dry_run["allowed"]:
             blocking.append(
                 f"P19->P20 is not currently a legal methodology transition: {'; '.join(dry_run['blocked_reasons'])}"
@@ -652,7 +655,7 @@ def evaluate_release_readiness(
     if needs_transition:
         transition(
             project, "P20", actor, f"readiness {readiness_id} READY_FOR_DECISION; entering release readiness/deployment",
-            artifact_refs=[readiness_id], authority_class="human",
+            artifact_refs=_p19_refs, authority_class="human",
         )
 
     timestamp = _now()
