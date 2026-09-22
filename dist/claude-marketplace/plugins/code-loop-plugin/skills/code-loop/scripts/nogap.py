@@ -706,6 +706,40 @@ def cmd_run(args: argparse.Namespace) -> None:
         "payload": {"plan_id": plan_id},
     })
 
+    # M7-F PREBUILD BARRIER. AUTHORIZATION PRECEDES RESOURCE AVAILABILITY.
+    #
+    # This sits BEFORE route_implementer() deliberately. It used to sit after, which made
+    # the methodology decision subordinate to whether an executor happened to be connected:
+    # with --execute, no runtime and a project that may NOT build, cmd_run reported
+    # DISPATCH_FAILED and returned, never reaching the barrier at all. The run was refused
+    # for the wrong reason, and the record said so - "no executor available" instead of "not
+    # authorized to build". Restore the executor and the same request proceeds to the gate.
+    #
+    # "Unauthorized" is not a resource problem and must not be reported as one, so nothing
+    # about routing state is created first: no ROUTE_SELECTED, no ROUTE_UNAVAILABLE, no
+    # DISPATCH_INTENDED, no DISPATCH_FAILED. A refused request leaves no routing history
+    # suggesting it was ever a candidate for execution.
+    #
+    # The gate is `permitted` and ONLY `permitted`. It used to be
+    # `methodology_tracked and not permitted`, which meant this caller decided for itself
+    # which statuses to enforce and quietly exempted every project with no methodology
+    # state. Whether a project is methodology-TRACKED is a separate question from whether it
+    # may EXECUTE, and conflating them is what reopened the hole.
+    methodology_tracked = preflight["tracked"]
+    if args.execute and not preflight["permitted"]:
+        print(f"execution BLOCKED by methodology: {preflight['status']}")
+        for item in preflight["reasons"]:
+            print(f"  - {item}")
+        append_event(root, {
+            "id": f"event-methodology-blocked-{plan_id}",
+            "run_id": run_id,
+            "type": "METHODOLOGY_BLOCKED",
+            "created_at": now(),
+            "actor": actor,
+            "payload": {"plan_id": plan_id, "status": preflight["status"], "reasons": preflight["reasons"]},
+        })
+        return
+
     selected, considered = route_implementer()
     if selected is None:
         append_event(root, {
@@ -771,31 +805,6 @@ def cmd_run(args: argparse.Namespace) -> None:
 
     if not args.execute:
         print("execution dispatch is not implemented by default; pass --execute to run the selected AgentRuntime.")
-        return
-
-    # M7-F PREBUILD BARRIER: this is the one place real implementation execution can
-    # begin, so it is the one place the gate is enforced - before any worktree or
-    # process is created. There is no CLI flag that bypasses it.
-    #
-    # The gate is `permitted` and ONLY `permitted`. It used to be
-    # `methodology_tracked and not permitted`, which meant this caller decided for itself
-    # which statuses to enforce and quietly exempted every project with no methodology
-    # state - a second implicit permit sitting one layer above the first. Whether a project
-    # is methodology-TRACKED is a separate question from whether it may EXECUTE, and
-    # conflating them is what reopened the hole.
-    methodology_tracked = preflight["tracked"]
-    if not preflight["permitted"]:
-        print(f"execution BLOCKED by methodology: {preflight['status']}")
-        for item in preflight["reasons"]:
-            print(f"  - {item}")
-        append_event(root, {
-            "id": f"event-methodology-blocked-{plan_id}",
-            "run_id": run_id,
-            "type": "METHODOLOGY_BLOCKED",
-            "created_at": now(),
-            "actor": actor,
-            "payload": {"plan_id": plan_id, "status": preflight["status"], "reasons": preflight["reasons"]},
-        })
         return
 
     # getattr, not args.task_id: a Namespace built by hand (as some existing tests do,

@@ -264,6 +264,18 @@ class CmdRunEnforcesTheBarrier(Project):
         self.assertIn("execution BLOCKED by methodology", output)
         self.assertEqual(self.evidence_files(), [])
 
+    def test_a_blocked_project_creates_no_routing_state(self):
+        """Authorization precedes routing, so a refused run leaves no routing history."""
+        self.run_execute()
+        runtime = self.project / ".code-loop" / "runtime"
+        self.assertEqual(list((runtime / "routes").glob("*.json")), [])
+        self.assertEqual(list((runtime / "dispatches").glob("*.json")), [])
+        events = "".join(e.read_text(encoding="utf-8")
+                         for e in (runtime / "events").glob("*.jsonl"))
+        for never in ("ROUTE_SELECTED", "ROUTE_UNAVAILABLE",
+                      "DISPATCH_INTENDED", "DISPATCH_FAILED"):
+            self.assertNotIn(never, events)
+
     def test_there_is_still_no_bypass_flag(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "scripts" / "nogap.py"), "run", "--help"],
@@ -315,6 +327,95 @@ class CmdRunEnforcesTheBarrier(Project):
                           "methodology_tracked must be read from preflight['tracked']")
             self.assertNotIn("status", dumped,
                              "methodology_tracked is derived from `status`; read `tracked`")
+
+
+class AuthorizationPrecedesAvailability(Project):
+    """The ordering bug, and the property that pins it shut.
+
+    The barrier used to sit AFTER route_implementer(). That made the methodology decision
+    subordinate to whether an executor happened to be connected:
+
+        permitted=False + executor ready       -> METHODOLOGY_BLOCKED
+        permitted=False + executor unavailable -> DISPATCH_FAILED     <- wrong
+
+    Both are refusals, so both "look safe" - and that is exactly why it survived. The second
+    one refuses for the wrong reason: it reports a resource problem where there is an
+    authorization problem, and it says the request would have proceeded if only an executor
+    had been there. Unauthorized is not "try again when a runtime is free".
+
+    These two tests are deliberately independent and assert the SAME verdict. Neither alone
+    is sufficient: the first passes under the old ordering too.
+    """
+
+    def run_execute(self) -> str:
+        import contextlib
+        import io
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            nogap.cmd_run(argparse.Namespace(
+                path=str(self.project), actor="test", execute=True, execute_timeout=60))
+        return buffer.getvalue()
+
+    def set_adapters(self, ready: bool) -> None:
+        import nogap_adapters
+        saved = dict(nogap_adapters.ADAPTERS)
+        self.addCleanup(lambda: (nogap_adapters.ADAPTERS.clear(),
+                                 nogap_adapters.ADAPTERS.update(saved)))
+        nogap_adapters.ADAPTERS.clear()
+        if ready:
+            nogap_adapters.ADAPTERS["codex"] = _ReadyExecutor("codex")
+
+    def assert_blocked_by_methodology(self, output: str) -> None:
+        self.assertIn("execution BLOCKED by methodology", output)
+        self.assertIn("METHODOLOGY_NOT_INITIALIZED", output)
+        # The refusal is an authorization refusal, never a resource refusal.
+        self.assertNotIn("DISPATCH_FAILED", output)
+        self.assertNotIn("no ready implementer", output)
+
+    def test_A_blocked_with_an_executor_ready(self):
+        self.set_adapters(ready=True)
+        self.assert_blocked_by_methodology(self.run_execute())
+
+    def test_B_blocked_with_no_executor_available(self):
+        """The case the old ordering got wrong: no executor, and still METHODOLOGY_BLOCKED."""
+        self.set_adapters(ready=False)
+        self.assert_blocked_by_methodology(self.run_execute())
+
+    def test_B_creates_no_routing_state_either(self):
+        """With no executor the old code emitted ROUTE_UNAVAILABLE before deciding anything."""
+        self.set_adapters(ready=False)
+        self.run_execute()
+        runtime = self.project / ".code-loop" / "runtime"
+        events = "".join(e.read_text(encoding="utf-8")
+                         for e in (runtime / "events").glob("*.jsonl"))
+        for never in ("ROUTE_SELECTED", "ROUTE_UNAVAILABLE",
+                      "DISPATCH_INTENDED", "DISPATCH_FAILED"):
+            self.assertNotIn(never, events)
+        self.assertIn("METHODOLOGY_BLOCKED", events)
+
+    def test_both_cases_reach_the_identical_verdict(self):
+        """Stated as one property: executor availability does not change the decision."""
+        self.set_adapters(ready=True)
+        with_executor = self.run_execute()
+        self.setUp()
+        self.set_adapters(ready=False)
+        without_executor = self.run_execute()
+        for output in (with_executor, without_executor):
+            self.assertIn("execution BLOCKED by methodology: METHODOLOGY_NOT_INITIALIZED",
+                          output)
+
+    def test_planning_only_runs_still_route_normally(self):
+        """The gate is scoped to --execute: planning may still inspect and report."""
+        import contextlib
+        import io
+        self.set_adapters(ready=True)
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            nogap.cmd_run(argparse.Namespace(
+                path=str(self.project), actor="test", execute=False, execute_timeout=60))
+        output = buffer.getvalue()
+        self.assertIn("-> dispatch", output)
+        self.assertNotIn("execution BLOCKED", output)
 
 
 if __name__ == "__main__":

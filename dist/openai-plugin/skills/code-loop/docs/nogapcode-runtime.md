@@ -301,6 +301,17 @@ refused:
 | exists but will not load | `METHODOLOGY_UNRESOLVED` | no |
 | absent | `METHODOLOGY_NOT_INITIALIZED` | no |
 
+**Authorization precedes resource availability.** The gate sits before implementer routing,
+not after. It used to sit after, which made the methodology decision subordinate to whether an
+executor happened to be connected: with `--execute`, no runtime, and a project that may not
+build, the run reported `DISPATCH_FAILED` and never reached the gate at all. Both outcomes are
+refusals, which is why it survived - but the second refuses for the wrong reason, reporting a
+resource problem where there is an authorization problem, and implying the request would have
+proceeded had a runtime been free. A refused request now creates no routing state at all: no
+`ROUTE_SELECTED`, no `ROUTE_UNAVAILABLE`, no `DISPATCH_INTENDED`, no `DISPATCH_FAILED`.
+
+The gate is scoped to `--execute`; planning-only runs still plan, route and report as before.
+
 **There is no local exemption, by design.** An earlier draft of this change let a project grant
 itself an exception through an unsigned file in its own workspace. That replaced "no state
 permits" with "writing one local JSON permits" - the same hole with an extra step, because the
