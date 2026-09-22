@@ -54,6 +54,7 @@ class FixtureBuilder:
         self.artifacts: dict[str, dict[str, Any]] = {}
         self.evidence_ids: list[str] = []
         self.patch_path: str | None = None
+        self._lifecycle: dict[str, str] = {}
 
     # -- real records -------------------------------------------------------------------
 
@@ -101,6 +102,28 @@ class FixtureBuilder:
 
     # -- what a phase owes to be left forward ---------------------------------------------
 
+    def _lifecycle_for(self, phase_id: str) -> list[str]:
+        """Real lifecycle records for P19-P21, through nogap_lifecycle's own APIs.
+
+        Created lazily and cached, because these phases' obligations name records that the
+        lifecycle module owns - the builder resolves them through it rather than rebuilding
+        its storage, which is the mistake the F2a lifecycle resolver already made once.
+        """
+        import nogap_lifecycle as nlc
+
+        if phase_id == "P19":
+            if "rc" not in self._lifecycle:
+                rc = nlc.create_release_candidate(
+                    self.project, version="0.0.1", candidate_ref="fixture-rc",
+                    code_revision="deadbeef", actor=self.actor, reason="fixture candidate")
+                self._lifecycle["rc"] = rc["release_candidate_id"]
+            return [self._lifecycle["rc"]]
+        if phase_id == "P20":
+            return [self._lifecycle["readiness"]] if "readiness" in self._lifecycle else []
+        if phase_id == "P21":
+            return [self._lifecycle["observation"]] if "observation" in self._lifecycle else []
+        return []
+
     def obligations(self, phase_id: str) -> tuple[list[str], list[str]]:
         """(artifact_refs, evidence_refs) that genuinely satisfy leaving `phase_id`."""
         artifact_refs: list[str] = []
@@ -109,6 +132,8 @@ class FixtureBuilder:
         elif phase_id in _EVIDENCE_PHASES:
             kind, authority = _EVIDENCE_PHASES[phase_id]
             artifact_refs.append(self._runtime_evidence(kind, authority))
+        elif phase_id in {"P19", "P20", "P21"}:
+            artifact_refs.extend(self._lifecycle_for(phase_id))
         else:
             made = self._artifact_for(phase_id)
             if made:

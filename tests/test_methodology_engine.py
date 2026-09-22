@@ -66,6 +66,21 @@ def advance(project: Path, *targets: str, actor: str = "team") -> dict:
 _BUILDERS: dict[Path, object] = {}
 
 
+def real_refs(project: Path, phase_id: str | None = None) -> tuple[list[str], list[str]]:
+    """Genuine (artifact_refs, evidence_refs) for leaving `phase_id` (default: current).
+
+    Tests that only need to BE somewhere use this instead of inventing ids. A negative test
+    that supplies a fictitious reference no longer proves what it claims: it would be
+    rejected for the missing reference rather than for the reason under test.
+    """
+    from methodology_fixture_builder import FixtureBuilder
+
+    builder = _BUILDERS.get(project)
+    if builder is None:
+        builder = _BUILDERS[project] = FixtureBuilder(project)
+    return builder.obligations(phase_id or status(project)["current_phase"])
+
+
 FULL_FORWARD_TO_P18 = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11", "P12", "P13", "P14", "P15", "P16", "P17", "P18"]
 
 
@@ -74,7 +89,9 @@ class BasicForwardTransitionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_project(project, "research", "low", "low", actor="test")
-            state = transition(project, "P1", actor="human:owner", reason="intent recorded", artifact_refs=["intent-doc"])
+            _artifacts, _evidence = real_refs(project, "P0")
+            state = transition(project, "P1", actor="human:owner", reason="intent recorded",
+                               artifact_refs=_artifacts, evidence_refs=_evidence)
             self.assertEqual(state["current_phase"], "P1")
             self.assertEqual(state["transition_history"][-1]["transition_type"], "FORWARD")
 
@@ -120,7 +137,8 @@ class BackwardTransitionTests(unittest.TestCase):
             project = Path(tmp)
             self._to_p18(project)
             state = transition(project, "P13", actor="verifier", reason="implementation defect found",
-                                evidence_refs=["review-1"], artifact_refs=["verdict-doc"], authority_class="verification")
+                                evidence_refs=real_refs(project)[1], artifact_refs=real_refs(project)[0],
+                                authority_class="verification")
             self.assertEqual(state["current_phase"], "P13")
             self.assertEqual(state["transition_history"][-1]["transition_type"], "LOOP_RETURN")
 
@@ -129,7 +147,8 @@ class BackwardTransitionTests(unittest.TestCase):
             project = Path(tmp)
             self._to_p18(project)
             state = transition(project, "P6", actor="verifier", reason="requirement defect found",
-                                evidence_refs=["review-1"], artifact_refs=["verdict-doc"], authority_class="verification")
+                                evidence_refs=real_refs(project)[1], artifact_refs=real_refs(project)[0],
+                                authority_class="verification")
             self.assertEqual(state["current_phase"], "P6")
 
     def test_7_p18_to_p7_architecture_defect_allowed(self) -> None:
@@ -137,7 +156,8 @@ class BackwardTransitionTests(unittest.TestCase):
             project = Path(tmp)
             self._to_p18(project)
             state = transition(project, "P7", actor="verifier", reason="architecture defect found",
-                                evidence_refs=["review-1"], artifact_refs=["verdict-doc"], authority_class="verification")
+                                evidence_refs=real_refs(project)[1], artifact_refs=real_refs(project)[0],
+                                authority_class="verification")
             self.assertEqual(state["current_phase"], "P7")
 
     def test_p18_to_p3_prior_art_reconsideration_allowed(self) -> None:
@@ -146,7 +166,8 @@ class BackwardTransitionTests(unittest.TestCase):
             project = Path(tmp)
             self._to_p18(project)
             state = transition(project, "P3", actor="verifier", reason="prior art reconsideration justified",
-                                evidence_refs=["review-1"], artifact_refs=["verdict-doc"], authority_class="verification")
+                                evidence_refs=real_refs(project)[1], artifact_refs=real_refs(project)[0],
+                                authority_class="verification")
             self.assertEqual(state["current_phase"], "P3")
 
 
@@ -181,7 +202,7 @@ class RepairLoopTests(unittest.TestCase):
             loops_before_repair = len(load_state(project)["loops"])  # research/build/verify loops already opened+resolved en route
             transition(project, "REPAIR_LOOP", actor="operator", reason="incident", evidence_refs=["a"])
             state = transition(project, "P13", actor="operator", reason="root cause found, repairing",
-                                evidence_refs=["a"], artifact_refs=["root-cause-doc"])
+                                evidence_refs=real_refs(project)[1], artifact_refs=real_refs(project)[0])
             # nothing removed: every prior loop (research/build/verify) plus this repair loop remains
             self.assertEqual(len(state["loops"]), loops_before_repair + 1)
             repair_loop = next(loop for loop in state["loops"] if loop["loop_type"] == "repair_loop")
@@ -207,7 +228,7 @@ class EvolveLoopTests(unittest.TestCase):
             init_project(project, "production", "medium", "low", actor="test")
             advance(project, *FULL_FORWARD_TO_P18, "P19", "P20", "P21", "P22")
             state = transition(project, "P6", actor="owner", reason="evolution requires new requirements",
-                                evidence_refs=["evolution-evidence"], artifact_refs=["proposal-doc"])
+                                evidence_refs=real_refs(project)[1], artifact_refs=real_refs(project)[0])
             self.assertEqual(state["current_phase"], "P6")
 
 
@@ -314,8 +335,9 @@ class ProfileAndSkipTests(unittest.TestCase):
             init_project(project, "experimental", "low", "low", actor="test")  # -> LIGHT
             advance(project, "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11",
                     "P12", "P13", "P14", "P15", "P16")
+            _a, _e = real_refs(project)
             state = transition(project, "P19", actor="team", reason="light profile allows skipping deep verification",
-                                evidence_refs=["ev"], artifact_refs=["x"])
+                                evidence_refs=_e, artifact_refs=_a)
             self.assertEqual(state["current_phase"], "P19")
             last = state["transition_history"][-1]
             self.assertEqual(last["transition_type"], "SKIP")
@@ -331,10 +353,12 @@ class ProfileAndSkipTests(unittest.TestCase):
                     "P12", "P13", "P14", "P15", "P16")
             # with VERIFY escalated to STRICT, P17/P18 are no longer skippable: P19 is not a legal edge
             with self.assertRaises(MethodologyValidationError):
-                transition(project, "P19", actor="team", reason="try to skip anyway", artifact_refs=["x"])
+                _a, _e = real_refs(project)
+                transition(project, "P19", actor="team", reason="try to skip anyway",
+                           artifact_refs=_a, evidence_refs=_e)
             # but going through P17 properly still works
             state = transition(project, "P17", actor="team", reason="STRICT requires this",
-                                evidence_refs=["ev"], artifact_refs=["x"])
+                                evidence_refs=real_refs(project)[1], artifact_refs=real_refs(project)[0])
             self.assertEqual(state["current_phase"], "P17")
 
     def test_explicit_phase_still_reachable_even_when_skippable(self) -> None:
