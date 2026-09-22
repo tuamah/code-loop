@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 from nogap_methodology import (  # noqa: E402
     MethodologyValidationError,
@@ -33,16 +34,36 @@ from nogap_methodology import (  # noqa: E402
 
 
 def advance(project: Path, *targets: str, actor: str = "team") -> dict:
-    """Fast-forwards through a chain of forward transitions, supplying whatever refs
-    each phase's contract requires (generic placeholders - content doesn't matter here,
-    only presence/absence does at this milestone)."""
+    """Fast-forwards through forward transitions, satisfying each phase's obligations FOR REAL.
+
+    This used to pass `artifact_refs=["artifact-placeholder"]` at every step, and its own
+    docstring said why: "content doesn't matter here, only presence/absence does at this
+    milestone". That was true of the rule as it then existed. F2a made it false - a reference
+    must now resolve to something of the declared semantic kind - and this suite was standing
+    on scaffolding that resolved to nothing.
+
+    The repair is a shared fixture factory, not a seam inside transition(). That function is
+    F2a's enforcement point, so a test-only bypass there would route these tests around the
+    very property they exist to exercise.
+    """
+    from methodology_fixture_builder import FixtureBuilder
+
+    builder = _BUILDERS.get(project)
+    if builder is None:
+        builder = _BUILDERS[project] = FixtureBuilder(project, actor=actor)
     state = None
     for target in targets:
+        current = status(project)["current_phase"]
+        artifact_refs, evidence_refs = builder.obligations(current)
         state = transition(
             project, target, actor=actor, reason=f"advance to {target}",
-            evidence_refs=["ev-placeholder"], artifact_refs=["artifact-placeholder"],
+            evidence_refs=evidence_refs, artifact_refs=artifact_refs,
         )
     return state
+
+
+#: One builder per project, so refs created for an earlier phase are still reachable later.
+_BUILDERS: dict[Path, object] = {}
 
 
 FULL_FORWARD_TO_P18 = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11", "P12", "P13", "P14", "P15", "P16", "P17", "P18"]
