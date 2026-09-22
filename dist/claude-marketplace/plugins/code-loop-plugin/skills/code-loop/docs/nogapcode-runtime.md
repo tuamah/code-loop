@@ -301,6 +301,16 @@ refused:
 | exists but will not load | `METHODOLOGY_UNRESOLVED` | no |
 | absent | `METHODOLOGY_NOT_INITIALIZED` | no |
 
+**Every execution path passes the same gate.** `nogap execute` is a direct execution path -
+it creates a worktree and runs a command without going near the orchestrator. It used to do so
+with no methodology check at all, so a project refused through `nogap run --execute` could run
+the identical command through `nogap execute` and produce identical execution evidence. Closing
+a barrier on one path and not the other closes nothing: the adversary picks the other path.
+
+Both paths now call the same `preflight_build()` and gate on the same `permitted` field - not
+two checks that happen to agree, which are free to drift. A refused `nogap execute` starts no
+process, creates no worktree, writes no evidence, and exits non-zero.
+
 **Authorization precedes resource availability.** The gate sits before implementer routing,
 not after. It used to sit after, which made the methodology decision subordinate to whether an
 executor happened to be connected: with `--execute`, no runtime, and a project that may not

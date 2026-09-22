@@ -1042,6 +1042,37 @@ def cmd_execute(args: argparse.Namespace) -> None:
     from nogap_execution import GitWorktreeExecutionBackend
 
     project_root = Path(args.path).resolve()
+
+    # AUTHORIZATION, before anything can start a process.
+    #
+    # `nogap execute` is a DIRECT execution path: it creates a worktree and runs a command
+    # without going anywhere near the orchestrator. It used to do that with no methodology
+    # check whatsoever, which made it a complete bypass of the prebuild barrier - a project
+    # refused through `nogap run --execute` could run the identical command through
+    # `nogap execute` and produce identical execution evidence. Closing the barrier on one
+    # path and not the other closes nothing: the adversary picks the other path.
+    #
+    # It calls the SAME function on the SAME field as the orchestrated path. Not a parallel
+    # check that happens to agree today - the same decision, so the two cannot drift.
+    from nogap_build import preflight_build
+
+    preflight = preflight_build(project_root)
+    print(f"methodology: status={preflight['status']}")
+    if not preflight["permitted"]:
+        for item in preflight["reasons"]:
+            print(f"  - {item}")
+        append_event(root, {
+            "id": f"event-methodology-blocked-execute-{uuid.uuid4().hex[:8]}",
+            "run_id": run_id,
+            "type": "METHODOLOGY_BLOCKED",
+            "created_at": now(),
+            "actor": args.actor,
+            "payload": {"command": command, "status": preflight["status"],
+                        "reasons": preflight["reasons"], "path": "cmd_execute"},
+        })
+        raise SystemExit(
+            f"FAIL: execution BLOCKED by methodology: {preflight['status']}")
+
     backend = GitWorktreeExecutionBackend(project_root)
     result = backend.run(command, timeout=args.timeout)
 
