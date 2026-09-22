@@ -33,7 +33,8 @@ from nogap_methodology import (  # noqa: E402
 )
 
 
-def advance(project: Path, *targets: str, actor: str = "team") -> dict:
+def advance(project: Path, *targets: str, actor: str = "team",
+            materialize_evidence: bool = True) -> dict:
     """Fast-forwards through forward transitions, satisfying each phase's obligations FOR REAL.
 
     This used to pass `artifact_refs=["artifact-placeholder"]` at every step, and its own
@@ -48,9 +49,23 @@ def advance(project: Path, *targets: str, actor: str = "team") -> dict:
     """
     from methodology_fixture_builder import FixtureBuilder
 
+    if "P21" in targets and project not in _BUILDERS:
+        # P21 is entered by a SUCCEEDED deployment, which needs an ACCEPT decision, which
+        # needs independent authoritative verification. None of that can be advanced past,
+        # so the fixture performs the real chain instead of arranging its appearance.
+        from methodology_fixture_builder import advance_via_real_pipeline
+
+        _BUILDERS[project] = advance_via_real_pipeline(project, actor=actor)
+        remaining = [t for t in targets
+                     if t not in {*FULL_FORWARD_TO_P18, "P19", "P20", "P21"}]
+        if not remaining:
+            return load_state(project)
+        targets = tuple(remaining)
+
     builder = _BUILDERS.get(project)
     if builder is None:
-        builder = _BUILDERS[project] = FixtureBuilder(project, actor=actor)
+        builder = _BUILDERS[project] = FixtureBuilder(
+            project, actor=actor, materialize_evidence=materialize_evidence)
     state = None
     for target in targets:
         current = status(project)["current_phase"]
@@ -74,7 +89,8 @@ def advance(project: Path, *targets: str, actor: str = "team") -> dict:
 _BUILDERS: dict[Path, object] = {}
 
 
-def real_refs(project: Path, phase_id: str | None = None) -> tuple[list[str], list[str]]:
+def real_refs(project: Path, phase_id: str | None = None,
+              materialize_evidence: bool = True) -> tuple[list[str], list[str]]:
     """Genuine (artifact_refs, evidence_refs) for leaving `phase_id` (default: current).
 
     Tests that only need to BE somewhere use this instead of inventing ids. A negative test
@@ -85,7 +101,8 @@ def real_refs(project: Path, phase_id: str | None = None) -> tuple[list[str], li
 
     builder = _BUILDERS.get(project)
     if builder is None:
-        builder = _BUILDERS[project] = FixtureBuilder(project)
+        builder = _BUILDERS[project] = FixtureBuilder(
+            project, materialize_evidence=materialize_evidence)
     return builder.obligations(phase_id or status(project)["current_phase"])
 
 
@@ -312,16 +329,22 @@ class EvidenceResolutionTests(unittest.TestCase):
             project = Path(tmp)
             init_project(project, "research", "low", "low", actor="test")
             advance(project, "P1", "P2", "P3")
+            # Artifacts first: the builder establishes the Trust runtime on first need, and
+            # `nogap init` refuses a project whose runtime directory already exists - so a
+            # bare mkdir here would lock it out.
+            p3_artifacts = real_refs(project, "P3")[0]
             evidence_dir = project / ".code-loop" / "runtime" / "evidence"
-            evidence_dir.mkdir(parents=True)
+            evidence_dir.mkdir(parents=True, exist_ok=True)
             (evidence_dir / "evidence-real.json").write_text(json.dumps({"id": "evidence-real", "status": "passed"}), encoding="utf-8")
             with self.assertRaises(MethodologyValidationError) as ctx:
                 transition(project, "P4", actor="team", reason="cite a fake ref",
-                           evidence_refs=["evidence-does-not-exist"], artifact_refs=["gap-doc"])
+                           evidence_refs=["evidence-does-not-exist"],
+                           artifact_refs=p3_artifacts)
             self.assertIn("unknown evidence reference", str(ctx.exception))
             # the real one works fine
             state = transition(project, "P4", actor="team", reason="cite the real ref",
-                                evidence_refs=["evidence-real"], artifact_refs=["gap-doc"])
+                                evidence_refs=["evidence-real"],
+                                artifact_refs=p3_artifacts)
             self.assertEqual(state["current_phase"], "P4")
 
     def test_unresolvable_evidence_ref_accepted_when_no_runtime_exists(self) -> None:
@@ -330,9 +353,14 @@ class EvidenceResolutionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_project(project, "research", "low", "low", actor="test")
-            advance(project, "P1", "P2", "P3")
+            # materialize_evidence=False: this test is ABOUT the absence of a ledger, so the
+            # fixture must not create one. The unresolvable evidence ref is the SUBJECT here,
+            # not scaffolding - it is what "accepted at face value" means.
+            advance(project, "P1", "P2", "P3", materialize_evidence=False)
             state = transition(project, "P4", actor="team", reason="no runtime to check against",
-                                evidence_refs=["anything-goes-here"], artifact_refs=["gap-doc"])
+                                evidence_refs=["anything-goes-here"],
+                                artifact_refs=real_refs(project, "P3",
+                                                        materialize_evidence=False)[0])
             self.assertEqual(state["current_phase"], "P4")
 
 
@@ -376,7 +404,9 @@ class ProfileAndSkipTests(unittest.TestCase):
             init_project(project, "experimental", "low", "low", actor="test")
             advance(project, "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11",
                     "P12", "P13", "P14", "P15", "P16")
-            state = transition(project, "P17", actor="team", reason="doing it anyway", evidence_refs=["ev"], artifact_refs=["x"])
+            _a, _e = real_refs(project)
+            state = transition(project, "P17", actor="team", reason="doing it anyway",
+                               evidence_refs=_e, artifact_refs=_a)
             self.assertEqual(state["current_phase"], "P17")
             self.assertEqual(state["transition_history"][-1]["transition_type"], "FORWARD")
 
@@ -403,8 +433,14 @@ class PhaseStatusTests(unittest.TestCase):
             # refs supplied evaluate_phase_status is honestly BLOCKED, never a false READY_TO_EXIT.
             self.assertEqual(evaluate_phase_status(project), "BLOCKED")
             # can_transition confirms the same edge genuinely becomes allowed once real refs exist.
+            # This asserted `artifact_refs=["intent-doc"]` - a string resolving to nothing, which
+            # satisfied the pre-F2a rule. The CLAIM was always right; only its choice of
+            # reference was obsolete, and the comment above says so in its own words. It now
+            # proves both halves: a fictitious reference is refused, a real one is accepted.
             self.assertFalse(can_transition(project, "P1")["allowed"])
-            self.assertTrue(can_transition(project, "P1", artifact_refs=["intent-doc"])["allowed"])
+            self.assertFalse(can_transition(project, "P1", artifact_refs=["intent-doc"])["allowed"])
+            self.assertTrue(
+                can_transition(project, "P1", artifact_refs=real_refs(project, "P0")[0])["allowed"])
             advance(project, "P1")
             self.assertEqual(evaluate_phase_status(project), "BLOCKED")  # P1 requires artifacts too
 
