@@ -132,6 +132,12 @@ class FixtureBuilder:
         elif phase_id in _EVIDENCE_PHASES:
             kind, authority = _EVIDENCE_PHASES[phase_id]
             artifact_refs.append(self._runtime_evidence(kind, authority))
+            if phase_id == "P14":
+                # P14's declared obligation is EXECUTION_EVIDENCE, but the verification
+                # binding is anchored to the P14_SELF_CHECK artifact - readiness later
+                # reports the task's evidence as stale without it. Both are real records
+                # created through production APIs; neither substitutes for the other.
+                self._artifact_for("P14")
         elif phase_id in {"P19", "P20", "P21"}:
             artifact_refs.extend(self._lifecycle_for(phase_id))
         else:
@@ -147,6 +153,50 @@ class FixtureBuilder:
                                  else self._runtime_evidence("execution", "execution"))
         return artifact_refs, evidence_refs
 
+    def _drive_lifecycle(self) -> None:
+        """Hand P18->P21 to nogap_lifecycle and let IT move the phases.
+
+        Orchestration only. The builder does not create candidates, readiness records,
+        deployments or observations of its own, and does not decide when a phase is complete:
+        those are lifecycle semantics and the owner module holds them. Notably
+        evaluate_release_readiness() performs the P19->P20 transition itself, so a builder
+        that "made a readiness record" mid-walk would be reimplementing that module's rules
+        beside it - and a second copy of a rule is free to drift from the real one.
+        """
+        import nogap_lifecycle as nlc
+
+        # The candidate carries the REAL verification evidence the builder already produced:
+        # freeze_release_candidate derives its transition evidence from verification_refs, so
+        # supplying them is handing the owner API what it asks for, not second-guessing it.
+        # P18's own obligation. The walk stops AT P18, so this is created here rather than
+        # on the way out - readiness refuses a candidate whose task has no recorded
+        # methodology verification result, and rightly so.
+        if "P18" not in self.artifacts:
+            self._artifact_for("P18")
+        verification = [e for e in self.evidence_ids]
+        # included_task_refs is the candidate's link to the work it contains; readiness
+        # refuses without it ("minimum P15/P16 verification is required at every profile").
+        # The builder supplies the REAL task it created at P12.
+        tasks = ([self.artifacts["P12"]["fields"]["task_id"]]
+                 if "P12" in self.artifacts else [])
+        rc = nlc.create_release_candidate(
+            self.project, version="0.0.1", candidate_ref="fixture-rc",
+            code_revision="deadbeef", verification_refs=verification,
+            included_task_refs=tasks, actor=self.actor, reason="fixture candidate")
+        rc_id = rc["release_candidate_id"]
+        nlc.freeze_release_candidate(self.project, rc_id, actor=self.actor, reason="freeze")
+        readiness = nlc.evaluate_release_readiness(
+            self.project, rc_id, actor=self.actor, reason="evaluate readiness")
+        deployment = nlc.create_deployment(
+            self.project, release_candidate_id=rc_id,
+            readiness_id=readiness["readiness_id"], environment="production",
+            deployment_target="k8s", actor=self.actor, reason="deploy")
+        nlc.record_deployment_result(
+            self.project, deployment["deployment_id"], status="SUCCEEDED",
+            actor=self.actor, reason="deploy completed")
+        self._lifecycle.update({"rc": rc_id, "readiness": readiness["readiness_id"],
+                                "deployment": deployment["deployment_id"]})
+
     def advance_to(self, target_phase: str) -> dict[str, Any]:
         """Walk forward to `target_phase`, satisfying each phase's obligations for real."""
         definition = load_methodology()
@@ -158,6 +208,10 @@ class FixtureBuilder:
                 raise AssertionError(
                     f"no forward path from {state['current_phase']} to {target_phase}")
             current = definition.get_phase(state["current_phase"])
+            if current.id == "P18" and target_phase in {"P19", "P20", "P21"}:
+                self._drive_lifecycle()
+                state = mstatus(self.project)
+                continue
             if not current.allowed_next:
                 raise AssertionError(f"{current.id} has no forward edge")
             nxt = current.allowed_next[0]
@@ -167,6 +221,19 @@ class FixtureBuilder:
                                artifact_refs=artifact_refs, evidence_refs=evidence_refs,
                                authority_class="tool")
         return state
+
+
+def _binding_snapshot(self) -> dict[str, Any]:
+    """The live binding fields for this builder's task, via the module that owns them."""
+    from nogap_verify_binding import verification_binding_snapshot
+
+    # gate_hash: the live frozen Trust gate when one exists. These fixtures have no Trust
+    # runtime, so the snapshot's own None is carried forward as a declared marker rather
+    # than left empty - the field is required, and an invented hash would read as a real
+    # gate that was never frozen.
+    snapshot = verification_binding_snapshot(
+        self.project, self.artifacts["P12"]["fields"]["task_id"], "no-frozen-gate")
+    return snapshot  # requirement_refs included: readiness compares it against the contract
 
 
 def _f(**kw):
@@ -235,18 +302,23 @@ _FIELDS: dict[str, Any] = {
         required_validation_levels=["INTERNAL"], required_evidence_kinds=["deterministic"],
         independent_review_required=False, reproducibility_required=False,
         external_validation_required=False),
+    # The binding fields are computed by nogap_verify_binding, not invented. Readiness checks
+    # this verification against the LIVE bindings, so placeholder hashes read as "stale" -
+    # correctly. The owner module already answers "what would a fresh result's binding be",
+    # and the builder asks it rather than recomputing the same thing beside it.
     "P18_VERIFICATION_RESULT": lambda self: dict(
         verification_plan_id=self.artifacts["P15"]["fields"]["verification_plan_id"],
-        task_id=self.artifacts["P12"]["fields"]["task_id"], candidate_hash="sha256:c",
-        patch_hash="sha256:p", gate_hash="sha256:g",
-        methodology_version_at_verification=load_methodology().version,
-        profile_at_verification="LIGHT", task_snapshot_hash="sha256:t",
-        executor_actor_id="agent:fixture", levels_attempted=["STATIC_CHECKS"],
-        deterministic_result="passed", reproducibility_result="SKIPPED_PER_PROFILE_POLICY",
-        independent_review_result="SKIPPED_PER_PROFILE_POLICY"),
+        profile_at_verification="LIGHT", executor_actor_id="agent:fixture",
+        levels_attempted=["STATIC_CHECKS"], deterministic_result="passed",
+        reproducibility_result="SKIPPED_PER_PROFILE_POLICY",
+        independent_review_result="SKIPPED_PER_PROFILE_POLICY",
+        task_id=self.artifacts["P12"]["fields"]["task_id"],
+        **_binding_snapshot(self)),
     "P14_SELF_CHECK": lambda self: dict(
         task_id=self.artifacts["P12"]["fields"]["task_id"], patch_hash="sha256:p",
-        execution_evidence_ids=[self.evidence_ids[-1]] if self.evidence_ids else []),
+        execution_evidence_ids=[self.evidence_ids[-1]] if self.evidence_ids else [],
+        changed_files=["x"], process_outcome="completed",
+        expected_effect_result="EXPECTED_EFFECT_PRESENT"),
     "P12_TASK_CONTRACT": lambda self: dict(
         goal="implement X", scope=["svc1"], forbidden_scope=["unrelated"],
         acceptance_criteria=["X happens"], planned_tests=["unit"],
