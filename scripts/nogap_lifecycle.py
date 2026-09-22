@@ -795,7 +795,12 @@ def record_deployment_result(
         if state is not None and state["current_phase"] != "P21":
             known_evidence = _evidence_ids(project) or set()
             transition_evidence_refs = [ref for ref in prospective_evidence_refs if ref in known_evidence]
-            dry_run = can_transition(project, "P21", artifact_refs=[deployment_id], evidence_refs=transition_evidence_refs)
+            # F2a-Lifecycle: P20 declares RELEASE_READINESS_CHECKLIST. This cited
+            # deployment_id - the record being CREATED for the phase being entered - instead
+            # of the readiness record the phase being LEFT requires. The deployment record
+            # carries readiness_id, so the correct reference was available all along.
+            _p20_refs = [record["readiness_id"], deployment_id]
+            dry_run = can_transition(project, "P21", artifact_refs=_p20_refs, evidence_refs=transition_evidence_refs)
             if not dry_run["allowed"]:
                 raise MethodologyValidationError(
                     f"lifecycle: cannot record deployment {deployment_id} as SUCCEEDED - P21 is not currently a legal "
@@ -806,7 +811,7 @@ def record_deployment_result(
             # ordering rationale and its disclosed cross-file atomicity limitation.
             transition(
                 project, "P21", actor, f"deployment {deployment_id} succeeded; entering production observation",
-                artifact_refs=[deployment_id], evidence_refs=transition_evidence_refs, authority_class="human",
+                artifact_refs=_p20_refs, evidence_refs=transition_evidence_refs, authority_class="human",
             )
 
     record["status"] = status
@@ -1047,7 +1052,12 @@ def select_improvement(project: Path, improvement_id: str, *, actor: str, reason
     if state is not None and state["current_phase"] != "P22":
         known_evidence = _evidence_ids(project) or set()
         transition_evidence_refs = [ref for ref in record["evidence_refs"] if ref in known_evidence]
-        dry_run = can_transition(project, "P22", artifact_refs=[improvement_id], evidence_refs=transition_evidence_refs)
+        # F2a-Lifecycle: P21 declares OPERATIONAL_OBSERVATIONS. This cited improvement_id -
+        # the record being created for P22 - instead of the operational observations P21
+        # requires. Same defect as P20->P21; it had not surfaced only because no test drove
+        # this transition with enforcement reaching it.
+        _p21_refs = list(record["operation_refs"]) + [improvement_id]
+        dry_run = can_transition(project, "P22", artifact_refs=_p21_refs, evidence_refs=transition_evidence_refs)
         if not dry_run["allowed"]:
             raise MethodologyValidationError(
                 f"lifecycle: cannot select improvement {improvement_id} - P22 is not currently a legal methodology "
@@ -1055,7 +1065,7 @@ def select_improvement(project: Path, improvement_id: str, *, actor: str, reason
             )
         transition(
             project, "P22", actor, f"improvement {improvement_id} selected for pursuit; entering EVOLVE",
-            artifact_refs=[improvement_id], evidence_refs=transition_evidence_refs, authority_class="human",
+            artifact_refs=_p21_refs, evidence_refs=transition_evidence_refs, authority_class="human",
         )
 
     record["status"] = "SELECTED"
@@ -1164,7 +1174,17 @@ def create_lifecycle_decision(
     if needs_transition:
         known_evidence = _evidence_ids(project) or set()
         transition_evidence_refs = [ref for ref in evidence_refs if ref in known_evidence]
-        dry_run = can_transition(project, "P23", artifact_refs=[lifecycle_decision_id], evidence_refs=transition_evidence_refs)
+        # F2a-Lifecycle: P22 declares IMPROVEMENT_PROPOSAL. This cited lifecycle_decision_id -
+        # the record being created for P23. Same defect, third instance.
+        #
+        # The improvement is RESOLVED FROM AUTHORITATIVE STATE, not demanded from the caller.
+        # Being at P22 at all means an improvement was SELECTED to get here, so the store
+        # already knows which one; making 33 call sites re-supply a fact the store holds
+        # would invite them to supply the wrong one. Explicit improvement_refs still win when
+        # given - the caller may be deciding about a specific proposal.
+        _selected = [r["improvement_id"] for r in list_improvements(project, status="SELECTED")]
+        _p22_refs = list(improvement_refs) + _selected + [lifecycle_decision_id]
+        dry_run = can_transition(project, "P23", artifact_refs=_p22_refs, evidence_refs=transition_evidence_refs)
         if not dry_run["allowed"]:
             raise MethodologyValidationError(
                 f"lifecycle: cannot record lifecycle decision - P23 is not currently a legal methodology transition "
@@ -1176,7 +1196,7 @@ def create_lifecycle_decision(
     if needs_transition:
         transition(
             project, "P23", actor, f"lifecycle decision {lifecycle_decision_id} recorded; entering lifecycle decision phase",
-            artifact_refs=[lifecycle_decision_id], evidence_refs=transition_evidence_refs, authority_class="human",
+            artifact_refs=_p22_refs, evidence_refs=transition_evidence_refs, authority_class="human",
         )
 
     timestamp = _now()
