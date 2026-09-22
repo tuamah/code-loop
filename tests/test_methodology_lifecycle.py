@@ -258,17 +258,47 @@ class LifecycleFixture(unittest.TestCase):
         return {"candidate": rc, "readiness": readiness, "deployment": deployment}
 
     def _force_phase_p22(self) -> None:
-        """Test-only helper: drives current_phase to P22 through the SAME sanctioned
-        transition() API this module itself uses, purely to exercise
-        reenter_for_improvement()/create_lifecycle_decision() without re-running the
-        entire P19-P22 dance in every routing test. A no-op once already at/past P22."""
+        """Drive current_phase to P22 by actually PERFORMING the release lifecycle.
+
+        This used to walk P18->P22 calling transition() directly with
+        `artifact_refs=["test-artifact"]` - a literal string that resolves to nothing. It
+        passed only because the pre-F2a rule accepted any non-empty list, so the fixture had
+        been fictitious from the start and nothing could tell. F2a's attribution traced 67
+        failures to two root causes, and this stub was one of them.
+
+        It now goes through the owner APIs and uses the real ids they return, so every
+        transition cites a record that genuinely exists. A fixture that fakes the very
+        references under test cannot witness the rule it is standing in for.
+
+        A no-op once already at or past P22.
+        """
         state = mstatus(self.project)
-        path = {"P18": "P19", "P19": "P20", "P20": "P21", "P21": "P22"}
-        while state["current_phase"] in path:
-            target = path[state["current_phase"]]
-            transition(self.project, target, "test-harness", "force-advance for routing test",
-                       artifact_refs=["test-artifact"], evidence_refs=[self.exec_evidence_id], authority_class="tool")
-            state = mstatus(self.project)
+        if state["current_phase"] not in {"P18", "P19", "P20", "P21"}:
+            return
+
+        # Phase-aware: a caller that already performed a release is AT P21 with a real
+        # deployment, and freezing a second candidate from there is not a legal transition.
+        # Reuse what exists rather than manufacturing a parallel release to stand beside it.
+        succeeded = [d for d in nlc.list_deployments(self.project)
+                     if d.get("status") == "SUCCEEDED"]
+        if succeeded:
+            deployment = succeeded[-1]
+        else:
+            rc = self.frozen_candidate()
+            readiness = self.evaluate(rc["release_candidate_id"])
+            deployment = self.make_deployment(rc["release_candidate_id"], readiness["readiness_id"])
+            self.succeed(deployment["deployment_id"])
+        observation = self.observe(deployment["deployment_id"], "latency_ms", 100.0)
+        improvement = nlc.create_improvement(
+            self.project, problem_or_opportunity="fixture improvement",
+            proposed_change="drive the lifecycle to P22", source_type="operational",
+            operation_refs=[observation["observation_id"]],
+            evidence_refs=[self.exec_evidence_id], actor="test-harness",
+            reason="fixture advance")
+        nlc.select_improvement(
+            self.project, improvement["improvement_id"], actor="test-harness",
+            reason="fixture advance")
+        self.improvement_id = improvement["improvement_id"]
 
 
 class StandardProfileLifecycleFixture(LifecycleFixture):
