@@ -23,6 +23,29 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from nogap_execution import ExecutionHandle, GitWorktreeExecutionBackend  # noqa: E402
 
+sys.path.insert(0, str(ROOT / "tests"))
+
+
+def govern(project: Path) -> None:
+    """Give the project real methodology state, permitted to BUILD.
+
+    Since closure item 3, `nogap execute` is authorized by the same prebuild barrier as the
+    orchestrated path, so a project with no methodology state is refused. These tests are
+    about the execution backend, not the barrier - so rather than bypass it, they satisfy
+    it: a genuine P0-P11 chain, driven through the real transition engine, reaching READY.
+    There is no seam here and no override, because `nogap execute` runs in a subprocess and
+    the production path has nothing that would let one in.
+
+    Must run BEFORE `nogap init`: P3 needs non-empty evidence_refs to leave it, and once
+    the runtime evidence ledger exists those refs are resolved against it.
+    """
+    from nogap_methodology import init_project as _mtd_init
+
+    import test_methodology_build as _chain
+
+    _mtd_init(project, "research", "low", "low", actor="test")
+    _chain.build_p0_p11_chain(project)
+
 
 def run_script(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
@@ -132,6 +155,7 @@ class ExecuteCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_git_repo(project)
+            govern(project)
             run_script("init", str(project), "--objective", "execute writes evidence")
             result = run_script("execute", str(project), "--", sys.executable, "-c", "open('out.txt','w').write('x')")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -158,6 +182,7 @@ class ExecuteCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_git_repo(project)
+            govern(project)
             run_script("init", str(project), "--objective", "timeout flag regression")
             result = run_script(
                 "execute", str(project), "--timeout", "2", "--",
