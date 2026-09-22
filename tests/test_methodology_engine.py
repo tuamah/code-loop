@@ -124,8 +124,13 @@ class BasicForwardTransitionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_project(project, "research", "low", "low", actor="test")
-            with self.assertRaises(MethodologyValidationError):
-                transition(project, "P2", actor="human:owner", reason="skip P1", artifact_refs=["x"])
+            # Pinned to the INTENDED reason. With a fictitious artifact_refs this would now
+            # also be rejected for the missing reference, so a bare assertRaises would pass
+            # while proving nothing about edge legality.
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                transition(project, "P2", actor="human:owner", reason="skip P1",
+                           artifact_refs=real_refs(project, "P0")[0])
+            self.assertIn("not a legal transition", str(ctx.exception))
 
     def test_3_p2_to_build_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -133,8 +138,11 @@ class BasicForwardTransitionTests(unittest.TestCase):
             init_project(project, "research", "low", "low", actor="test")
             advance(project, "P1", "P2")
             for build_phase in ("P12", "P13", "P14"):
-                with self.assertRaises(MethodologyValidationError, msg=build_phase):
-                    transition(project, build_phase, actor="human", reason="jump to build", artifact_refs=["x"], evidence_refs=["x"])
+                _a, _e = real_refs(project)
+                with self.assertRaises(MethodologyValidationError, msg=build_phase) as ctx:
+                    transition(project, build_phase, actor="human", reason="jump to build",
+                               artifact_refs=_a, evidence_refs=_e)
+                self.assertIn("not a legal transition", str(ctx.exception), build_phase)
 
     def test_4_p11_to_p12_only_when_prepare_satisfied(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -276,8 +284,9 @@ class RejectionAndFailClosedTests(unittest.TestCase):
             data = json.loads(path.read_text(encoding="utf-8"))
             data["methodology_version"] = "corrupted-999"
             path.write_text(json.dumps(data), encoding="utf-8")
-            with self.assertRaises(MethodologyValidationError):
-                transition(project, "P1", actor="team", reason="x", artifact_refs=["x"])
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                transition(project, "P1", actor="team", reason="x")
+            self.assertIn("version", str(ctx.exception).lower())
 
     def test_12_missing_required_artifact_blocks_transition(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -300,15 +309,17 @@ class RejectionAndFailClosedTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_project(project, "research", "low", "low", actor="test")
-            with self.assertRaises(MethodologyValidationError):
-                transition(project, "P1", actor="", reason="x", artifact_refs=["x"])
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                transition(project, "P1", actor="", reason="x")
+            self.assertIn("non-empty actor_id", str(ctx.exception))
 
     def test_19_transition_without_reason_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_project(project, "research", "low", "low", actor="test")
-            with self.assertRaises(MethodologyValidationError):
-                transition(project, "P1", actor="team", reason="", artifact_refs=["x"])
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                transition(project, "P1", actor="team", reason="")
+            self.assertIn("non-empty reason", str(ctx.exception))
 
     def test_21_methodology_version_mismatch_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -319,7 +330,7 @@ class RejectionAndFailClosedTests(unittest.TestCase):
             data["methodology_version"] = "0.0.1"
             path.write_text(json.dumps(data), encoding="utf-8")
             with self.assertRaises(MethodologyValidationError) as ctx:
-                transition(project, "P1", actor="team", reason="x", artifact_refs=["x"])
+                transition(project, "P1", actor="team", reason="x")
             self.assertIn("version mismatch", str(ctx.exception))
 
 
