@@ -257,6 +257,24 @@ class LifecycleFixture(unittest.TestCase):
         deployment = self.succeed(deployment["deployment_id"])
         return {"candidate": rc, "readiness": readiness, "deployment": deployment}
 
+    def advance_p21_to_p22(self, deployment_id: str) -> str:
+        """Advance P21 -> P22 citing a REAL operational observation.
+
+        These call sites used `artifact_refs=["test-artifact"]`, the same fictitious id
+        _force_phase_p22 used, and passed for the same reason: nothing resolved it. P21
+        declares OPERATIONAL_OBSERVATIONS, so the honest advance records one and cites it.
+
+        This changes only WHICH reference the advance carries. The negative tests that call
+        it still reach exactly the illegal phase they were reaching before, and still assert
+        the same fail-closed behaviour - the point is that they now get there through a
+        transition that could actually have happened.
+        """
+        observation = self.observe(deployment_id, "latency_ms", 100.0)
+        transition(self.project, "P22", "test-harness", "advance past P20 reachability",
+                   artifact_refs=[observation["observation_id"]],
+                   evidence_refs=[self.exec_evidence_id], authority_class="tool")
+        return observation["observation_id"]
+
     def _force_phase_p22(self) -> None:
         """Drive current_phase to P22 by actually PERFORMING the release lifecycle.
 
@@ -1701,8 +1719,7 @@ class ReadinessSplitBrainTests(LifecycleFixture):
         self.assertEqual(mstatus(self.project)["current_phase"], "P21")
         # advance one more legal forward hop, past the point P20 is reachable from
         # (P20 is reachable forward from P19 and backward from P21 - but NOT from P22)
-        transition(self.project, "P22", "test-harness", "advance past P20 reachability",
-                   artifact_refs=["test-artifact"], evidence_refs=[self.exec_evidence_id], authority_class="tool")
+        self.advance_p21_to_p22(deployment["deployment_id"])
         self.assertEqual(mstatus(self.project)["current_phase"], "P22")
 
         # rc2 is already FROZEN with no drift and its shared task already verified -
@@ -1718,8 +1735,7 @@ class ReadinessSplitBrainTests(LifecycleFixture):
         readiness1 = self.evaluate(rc1["release_candidate_id"])
         deployment = self.make_deployment(rc1["release_candidate_id"], readiness1["readiness_id"])
         self.succeed(deployment["deployment_id"])
-        transition(self.project, "P22", "test-harness", "advance past P20 reachability",
-                   artifact_refs=["test-artifact"], evidence_refs=[self.exec_evidence_id], authority_class="tool")
+        self.advance_p21_to_p22(deployment["deployment_id"])
         readiness2 = self.evaluate(rc2["release_candidate_id"])
         # the persisted readiness record itself must be internally honest: outcome
         # NOT_READY, phase-conflict reason present, no orphaned P20 claim anywhere
