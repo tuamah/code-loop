@@ -55,6 +55,7 @@ class TheGateIsReal(unittest.TestCase):
         self.builder = fbuilder.FixtureBuilder(self.project)
 
     def test_the_builder_freezes_an_actual_gate(self):
+        self.builder.ensure_gate()
         gate = _frozen_gate(self.project)
         self.assertIsNotNone(gate, "no frozen gate exists")
         self.assertEqual(gate["status"], "frozen")
@@ -62,7 +63,7 @@ class TheGateIsReal(unittest.TestCase):
 
     def test_the_builder_binds_to_the_hash_the_system_reports(self):
         """Not a hash it computed for itself: the one the frozen gate actually carries."""
-        self.assertEqual(self.builder.gate_hash, _frozen_gate(self.project)["hash"])
+        self.assertEqual(self.builder.ensure_gate(), _frozen_gate(self.project)["hash"])
 
     def test_a_real_gate_hash_is_accepted_and_a_fabricated_one_is_stale(self):
         """The pair that gives the real hash its meaning.
@@ -144,3 +145,80 @@ class BuilderIntegrity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheRealPipelineIsReal(unittest.TestCase):
+    """P21 is reached by doing the work, not by arranging the appearance of it.
+
+    The success criterion is the CHAIN, not the phase:
+
+        real execution -> independent authoritative verification -> ACCEPT decision
+        -> release candidate -> readiness -> deployment -> P21
+
+    Each link is asserted separately, because reaching P21 while any one of them was faked
+    would be exactly the failure this fixture exists to make impossible.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.project = new_project()
+        cls.builder = fbuilder.advance_via_real_pipeline(cls.project)
+        cls.runtime = cls.project / ".code-loop" / "runtime"
+
+    def records(self, kind: str) -> list[dict]:
+        return [json.loads(p.read_text(encoding="utf-8"))
+                for p in (self.runtime / kind).glob("*.json")]
+
+    def test_1_execution_really_happened(self):
+        """A real command ran in a real isolated worktree and left an observable effect."""
+        execution = [e for e in self.records("evidence")
+                     if e.get("provenance", {}).get("authority") == "execution"]
+        self.assertTrue(execution, "no execution evidence was produced")
+        self.assertTrue(any(e.get("status") == "passed" for e in execution))
+
+    def test_2_verification_is_independent_of_execution(self):
+        """The property that makes the ACCEPT meaningful: different identities."""
+        by_authority = {}
+        for record in self.records("evidence"):
+            provenance = record.get("provenance", {})
+            by_authority.setdefault(provenance.get("authority"), set()).add(
+                provenance.get("actor_id"))
+        self.assertIn("verification", by_authority, "no verification evidence")
+        executors = by_authority.get("execution", set())
+        reviewers = {a for a in by_authority["verification"] if a and a.startswith("agent:")}
+        self.assertTrue(reviewers, "no agent reviewed the candidate")
+        self.assertFalse(executors & reviewers,
+                         f"the reviewer IS the executor: {executors & reviewers}")
+
+    def test_3_the_decision_engine_returned_accept(self):
+        decisions = self.records("decisions")
+        self.assertTrue(decisions, "no decision was recorded")
+        self.assertEqual(decisions[-1]["decision"], "accept")
+
+    def test_4_an_abstain_would_fail_the_fixture_loudly(self):
+        """The guard that keeps this honest.
+
+        If the pipeline ever stops producing independent verification, cmd_decide abstains -
+        correctly - and the fixture must break rather than route around it. Asserted on the
+        parsed source so the check cannot be softened to a warning unnoticed.
+        """
+        source = (ROOT / "tests" / "methodology_fixture_builder.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        asserts = [n for n in ast.walk(tree) if isinstance(n, ast.Assert)]
+        accept_guards = [n for n in asserts if "accept" in ast.dump(n)]
+        self.assertTrue(accept_guards,
+                        "nothing asserts the decision was accept; an abstain would pass")
+
+    def test_5_the_lifecycle_records_are_real_and_linked(self):
+        import nogap_lifecycle as nlc
+
+        rc = nlc.load_release_candidate(self.project, self.builder._lifecycle["rc"])
+        self.assertIsNotNone(rc)
+        self.assertEqual(rc["status"], "FROZEN")
+        deployment = nlc.load_deployment(self.project, self.builder._lifecycle["deployment"])
+        self.assertEqual(deployment["status"], "SUCCEEDED")
+        self.assertEqual(deployment["release_candidate_id"], rc["release_candidate_id"])
+        self.assertTrue(deployment["decision_refs"], "the deployment cites no decision")
+
+    def test_6_and_only_then_is_the_project_at_p21(self):
+        self.assertEqual(nm.status(self.project)["current_phase"], "P21")
