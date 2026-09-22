@@ -630,6 +630,16 @@ def _evaluate_transition(
         reasons.append(f"{current_id} requires evidence ({current.required_evidence}) but none was supplied")
     if current.required_artifacts and not artifact_refs:
         reasons.append(f"{current_id} requires artifacts ({current.required_artifacts}) but none was supplied")
+    elif current.required_artifacts:
+        # F2a: each declared semantic KIND is proven independently against the references
+        # supplied. The old rule was satisfied by any non-empty list; "the artifact is of this
+        # phase's type" would only have been a more elegant version of the same hole, since a
+        # container of the right type does not prove the required meaning is inside it.
+        from nogap_required_kinds import blocking, check_required_kinds
+
+        for verdict in blocking(
+                check_required_kinds(project, list(current.required_artifacts), artifact_refs)):
+            reasons.append(f"{current_id} required artifact {verdict}")
 
     known_evidence = _runtime_evidence_ids(project)
     if known_evidence is not None and evidence_refs:
