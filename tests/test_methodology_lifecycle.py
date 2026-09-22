@@ -1567,8 +1567,11 @@ class FreezeTransitionSemanticsTests(LifecycleFixture):
                                        operation_refs=[obs["observation_id"]], actor="a", reason="r", evidence_refs=[self.exec_evidence_id])
         # drive current_phase to P22 via the module's own real transition() calls
         if mstatus(self.project)["current_phase"] != "P22":
+            # P21 declares OPERATIONAL_OBSERVATIONS. This cited the improvement - the record
+            # for the phase being ENTERED - though the real observation was right here.
             transition(self.project, "P22", "test-harness", "force-advance for test",
-                       artifact_refs=[imp["improvement_id"]], evidence_refs=[self.exec_evidence_id], authority_class="tool")
+                       artifact_refs=[obs["observation_id"], imp["improvement_id"]],
+                       evidence_refs=[self.exec_evidence_id], authority_class="tool")
         self.assertEqual(mstatus(self.project)["current_phase"], "P22")
         new_candidate = self.make_candidate(candidate_ref="rc-late")
         with self.assertRaises(MethodologyValidationError) as ctx:
