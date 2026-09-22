@@ -54,6 +54,14 @@ def advance(project: Path, *targets: str, actor: str = "team") -> dict:
     state = None
     for target in targets:
         current = status(project)["current_phase"]
+        if current == "P18" and target in {"P19", "P20", "P21"}:
+            # Past P18 the lifecycle module owns the phase movement: evaluate_release_
+            # readiness() performs P19->P20 itself, so stepping manually here would be a
+            # second copy of its rules. Hand the walk to the builder, which delegates.
+            state = builder.advance_to(target)
+            continue
+        if status(project)["current_phase"] == target:
+            continue
         artifact_refs, evidence_refs = builder.obligations(current)
         state = transition(
             project, target, actor=actor, reason=f"advance to {target}",

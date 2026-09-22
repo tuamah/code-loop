@@ -55,6 +55,10 @@ class FixtureBuilder:
         self.evidence_ids: list[str] = []
         self.patch_path: str | None = None
         self._lifecycle: dict[str, str] = {}
+        # The Trust runtime and its frozen gate are established FIRST. `nogap init` refuses a
+        # project that already has a runtime, and the builder's own evidence records create
+        # that directory - so the order is not incidental.
+        self.gate_hash = _ensure_frozen_gate(self)
 
     # -- real records -------------------------------------------------------------------
 
@@ -223,16 +227,50 @@ class FixtureBuilder:
         return state
 
 
+def _ensure_frozen_gate(builder: "FixtureBuilder") -> str:
+    """Initialize the real Trust runtime and freeze a real gate; return ITS hash.
+
+    P18_VERIFICATION_RESULT requires a non-empty gate_hash, and readiness compares that
+    value against the live frozen gate. With no Trust runtime there is no frozen gate, so any
+    value the fixture could supply is either empty (rejected) or the hash of a gate that was
+    never frozen (stale - and the system is right to say so). The fixture therefore has what
+    a real verification would have had: an actually frozen gate.
+
+    The hash is read back from the frozen gate through nogap_build._frozen_gate(), never
+    written by hand and never recomputed here. A fixture that computes a hash beside the
+    owner is a fixture that can agree with itself while disagreeing with the system.
+    """
+    import subprocess
+    import sys as _sys
+
+    from nogap_build import _frozen_gate
+
+    existing = _frozen_gate(builder.project)
+    if existing and existing.get("hash"):
+        return existing["hash"]
+
+    root = Path(__file__).resolve().parents[1]
+    runtime = builder.project.resolve() / ".code-loop" / "runtime"
+    argvs = [["freeze", str(builder.project)]]
+    if not (runtime / "run.json").is_file():
+        argvs.insert(0, ["init", str(builder.project), "--objective", "fixture"])
+    for argv in argvs:
+        done = subprocess.run([_sys.executable, str(root / "scripts" / "nogap.py"), *argv],
+                              capture_output=True, text=True)
+        assert done.returncode == 0, f"{argv[0]} failed: {done.stdout}{done.stderr}"
+    gate = _frozen_gate(builder.project)
+    assert gate and gate.get("hash"), "freeze did not produce a hashed gate"
+    return gate["hash"]
+
+
 def _binding_snapshot(self) -> dict[str, Any]:
     """The live binding fields for this builder's task, via the module that owns them."""
     from nogap_verify_binding import verification_binding_snapshot
 
-    # gate_hash: the live frozen Trust gate when one exists. These fixtures have no Trust
-    # runtime, so the snapshot's own None is carried forward as a declared marker rather
-    # than left empty - the field is required, and an invented hash would read as a real
-    # gate that was never frozen.
+    # gate_hash comes from a REAL frozen gate, so readiness compares like with like.
     snapshot = verification_binding_snapshot(
-        self.project, self.artifacts["P12"]["fields"]["task_id"], "no-frozen-gate")
+        self.project, self.artifacts["P12"]["fields"]["task_id"],
+        self.gate_hash)
     return snapshot  # requirement_refs included: readiness compares it against the contract
 
 
