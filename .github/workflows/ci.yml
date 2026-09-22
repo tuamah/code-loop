@@ -54,6 +54,8 @@ jobs:
         run: python -m unittest tests.test_completion_vs_recovery_obligations -v
       - name: F2a verdict matrix and partition guard
         run: python -m unittest tests.test_f2a_verdict_matrix -v
+      - name: Fixture builder integrity
+        run: python -m unittest tests.test_fixture_builder_integrity -v
       - name: F1 contract continuity
         run: python scripts/check-f1-continuity.py
       - name: F1 enumeration closure
