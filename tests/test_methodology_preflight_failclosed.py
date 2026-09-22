@@ -25,6 +25,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -38,6 +39,23 @@ ROOT = Path(__file__).resolve().parents[1]
 def git(args: list[str], cwd: Path) -> None:
     subprocess.run(["git", *args], cwd=cwd, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+@dataclass
+class _ReadyExecutor:
+    """A connected AgentRuntime that would happily run, so the barrier has something to stop."""
+
+    id: str
+    kind: str = "AgentRuntime"
+
+    def health(self):
+        return {"status": "connected", "trust_status": "READY"}
+
+    def capabilities(self):
+        return {"id": self.id, "kind": self.kind, "can_execute": False, "supported_operations": []}
+
+    def build_exec_command(self, prompt, worktree):
+        return [sys.executable, "-c", "open('target.txt','w').write('hi')"]
 
 
 class Project(unittest.TestCase):
@@ -169,7 +187,34 @@ class NoWorkspaceWritableBypassExists(Project):
 # -- the caller: the second layer -------------------------------------------------------------------
 
 class CmdRunEnforcesTheBarrier(Project):
-    """The layer above. `cmd_run` used to skip the barrier for exactly the refused case."""
+    """The layer above. `cmd_run` used to skip the barrier for exactly the refused case.
+
+    A READY executor is installed for every test here, deliberately. Without one, cmd_run
+    returns earlier at "no ready implementer AgentRuntime" and never reaches the barrier at
+    all - so the test would pass while proving nothing about it. An earlier version of this
+    class had exactly that defect: it passed locally, because another test in the same
+    process had left a ready adapter in the global registry, and failed on CI where nothing
+    had. Installing one here makes the assertion mean what it says: an executor is ready and
+    willing, and the barrier refuses anyway.
+    """
+
+    def setUp(self):
+        super().setUp()
+        import nogap_adapters
+        self._saved = dict(nogap_adapters.ADAPTERS)
+        nogap_adapters.ADAPTERS.clear()
+        nogap_adapters.ADAPTERS["codex"] = _ReadyExecutor("codex")
+        self.addCleanup(self._restore_adapters)
+
+    def _restore_adapters(self):
+        import nogap_adapters
+        nogap_adapters.ADAPTERS.clear()
+        nogap_adapters.ADAPTERS.update(self._saved)
+
+    def test_the_executor_is_actually_ready(self):
+        """Guards the guard: if this stops being true, every test below stops testing."""
+        import nogap_adapters
+        self.assertTrue(nogap_adapters.ADAPTERS["codex"].health()["status"] == "connected")
 
     def run_execute(self) -> str:
         import io
