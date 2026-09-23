@@ -44,8 +44,10 @@ from pathlib import Path
 from typing import Any
 
 from nogap_methodology import (
+    CLAIM_STRENGTHS,
     MethodologyValidationError,
     PROFILE_ORDER,
+    RISK_LEVELS,
     _effective_profile_for_phase,
     _now,
     _require,
@@ -416,6 +418,14 @@ def validate_record(project: Path, record: dict[str, Any]) -> list[str]:
         strategy = fields.get("selected_strategy")
         if strategy is not None and strategy not in STRATEGY_OPTIONS:
             problems.append(f"selected_strategy must be one of {sorted(STRATEGY_OPTIONS)}, got {strategy!r}")
+
+    if artifact_type == "P2_SUCCESS_CRITERIA":
+        risk = fields.get("risk_level")
+        if risk is not None and risk not in RISK_LEVELS:
+            problems.append(f"risk_level must be one of {sorted(RISK_LEVELS)}, got {risk!r}")
+        claim_strength = fields.get("claim_strength")
+        if claim_strength is not None and claim_strength not in CLAIM_STRENGTHS:
+            problems.append(f"claim_strength must be one of {sorted(CLAIM_STRENGTHS)}, got {claim_strength!r}")
 
     if artifact_type == "P0_PROJECT_INTENT":
         intent_type = fields.get("intent_type")

@@ -162,6 +162,7 @@ ENFORCED_KINDS: dict[str, Any] = {
     "SUCCESS_CRITERIA": ArtifactField("P2_SUCCESS_CRITERIA", "success_criteria"),
     "FAILURE_CRITERIA": ArtifactField("P2_SUCCESS_CRITERIA", "failure_criteria"),
     "CLAIM_STRENGTH": ArtifactField("P2_SUCCESS_CRITERIA", "claim_strength"),
+    "RISK_LEVEL": ArtifactField("P2_SUCCESS_CRITERIA", "risk_level"),
     "TRUST_BOUNDARIES": ArtifactField("P7_ARCHITECTURE", "trust_boundaries"),
     "STRATEGY_DECISION": ArtifactField("P5_STRATEGY_DECISION", "selected_strategy"),
 
@@ -200,7 +201,6 @@ ENFORCED_KINDS: dict[str, Any] = {
 #: artifact of how the map was built.
 DEFERRED_KINDS: frozenset[str] = frozenset({
     "SCOPE",                  # P1_SCOPE declares in_scope/out_of_scope; no field named "scope"
-    "RISK_CLASSIFICATION",    # P2 declares risk_level; not the same name, not assumed the same
     "PRIOR_ART_MAP",          # P3_PRIOR_ART declares no "map" field
     "REQUIREMENTS",           # plural kind, per-requirement artifacts: coverage rule undecided
     "COST_MODEL",             # GP-13
