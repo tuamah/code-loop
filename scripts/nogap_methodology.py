@@ -71,6 +71,7 @@ class PhaseContract:
     required_artifacts: list[str] = field(default_factory=list)
     required_evidence: list[str] = field(default_factory=list)
     required_roles: list[str] = field(default_factory=list)
+    artifact_field_bindings: dict[str, dict[str, str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -138,6 +139,17 @@ def _parse_phase_contract(data: Any, source: Path) -> PhaseContract:
         failure_transition is None or (isinstance(failure_transition, str) and (failure_transition == "REPAIR_LOOP" or failure_transition.startswith("P"))),
         f"{source}: failure_transition must be null, a phase id, or REPAIR_LOOP",
     )
+    bindings_raw = data.get("artifact_field_bindings", {})
+    _require(isinstance(bindings_raw, dict), f"{source}: artifact_field_bindings must be a JSON object")
+    bindings: dict[str, dict[str, str]] = {}
+    for kind, binding in bindings_raw.items():
+        _require(isinstance(kind, str) and kind, f"{source}: artifact_field_bindings key must be a non-empty string")
+        _require(
+            isinstance(binding, dict) and set(binding) == {"artifact_type", "field"}
+            and isinstance(binding.get("artifact_type"), str) and isinstance(binding.get("field"), str),
+            f"{source}: artifact_field_bindings[{kind!r}] must be an object with exactly 'artifact_type' and 'field' string keys",
+        )
+        bindings[kind] = {"artifact_type": binding["artifact_type"], "field": binding["field"]}
     return PhaseContract(
         id=data["id"],
         macro_phase=data["macro_phase"],
@@ -152,7 +164,59 @@ def _parse_phase_contract(data: Any, source: Path) -> PhaseContract:
         required_artifacts=list(data.get("required_artifacts", [])),
         required_evidence=list(data.get("required_evidence", [])),
         required_roles=list(data.get("required_roles", [])),
+        artifact_field_bindings=bindings,
     )
+
+
+def _validate_artifact_field_bindings(phases: dict[str, "PhaseContract"]) -> None:
+    """Fail-closed load-time validation of each phase's artifact_field_bindings.
+
+    Deferred, function-local import of ARTIFACT_TYPES: nogap_artifacts imports FROM this
+    module at module load time, so importing it back at nogap_methodology's own module
+    level would be circular. By the time this function runs (called from
+    load_methodology(), never at import time), both modules are free to finish loading in
+    either order - this import is acyclic at runtime. Mandatory and unconditional: there is
+    no caller-skippable variant of this check.
+    """
+    if not any(phase.artifact_field_bindings for phase in phases.values()):
+        return
+    from nogap_artifacts import ARTIFACT_TYPES
+
+    seen: dict[str, tuple[str, str]] = {}
+    for phase in phases.values():
+        for kind, binding in phase.artifact_field_bindings.items():
+            _require(
+                kind in phase.required_artifacts,
+                f"{phase.id}: artifact_field_bindings declares {kind!r}, which is not in this phase's required_artifacts",
+            )
+            artifact_type = binding["artifact_type"]
+            field_name = binding["field"]
+            _require(
+                artifact_type in ARTIFACT_TYPES,
+                f"{phase.id}: artifact_field_bindings[{kind!r}] references unknown artifact_type {artifact_type!r}",
+            )
+            type_info = ARTIFACT_TYPES[artifact_type]
+            _require(
+                type_info["phase_id"] == phase.id,
+                f"{phase.id}: artifact_field_bindings[{kind!r}] artifact_type {artifact_type!r} belongs to "
+                f"phase {type_info['phase_id']!r}, not {phase.id!r}",
+            )
+            declared_fields = set(type_info.get("required_fields", []))
+            for extra in type_info.get("profile_required_fields", {}).values():
+                declared_fields.update(extra)
+            _require(
+                field_name in declared_fields,
+                f"{phase.id}: artifact_field_bindings[{kind!r}] references undeclared field {field_name!r} of {artifact_type!r}",
+            )
+            binding_key = (artifact_type, field_name)
+            if kind in seen:
+                _require(
+                    seen[kind] == binding_key,
+                    f"conflicting artifact_field_bindings for {kind!r}: "
+                    f"{seen[kind]} (already declared) vs {binding_key} (in {phase.id})",
+                )
+            else:
+                seen[kind] = binding_key
 
 
 def load_methodology(methodology_dir: Path = METHODOLOGY_DIR) -> MethodologyDefinition:
@@ -232,6 +296,8 @@ def load_methodology(methodology_dir: Path = METHODOLOGY_DIR) -> MethodologyDefi
             skippable_phases=list(data["skippable_phases"]),
         )
     _require(set(profiles) == PROFILES, f"expected profiles {sorted(PROFILES)}, found {sorted(profiles)}")
+
+    _validate_artifact_field_bindings(phases)
 
     return MethodologyDefinition(
         methodology_id=top["methodology_id"],
