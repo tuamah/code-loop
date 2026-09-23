@@ -1,8 +1,8 @@
-# F2b — Semantic Contract, Revision 2 (NORMATIVE DRAFT)
+# F2b — Semantic Contract, Revision 2.1 (APPROVED FOR IMPLEMENTATION)
 
-**Status: NORMATIVE DRAFT, not yet implemented.** No resolver, no migration, no enforcement.
-Every kind below still reports `SEMANTIC_VALIDATION_DEFERRED` until it is implemented
-kind-by-kind after review of this revision.
+**Status: APPROVED FOR IMPLEMENTATION (Rev 2.1). Not yet implemented.** No resolver, no
+migration, no enforcement has landed. Every kind below still reports
+`SEMANTIC_VALIDATION_DEFERRED` until it is implemented kind-by-kind in the order of §5.
 
 Revision 1 was a proposal. This revision records the user's rulings and states them as the
 contract the implementation will be held to. Where a ruling changed the proposal, the change and
@@ -24,6 +24,17 @@ data must land **before** the kind can be enforced.
 | `RISK_CLASSIFICATION` | declare an equivalence to `risk_level` | **renamed** to `RISK_LEVEL` |
 | `BUILD_VS_BUY_DECISION` | rename proposed | **rename approved** → `STRATEGY_DECISION` |
 | `GOLDEN_GATES` | "its `rules` declare a binding condition" | **corrected** — no `rules` field may be assumed; use the declared integrity check |
+
+### Revision 2.1 (the two rulings that gated implementation)
+
+| kind | Rev 2 | Rev 2.1 |
+|---|---|---|
+| `EVIDENCE_BUNDLE` | open: P11 or P15 governs required kinds? | **decided** — the UNION of both; neither may cancel the other |
+| `REVIEW_VERDICT` / D5 | P18 must reference "the evidence" | **decided** — `review_evidence_ref` to the EXACT evidence record, not a run |
+
+Rev 2.1 also records two gaps in the verification evidence schema that D5 surfaced when checked
+against real records (§2.6). Per the ruling, they are gaps in the evidence OWNER and are not to be
+compensated for by extending P18.
 
 The `REVIEW_VERDICT` ruling is the most consequential. Adding `reviewer_actor_id` to
 `P18_VERIFICATION_RESULT` would have created a SECOND COPY of a fact the verification layer
@@ -55,8 +66,10 @@ the P19 phase contract. This resolves Revision 1's open question WITHOUT a new r
 only because it is declared. Re-deriving it from "a release candidate happens to carry
 `evidence_refs`" is the inference that was withdrawn during F2a and MUST NOT return.
 
-**D5 — declare a P18-to-evidence binding** (see §2.6). `P18_VERIFICATION_RESULT` MUST carry a
-resolvable reference to the authoritative verification evidence that produced its verdict.
+**D5 — declare `P18_VERIFICATION_RESULT.review_evidence_ref`** (see §2.6): a reference to the
+EXACT authoritative verification evidence record that issued the verdict. Not
+`verification_run_id` — a run is a container that may hold many evidence records and does not
+identify which one carries the reviewer/verdict binding. Not a copy of the reviewer identity.
 
 **D6 — a new representation for `RUNTIME_STRUCTURE`** (see §3.1). Not designed here.
 
@@ -116,37 +129,65 @@ resolvable reference to the authoritative verification evidence that produced it
   reverse, and still claim "metrics".
 - **Failure conditions.** `MISSING` · `WRONG_TYPE` · `INVALID` (no `primary_metric`) · `STALE`.
 
-### 2.6 REVIEW_VERDICT (P18) — DESIGN CHANGED, REQUIRES D5
+### 2.6 REVIEW_VERDICT (P18) — DECIDED, REQUIRES D5 AND TWO EVIDENCE-SCHEMA FIXES
 
 - **Semantic definition.** The outcome of independent review OF a specific candidate, BY an
-  identity distinct from the executor, PROVEN by authoritative evidence. A verdict detached from
-  what it judged and who issued it is not a verdict; it is a word.
+  identity distinct from the executor, PROVEN by one authoritative evidence record. A verdict
+  detached from what it judged and who issued it is not a verdict; it is a word.
 - **Authoritative owner.** The **verification evidence layer**. `P18_VERIFICATION_RESULT` is the
-  RESULT RECORD; it is not itself the proof.
-- **Rejected alternative, and why.** Revision 1 proposed adding `reviewer_actor_id` to P18. That
-  is rejected: the reviewing identity already exists in the verification evidence, and copying it
-  into the result artifact creates a second instance of one fact which can later disagree with the
-  first. The result record MUST reference the evidence, not restate it.
-- **Concrete source.** The chain:
+  RESULT RECORD; it is not itself the proof, and it MUST NOT restate the proof.
+- **Rejected alternatives, and why.**
+  - `reviewer_actor_id` in P18 — a second copy of a fact the evidence already holds, free to
+    diverge. A contract that stores the same truth twice has two truths.
+  - `verification_run_id` as the reference — a run is a container of many records and does not
+    say WHICH record carries the reviewer/verdict binding.
+- **Concrete source.**
 
-      P18_VERIFICATION_RESULT
-        -> references (D5)
-      authoritative verification evidence
-        -> proves: reviewer identity, candidate/task binding, verdict, independence
+      P18_VERIFICATION_RESULT.review_evidence_ref      (D5)
+        -> exactly one authoritative verification evidence record
+           -> the SOLE source of: reviewer identity, verdict, candidate/task binding
 
-- **Completeness / binding rule.** All of the following MUST hold:
+- **Binding rule.** All of the following MUST hold:
   1. the P18 artifact resolves, is ACTIVE, passes `validate_record`;
-  2. `independent_review_result` is a DECIDED value — `PENDING` is not a verdict;
-  3. the referenced evidence resolves to an authoritative verification record;
-  4. **the P18 result EQUALS the evidence verdict**;
-  5. **the P18 candidate/task binding EQUALS the evidence candidate/task binding**;
-  6. **the reviewing identity is NOT the executing identity**.
-- **Failure conditions.** `MISSING` · `WRONG_TYPE` · `INVALID` (undecided verdict; unresolvable
-  evidence reference; **any divergence between the result record and the evidence it cites**;
-  reviewer identical to executor) · `STALE`.
-- **Note on divergence.** Conditions 4 and 5 are the reason for this design. If the result and the
-  evidence can disagree, the artifact can assert a pass the evidence never supported. Divergence
-  MUST be a binding failure, never a preference for one side.
+  2. `review_evidence_ref` is REQUIRED whenever `independent_review_result != PENDING`;
+  3. it resolves to exactly ONE authoritative verification evidence record, of the independent-
+     review class;
+  4. that record is the ONLY source of reviewer identity — nothing in P18 may supply or override it;
+  5. `P18.independent_review_result` EQUALS the evidence verdict;
+  6. the P18 candidate/task binding EQUALS the evidence candidate/task binding;
+  7. reviewer identity is NOT the execution identity;
+  8. **no `reviewer_actor_id` is added to P18.**
+- **Failure conditions.**
+  - `INVALID` — reference missing when required, ambiguous, unresolvable, or of the wrong evidence
+    class; verdict or binding divergence between P18 and the evidence; reviewer equals executor.
+  - `STALE` (or binding failure, per the evidence model) — the referenced evidence is stale,
+    superseded or revoked.
+  - Divergence MUST fail. It is never resolved by preferring either side.
+
+#### 2.6.1 Evidence-schema gaps found while checking D5 (owner-side, NOT to be fixed in P18)
+
+D5 was checked against real verification evidence produced by the genuine pipeline (real
+execution, independent reviewer, ACCEPT). The review record does carry reviewer identity
+(`actor_id: agent:claude`), verdict (`status: passed`) and task binding (`task_id`). Two things it
+does not carry, and per the ruling these are gaps in the evidence OWNER:
+
+**G1 — no candidate binding.** Verification evidence records carry `task_id` and `dispatch_id` but
+no `candidate_hash`. `P18_VERIFICATION_RESULT` does carry `candidate_hash`, so rule 6 cannot be
+checked as an equality today. The evidence binds to the TASK, not to the specific candidate that
+was reviewed. Inferring the candidate through `dispatch_id` would be an indirect reconstruction,
+not a declared binding, and MUST NOT be used as a substitute.
+
+**G2 — the evidence class is not distinguishable by `kind`.** `kind: "review"` is used for BOTH
+the independent review AND the deterministic effect-scope check. In a real run, one `review`
+record came from the independent reviewer (`actor_id: agent:claude`) and two came from the
+effect-scope check (`actor_id: verifier`). Rule 3's "of the independent-review class" therefore
+cannot be enforced by `kind` alone, and distinguishing by the presence of a provider or the shape
+of an actor id would be a heuristic.
+
+**Consequence.** D5 is not implementable against the current evidence schema. G1 and G2 MUST be
+fixed in the verification evidence layer — a candidate binding, and an unambiguous evidence class
+for independent review — before `REVIEW_VERDICT` can be enforced. P18 is not extended to
+compensate.
 
 ### 2.7 GOLDEN_GATES (P11) — APPROVED, OWNER DIFFERS FROM DECLARING PHASE
 
@@ -225,14 +266,28 @@ resolvable reference to the authoritative verification evidence that produced it
   1. resolve to an authoritative evidence record;
   2. be current — not stale, superseded or invalidated;
   3. bind to the task/candidate this release candidate covers;
-  4. satisfy the evidence kinds required for the release.
-- **OPEN QUESTION (must be answered before implementation).** Which declaration governs
-  requirement 4? Both `P11_GATE_PLAN.evidence_requirements` and
-  `P15_VERIFICATION_PLAN.required_evidence_kinds` exist. This contract does NOT choose between
-  them; choosing would be exactly the inference this pass exists to prevent.
+  4. together with the other members, satisfy the required evidence kinds below.
+- **Required evidence kinds — the UNION (decided in Rev 2.1).** The frozen release evidence
+  bundle MUST satisfy the union of all evidence kinds normatively required by the active P11 gate
+  plan and the active P15 verification plan:
+
+      required = P11_GATE_PLAN.evidence_requirements
+               U P15_VERIFICATION_PLAN.required_evidence_kinds
+
+  P11 states what the gate / acceptance intent requires; P15 states what the verification plan
+  requires. They are commitments at different layers, and allowing either to cancel the other
+  opens a gap. If the two conflict semantically, or either names a kind that cannot be resolved,
+  that is a contract / alignment failure — never a reason to silently prefer one.
+- **Coverage rules.**
+  - a required kind with no covering member → `INVALID` / incomplete;
+  - duplicate references do NOT count as additional coverage;
+  - evidence that is not authoritative, or is stale, covers NOTHING;
+  - if either source (P11 plan or P15 plan) is absent where the phase contract requires it to
+    exist → FAIL CLOSED. An absent source is not an empty requirement set.
 - **Failure conditions.** `MISSING` (no candidate, or an empty set) · `INVALID` (a member that
-  does not resolve, or is bound to a different task/candidate, or a missing required evidence
-  kind) · `STALE` (a member no longer current).
+  does not resolve, is bound to a different task/candidate, or a required kind left uncovered;
+  a conflicting or unresolvable requirement between P11 and P15) · `STALE` (a member no longer
+  current) · fail-closed when a required source plan is absent.
 
 ---
 
@@ -266,13 +321,27 @@ gives it one.
 | status | kinds |
 |---|---|
 | semantics closed, implementable after D1-D4 | SCOPE, PRIOR_ART_MAP, TEST_PLAN, BENCHMARK_PROTOCOL, METRICS, GOLDEN_GATES, STRATEGY_DECISION, RISK_LEVEL, REQUIREMENTS, EVIDENCE_BUNDLE |
-| needs binding declaration D5 | REVIEW_VERDICT |
+| needs D5 **and** evidence-schema fixes G1, G2 (§2.6.1) | REVIEW_VERDICT |
 | needs an independent representation D6 | RUNTIME_STRUCTURE |
 | later closure items | MEMORY_CONFIGURATION (GP-9), COST_MODEL (GP-13) |
 
-Two questions remain open inside otherwise-decided kinds, and both are recorded rather than
-resolved by assumption: the P18-to-evidence reference D5 requires, and which declaration governs
-required evidence kinds for a release (§2.11).
+Rev 2 left two questions open; Rev 2.1 closes both. Required evidence kinds for a release are the
+UNION of P11 and P15. The P18 reference is `review_evidence_ref` to one exact evidence record.
+Checking the latter against real records surfaced G1 and G2, which are owner-side gaps and are
+recorded, not resolved by assumption.
 
-Nothing here is implemented. Implementation proceeds kind-by-kind only after this revision is
-reviewed.
+## 5. Implementation order (approved)
+
+1. **D1** `STRATEGY_DECISION`
+2. **D2** `RISK_LEVEL`
+3. **D3** `BENCHMARK_PROTOCOL`
+4. **D4** `EVIDENCE_BUNDLE`
+5. **D5** `REVIEW_VERDICT` evidence binding — blocked on G1 and G2 in the verification evidence
+   layer, which must be fixed there first
+6. the kinds needing no declaration migration: `SCOPE`, `PRIOR_ART_MAP`, `TEST_PLAN`, `METRICS`,
+   `GOLDEN_GATES`, `REQUIREMENTS`
+7. `RUNTIME_STRUCTURE` stays deferred
+8. `MEMORY_CONFIGURATION` and `COST_MODEL` stay with GP-9 / GP-13
+
+Nothing here is implemented yet. Each step lands on its own, with its own tests and mutations,
+before the next begins.
