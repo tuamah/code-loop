@@ -2082,6 +2082,81 @@ class NoSilentSwallowingTests(LifecycleFixture):
             self.assertEqual(lcd["outcome"], "CONTINUE")
 
 
+class EvidenceRefResolutionFailClosedTests(LifecycleFixture):
+    """D4-PRE-B1: evidence-reference resolution in nogap_lifecycle.py must fail
+    closed. A missing evidence ledger must not blanket-accept non-empty refs, and a
+    malformed/unreadable/duplicate evidence record must be a hard error, never a
+    silently-skipped absence."""
+
+    def _evidence_dir(self) -> Path:
+        return self.project / ".code-loop" / "runtime" / "evidence"
+
+    def test_t1_nonempty_refs_missing_evidence_dir_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp2:
+            project2 = Path(tmp2)
+            init_git_repo(project2)
+            self.assertFalse((project2 / ".code-loop" / "runtime" / "evidence").exists())
+            with self.assertRaises(MethodologyValidationError):
+                nlc.create_release_candidate(
+                    project2, version="1.0.0", candidate_ref="rc", code_revision="abc",
+                    verification_refs=["evidence-does-not-exist"], actor="a", reason="r",
+                )
+
+    def test_t2_empty_refs_missing_evidence_dir_still_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp2:
+            project2 = Path(tmp2)
+            init_git_repo(project2)
+            self.assertFalse((project2 / ".code-loop" / "runtime" / "evidence").exists())
+            rc = nlc.create_release_candidate(
+                project2, version="1.0.0", candidate_ref="rc", code_revision="abc",
+                verification_refs=[], evidence_refs=[], actor="a", reason="r",
+            )
+            self.assertEqual(rc["candidate_ref"], "rc")
+
+    def test_t3_malformed_json_record_is_hard_failure(self) -> None:
+        (self._evidence_dir() / "evidence-malformed.json").write_text("{not valid json", encoding="utf-8")
+        with self.assertRaises(MethodologyValidationError):
+            nlc.create_release_candidate(
+                self.project, version="1.0.0", candidate_ref="rc-malformed", code_revision="abc",
+                verification_refs=[self.exec_evidence_id], actor="a", reason="r",
+            )
+
+    def test_t4_unreadable_record_is_hard_failure(self) -> None:
+        bogus_dir = self._evidence_dir() / "evidence-unreadable.json"
+        bogus_dir.mkdir()  # a directory named *.json: read_text() raises IsADirectoryError (an OSError subclass)
+        try:
+            with self.assertRaises(MethodologyValidationError):
+                nlc.create_release_candidate(
+                    self.project, version="1.0.0", candidate_ref="rc-unreadable", code_revision="abc",
+                    verification_refs=[self.exec_evidence_id], actor="a", reason="r",
+                )
+        finally:
+            bogus_dir.rmdir()
+
+    def test_t5_duplicate_evidence_id_across_two_files_rejected(self) -> None:
+        record = json.loads((self._evidence_dir() / f"{self.exec_evidence_id}.json").read_text(encoding="utf-8"))
+        (self._evidence_dir() / "evidence-duplicate-of-exec.json").write_text(json.dumps(record), encoding="utf-8")
+        with self.assertRaises(MethodologyValidationError):
+            nlc.create_release_candidate(
+                self.project, version="1.0.0", candidate_ref="rc-dup", code_revision="abc",
+                verification_refs=[self.exec_evidence_id], actor="a", reason="r",
+            )
+
+    def test_t6_unknown_ref_against_real_ledger_unresolved(self) -> None:
+        with self.assertRaises(MethodologyValidationError):
+            nlc.create_release_candidate(
+                self.project, version="1.0.0", candidate_ref="rc-unknown", code_revision="abc",
+                verification_refs=["evidence-totally-unknown"], actor="a", reason="r",
+            )
+
+    def test_t7_valid_ledger_resolvable_refs_still_passes(self) -> None:
+        rc = nlc.create_release_candidate(
+            self.project, version="1.0.0", candidate_ref="rc-valid", code_revision="abc",
+            verification_refs=[self.exec_evidence_id], actor="a", reason="r",
+        )
+        self.assertEqual(rc["candidate_ref"], "rc-valid")
+
+
 class CliTests(LifecycleFixture):
     def test_cli_full_lifecycle(self) -> None:
         # verification_refs must reference this project's real M6 evidence so that
