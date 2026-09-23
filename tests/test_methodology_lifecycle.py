@@ -415,6 +415,53 @@ class ReleaseCandidateTests(LifecycleFixture):
         fp3 = nlc.compute_candidate_fingerprint("rev2", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"])
         self.assertNotEqual(fp1, fp3)  # changed material input -> different fingerprint
 
+    # --- D4-PRE-A1: candidate_fingerprint_version -------------------------------
+
+    def test_a1_t1_legacy_record_no_version_recomputes_as_v1(self) -> None:
+        # No candidate_fingerprint_version stamped -> V1, byte-identical recompute.
+        fp = nlc.compute_candidate_fingerprint("rev1", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"])
+        legacy_record = {
+            "code_revision": "rev1", "artifact_fingerprints": {"a": "hash1"}, "included_task_refs": ["T1"],
+            "included_requirement_refs": ["REQ-1"], "verification_refs": ["ev-1"], "evidence_refs": ["some-evidence"],
+        }
+        self.assertNotIn("candidate_fingerprint_version", legacy_record)
+        self.assertEqual(nlc.recompute_candidate_fingerprint_for_record(legacy_record), fp)
+
+    def test_a1_t2_v1_output_is_byte_identical_pin(self) -> None:
+        fp = nlc.compute_candidate_fingerprint("rev1", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"], version="1")
+        self.assertEqual(fp, "a92407ff73276e2894986f6bb55fbb599e5d0eb888b2769b386bd9fc4bd271b8")
+
+    def test_a1_t3_v2_differs_from_v1_when_evidence_refs_present(self) -> None:
+        fp_v1 = nlc.compute_candidate_fingerprint("rev1", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"], version="1")
+        fp_v2 = nlc.compute_candidate_fingerprint(
+            "rev1", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"], ["evidence-x"], version="2",
+        )
+        self.assertNotEqual(fp_v1, fp_v2)
+
+    def test_a1_t4_v2_is_order_insensitive_for_evidence_refs(self) -> None:
+        fp_a = nlc.compute_candidate_fingerprint(
+            "rev1", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"], ["evidence-x", "evidence-y"], version="2",
+        )
+        fp_b = nlc.compute_candidate_fingerprint(
+            "rev1", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"], ["evidence-y", "evidence-x"], version="2",
+        )
+        self.assertEqual(fp_a, fp_b)
+
+    def test_a1_t5_unknown_version_fails_closed(self) -> None:
+        with self.assertRaises(MethodologyValidationError):
+            nlc.compute_candidate_fingerprint("rev1", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"], version="99")
+
+    def test_a1_t6_freeze_still_emits_v1_and_stamps_it_explicitly(self) -> None:
+        rc = self.frozen_candidate()
+        self.assertEqual(rc["candidate_fingerprint_version"], "1")
+        self.assertEqual(rc["freeze_record"]["candidate_fingerprint_version"], "1")
+        expected = nlc.compute_candidate_fingerprint(
+            rc["code_revision"], rc["artifact_fingerprints"], rc["included_task_refs"],
+            rc["included_requirement_refs"], rc["verification_refs"], version="1",
+        )
+        self.assertEqual(rc["candidate_fingerprint"], expected)
+        self.assertEqual(rc["freeze_record"]["candidate_fingerprint"], expected)
+
     def test_6_freeze_valid_candidate(self) -> None:
         rc = self.frozen_candidate()
         self.assertEqual(rc["status"], "FROZEN")
