@@ -369,20 +369,82 @@ def _artifact_content_hash(project: Path, artifact_id: str) -> str:
     return hashlib.sha256(json.dumps(artifact, sort_keys=True, default=str).encode("utf-8")).hexdigest() if artifact else ""
 
 
-def compute_candidate_fingerprint(
+# D4-PRE-A1: explicit candidate-fingerprint algorithm version, scoped to
+# compute_candidate_fingerprint() alone - deliberately separate from SCHEMA_VERSION
+# (see docs/f2b-semantic-contract-proposal.md Rev 2.1). A record with no
+# candidate_fingerprint_version is LEGACY and is interpreted as V1 (compatibility,
+# not migration) - never recomputed with a different algorithm than it was frozen
+# with. An unknown version fails closed. V1 is byte-for-byte the original algorithm
+# and MUST NOT include evidence_refs; V2 adds evidence_refs, canonicalized the same
+# way (sorted) as every other list member here.
+CANDIDATE_FINGERPRINT_VERSION_LEGACY = "1"
+
+
+def _candidate_fingerprint_payload_v1(
     code_revision: str | None, artifact_fingerprints: dict[str, str], included_task_refs: list[str],
-    included_requirement_refs: list[str], verification_refs: list[str],
-) -> str:
-    """Pure, deterministic identity of a candidate's material inputs - never a
-    function of timestamps. Same logical inputs -> same fingerprint."""
-    payload = {
+    included_requirement_refs: list[str], verification_refs: list[str], evidence_refs: list[str],
+) -> dict[str, Any]:
+    return {
         "code_revision": code_revision or "",
         "artifact_fingerprints": dict(sorted(artifact_fingerprints.items())),
         "included_task_refs": sorted(included_task_refs),
         "included_requirement_refs": sorted(included_requirement_refs),
         "verification_refs": sorted(verification_refs),
     }
+
+
+def _candidate_fingerprint_payload_v2(
+    code_revision: str | None, artifact_fingerprints: dict[str, str], included_task_refs: list[str],
+    included_requirement_refs: list[str], verification_refs: list[str], evidence_refs: list[str],
+) -> dict[str, Any]:
+    payload = _candidate_fingerprint_payload_v1(
+        code_revision, artifact_fingerprints, included_task_refs, included_requirement_refs, verification_refs,
+        evidence_refs,
+    )
+    payload["evidence_refs"] = sorted(evidence_refs)
+    return payload
+
+
+# Explicit dispatcher - the SOLE place version->algorithm mapping is made. Do not
+# branch on candidate_fingerprint_version anywhere else.
+_CANDIDATE_FINGERPRINT_ALGORITHMS = {
+    "1": _candidate_fingerprint_payload_v1,
+    "2": _candidate_fingerprint_payload_v2,
+}
+
+
+def compute_candidate_fingerprint(
+    code_revision: str | None, artifact_fingerprints: dict[str, str], included_task_refs: list[str],
+    included_requirement_refs: list[str], verification_refs: list[str], evidence_refs: list[str] = (),
+    *, version: str = CANDIDATE_FINGERPRINT_VERSION_LEGACY,
+) -> str:
+    """Pure, deterministic identity of a candidate's material inputs - never a
+    function of timestamps. Same logical inputs -> same fingerprint.
+
+    `version` selects the algorithm (see _CANDIDATE_FINGERPRINT_ALGORITHMS). An
+    unrecognized version fails closed - it is never silently treated as V1 or V2."""
+    build_payload = _CANDIDATE_FINGERPRINT_ALGORITHMS.get(version)
+    if build_payload is None:
+        raise MethodologyValidationError(f"lifecycle: unknown candidate_fingerprint_version {version!r}")
+    payload = build_payload(
+        code_revision, artifact_fingerprints, included_task_refs, included_requirement_refs, verification_refs,
+        list(evidence_refs),
+    )
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def recompute_candidate_fingerprint_for_record(record: dict[str, Any]) -> str:
+    """Recomputes a release-candidate record's fingerprint using the SAME algorithm
+    version it was originally frozen with. A record with no
+    candidate_fingerprint_version is legacy and is interpreted as V1 - this is a
+    compatibility rule, never a rewrite of what the record means. Fails closed on an
+    unrecognized stamped version rather than guessing."""
+    version = record.get("candidate_fingerprint_version") or CANDIDATE_FINGERPRINT_VERSION_LEGACY
+    return compute_candidate_fingerprint(
+        record.get("code_revision"), record.get("artifact_fingerprints", {}), record.get("included_task_refs", []),
+        record.get("included_requirement_refs", []), record.get("verification_refs", []),
+        record.get("evidence_refs", []), version=version,
+    )
 
 
 def create_release_candidate(
@@ -469,16 +531,21 @@ def freeze_release_candidate(project: Path, release_candidate_id: str, *, actor:
             )
 
     artifact_fingerprints = {ref: _artifact_content_hash(project, ref) for ref in record["artifact_refs"]}
+    # A1: freeze still emits V1 - flipping this to V2 (and snapshotting evidence_refs
+    # into freeze_record) is D4-PRE-A2, not here.
+    fingerprint_version = CANDIDATE_FINGERPRINT_VERSION_LEGACY
     fingerprint = compute_candidate_fingerprint(
         record["code_revision"], artifact_fingerprints, record["included_task_refs"],
-        record["included_requirement_refs"], record["verification_refs"],
+        record["included_requirement_refs"], record["verification_refs"], version=fingerprint_version,
     )
     record["artifact_fingerprints"] = artifact_fingerprints
     record["candidate_fingerprint"] = fingerprint
+    record["candidate_fingerprint_version"] = fingerprint_version
     record["status"] = "FROZEN"
     record["freeze_status"] = "FROZEN"
     record["freeze_record"] = {
         "actor_id": actor.strip(), "reason": reason.strip(), "timestamp": _now(), "candidate_fingerprint": fingerprint,
+        "candidate_fingerprint_version": fingerprint_version,
         "artifact_refs": list(record["artifact_refs"]), "verification_refs": list(record["verification_refs"]),
         "known_limitations": list(record["known_limitations"]),
     }
