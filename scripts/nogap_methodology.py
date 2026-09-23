@@ -28,6 +28,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from nogap_artifact_types import ARTIFACT_TYPES
+
 ROOT = Path(__file__).resolve().parents[1]
 METHODOLOGY_DIR = ROOT / "methodology"
 
@@ -171,17 +173,13 @@ def _parse_phase_contract(data: Any, source: Path) -> PhaseContract:
 def _validate_artifact_field_bindings(phases: dict[str, "PhaseContract"]) -> None:
     """Fail-closed load-time validation of each phase's artifact_field_bindings.
 
-    Deferred, function-local import of ARTIFACT_TYPES: nogap_artifacts imports FROM this
-    module at module load time, so importing it back at nogap_methodology's own module
-    level would be circular. By the time this function runs (called from
-    load_methodology(), never at import time), both modules are free to finish loading in
-    either order - this import is acyclic at runtime. Mandatory and unconditional: there is
-    no caller-skippable variant of this check.
+    `ARTIFACT_TYPES` is imported at this module's top level from nogap_artifact_types.py, a
+    module that depends on neither nogap_methodology.py nor nogap_artifacts.py - so there is
+    no import cycle to route around, at import time or at runtime. Mandatory and
+    unconditional: this runs as part of load_methodology() itself, before it returns a
+    MethodologyDefinition, so there is no caller-skippable variant of this check and no
+    window where a caller holds a definition that has not been through it.
     """
-    if not any(phase.artifact_field_bindings for phase in phases.values()):
-        return
-    from nogap_artifacts import ARTIFACT_TYPES
-
     seen: dict[str, tuple[str, str]] = {}
     for phase in phases.values():
         for kind, binding in phase.artifact_field_bindings.items():
