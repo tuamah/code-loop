@@ -3,7 +3,7 @@
   "macro_phase": "DESIGN",
   "name": "Requirements Engineering",
   "required_inputs": [
-    "BUILD_VS_BUY_DECISION"
+    "STRATEGY_DECISION"
   ],
   "required_artifacts": [
     "REQUIREMENTS"
