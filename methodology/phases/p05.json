@@ -7,7 +7,7 @@
     "GAP_ANALYSIS"
   ],
   "required_artifacts": [
-    "BUILD_VS_BUY_DECISION"
+    "STRATEGY_DECISION"
   ],
   "required_evidence": [],
   "required_roles": [
