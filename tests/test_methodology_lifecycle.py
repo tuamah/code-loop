@@ -451,16 +451,107 @@ class ReleaseCandidateTests(LifecycleFixture):
         with self.assertRaises(MethodologyValidationError):
             nlc.compute_candidate_fingerprint("rev1", {"a": "hash1"}, ["T1"], ["REQ-1"], ["ev-1"], version="99")
 
-    def test_a1_t6_freeze_still_emits_v1_and_stamps_it_explicitly(self) -> None:
+    # --- D4-PRE-A2: freeze now emits V2 -----------------------------------------
+
+    def test_a2_t1_freeze_emits_v2_stamped_in_record_and_freeze_record(self) -> None:
         rc = self.frozen_candidate()
-        self.assertEqual(rc["candidate_fingerprint_version"], "1")
-        self.assertEqual(rc["freeze_record"]["candidate_fingerprint_version"], "1")
+        self.assertEqual(rc["candidate_fingerprint_version"], "2")
+        self.assertEqual(rc["freeze_record"]["candidate_fingerprint_version"], "2")
         expected = nlc.compute_candidate_fingerprint(
             rc["code_revision"], rc["artifact_fingerprints"], rc["included_task_refs"],
-            rc["included_requirement_refs"], rc["verification_refs"], version="1",
+            rc["included_requirement_refs"], rc["verification_refs"], rc["evidence_refs"], version="2",
         )
         self.assertEqual(rc["candidate_fingerprint"], expected)
         self.assertEqual(rc["freeze_record"]["candidate_fingerprint"], expected)
+
+    def test_a2_t2_freeze_record_snapshots_evidence_refs(self) -> None:
+        rc = self.frozen_candidate(evidence_refs=[self.exec_evidence_id])
+        self.assertEqual(sorted(rc["freeze_record"]["evidence_refs"]), sorted(rc["evidence_refs"]))
+        self.assertEqual(rc["freeze_record"]["evidence_refs"], [self.exec_evidence_id])
+
+    def test_a2_t3_removed_evidence_ref_detected_as_drift(self) -> None:
+        rc = self.frozen_candidate(evidence_refs=[self.exec_evidence_id])
+        rc["evidence_refs"] = []
+        path = self.project / ".code-loop" / "methodology" / "lifecycle" / "release_candidates" / f"{rc['release_candidate_id']}.json"
+        path.write_text(json.dumps(rc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        reasons = nlc.detect_candidate_drift(self.project, rc["release_candidate_id"])
+        self.assertTrue(any("evidence_refs removed" in r for r in reasons), reasons)
+
+    def test_a2_t4_added_evidence_ref_detected_as_drift(self) -> None:
+        rc = self.frozen_candidate(evidence_refs=[])
+        rc["evidence_refs"] = [self.exec_evidence_id]
+        path = self.project / ".code-loop" / "methodology" / "lifecycle" / "release_candidates" / f"{rc['release_candidate_id']}.json"
+        path.write_text(json.dumps(rc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        reasons = nlc.detect_candidate_drift(self.project, rc["release_candidate_id"])
+        self.assertTrue(any("evidence_refs added" in r for r in reasons), reasons)
+
+    def test_a2_t5_substituted_evidence_ref_detected_as_drift(self) -> None:
+        rc = self.frozen_candidate(evidence_refs=[self.exec_evidence_id])
+        rc["evidence_refs"] = ["some-other-evidence-id"]
+        path = self.project / ".code-loop" / "methodology" / "lifecycle" / "release_candidates" / f"{rc['release_candidate_id']}.json"
+        path.write_text(json.dumps(rc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        reasons = nlc.detect_candidate_drift(self.project, rc["release_candidate_id"])
+        self.assertTrue(any("evidence_refs removed" in r for r in reasons), reasons)
+        self.assertTrue(any("evidence_refs added" in r for r in reasons), reasons)
+
+    def test_a2_t6_reordered_evidence_refs_not_drift_and_fingerprint_stable(self) -> None:
+        # Only one real evidence id is available in this fixture, so a genuine
+        # two-element reordering is built directly on the frozen record (mirroring
+        # test_a1_t4's proof that the fingerprint itself is order-insensitive) and
+        # verified not to be reported as drift either.
+        rc = self.frozen_candidate(evidence_refs=[self.exec_evidence_id])
+        frozen_refs = [self.exec_evidence_id, "evidence-synthetic-2"]
+        fp = nlc.compute_candidate_fingerprint(
+            rc["code_revision"], rc["artifact_fingerprints"], rc["included_task_refs"],
+            rc["included_requirement_refs"], rc["verification_refs"], frozen_refs, version="2",
+        )
+        rc["candidate_fingerprint"] = fp
+        rc["evidence_refs"] = list(frozen_refs)
+        rc["freeze_record"]["candidate_fingerprint"] = fp
+        rc["freeze_record"]["evidence_refs"] = list(frozen_refs)
+        path = self.project / ".code-loop" / "methodology" / "lifecycle" / "release_candidates" / f"{rc['release_candidate_id']}.json"
+        path.write_text(json.dumps(rc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        reasons = nlc.detect_candidate_drift(self.project, rc["release_candidate_id"])
+        self.assertEqual(reasons, [])
+        recomputed = nlc.recompute_candidate_fingerprint_for_record(rc)
+        self.assertEqual(recomputed, fp)
+
+        # Now genuinely reorder evidence_refs on disk (same membership, different order).
+        rc["evidence_refs"] = list(reversed(frozen_refs))
+        path.write_text(json.dumps(rc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        reasons = nlc.detect_candidate_drift(self.project, rc["release_candidate_id"])
+        self.assertEqual(reasons, [])
+        recomputed = nlc.recompute_candidate_fingerprint_for_record(rc)
+        self.assertEqual(recomputed, fp)
+
+    def test_a2_t7_v1_legacy_record_still_loads_stable_and_not_flagged_drifted(self) -> None:
+        rc = self.frozen_candidate()
+        # Simulate a pre-A2 legacy V1 freeze on disk (compatibility, not migration).
+        rc["candidate_fingerprint_version"] = "1"
+        rc["candidate_fingerprint"] = nlc.compute_candidate_fingerprint(
+            rc["code_revision"], rc["artifact_fingerprints"], rc["included_task_refs"],
+            rc["included_requirement_refs"], rc["verification_refs"], version="1",
+        )
+        rc["freeze_record"]["candidate_fingerprint_version"] = "1"
+        rc["freeze_record"]["candidate_fingerprint"] = rc["candidate_fingerprint"]
+        del rc["freeze_record"]["evidence_refs"]
+        path = self.project / ".code-loop" / "methodology" / "lifecycle" / "release_candidates" / f"{rc['release_candidate_id']}.json"
+        path.write_text(json.dumps(rc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        loaded = nlc.load_release_candidate(self.project, rc["release_candidate_id"])
+        self.assertEqual(loaded["candidate_fingerprint_version"], "1")
+        self.assertEqual(nlc.recompute_candidate_fingerprint_for_record(loaded), loaded["candidate_fingerprint"])
+        reasons = nlc.detect_candidate_drift(self.project, rc["release_candidate_id"])
+        self.assertEqual(reasons, [])
+
+    def test_a2_t8_predicate_true_for_frozen_v2_false_for_v1_legacy(self) -> None:
+        rc_v2 = self.frozen_candidate(evidence_refs=[self.exec_evidence_id])
+        self.assertTrue(nlc.has_fingerprint_frozen_evidence_bundle(rc_v2))
+        rc_v1 = dict(rc_v2)
+        rc_v1["candidate_fingerprint_version"] = "1"
+        self.assertFalse(nlc.has_fingerprint_frozen_evidence_bundle(rc_v1))
+        rc_unfrozen = dict(rc_v2)
+        rc_unfrozen["status"] = "DRAFT"
+        self.assertFalse(nlc.has_fingerprint_frozen_evidence_bundle(rc_unfrozen))
 
     def test_6_freeze_valid_candidate(self) -> None:
         rc = self.frozen_candidate()
