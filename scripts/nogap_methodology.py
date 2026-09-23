@@ -199,9 +199,13 @@ def _validate_artifact_field_bindings(phases: dict[str, "PhaseContract"]) -> Non
                 f"{phase.id}: artifact_field_bindings[{kind!r}] artifact_type {artifact_type!r} belongs to "
                 f"phase {type_info['phase_id']!r}, not {phase.id!r}",
             )
+            # Deliberately required_fields only: profile_required_fields is conditional on
+            # profile (STANDARD/STRICT), while required_artifacts - and therefore any kind
+            # bound through artifact_field_bindings - applies at every profile. Binding to a
+            # profile-conditional field would smuggle in profile semantics this primitive
+            # never declares (see D3 Part A repair discussion). A profile-specific binding
+            # needs its own explicit contract, not incidental admission here.
             declared_fields = set(type_info.get("required_fields", []))
-            for extra in type_info.get("profile_required_fields", {}).values():
-                declared_fields.update(extra)
             _require(
                 field_name in declared_fields,
                 f"{phase.id}: artifact_field_bindings[{kind!r}] references undeclared field {field_name!r} of {artifact_type!r}",

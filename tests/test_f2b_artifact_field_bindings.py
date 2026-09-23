@@ -114,6 +114,22 @@ class BindingStructuralValidation(TemporaryMethodologyCase):
         with self.assertRaises(nm.MethodologyValidationError):
             nm.load_methodology(self.methodology_dir)
 
+    def test_binding_to_a_profile_only_field_fails(self):
+        # P7_ARCHITECTURE declares "failure_domains" only in profile_required_fields (STRICT),
+        # never in required_fields. required_artifacts (and any kind bound through
+        # artifact_field_bindings) applies at every profile, so a binding to a
+        # profile-conditional field must be rejected, not silently admitted.
+        p7_path = self.methodology_dir / "phases" / "p07.json"
+        p7 = json.loads(p7_path.read_text(encoding="utf-8"))
+        self.assertIn("ARCHITECTURE", p7.get("required_artifacts", []))
+        p7["artifact_field_bindings"] = {
+            "ARCHITECTURE": {"artifact_type": "P7_ARCHITECTURE", "field": "failure_domains"}
+        }
+        p7_path.write_text(json.dumps(p7, indent=2) + "\n", encoding="utf-8")
+        with self.assertRaises(nm.MethodologyValidationError) as ctx:
+            nm.load_methodology(self.methodology_dir)
+        self.assertIn("undeclared field", str(ctx.exception))
+
     def test_no_bindings_anywhere_still_loads(self):
         # baseline sanity: the real methodology (before D3 declares a binding) must still load.
         nm.load_methodology(self.methodology_dir)
