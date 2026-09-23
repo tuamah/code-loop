@@ -9,7 +9,7 @@
   "required_artifacts": [
     "SUCCESS_CRITERIA",
     "FAILURE_CRITERIA",
-    "RISK_CLASSIFICATION",
+    "RISK_LEVEL",
     "CLAIM_STRENGTH"
   ],
   "required_evidence": [],

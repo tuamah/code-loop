@@ -1,9 +1,9 @@
-"""F2b D1: STRATEGY_DECISION (Rev 2.1 sec 2.8) is ENFORCED, not DEFERRED.
+"""F2b D2: RISK_CLASSIFICATION renamed to RISK_LEVEL and moved DEFERRED -> ENFORCED.
 
-BUILD_VS_BUY_DECISION was renamed to STRATEGY_DECISION because the option set
-(`STRATEGY_OPTIONS` in nogap_artifacts.py) is not binary: BUILD, BUY, ADOPT, FORK,
-INTEGRATE, HYBRID. A project that selected FORK made a decision the old binary name
-could not express - that is the case this suite proves works.
+Rev 2.1 sec 2.9: an artifact resolves, is ACTIVE, is valid (validate_record), and risk_level
+is present and a declared value. The owner enum check (D2-PRE, nogap_artifacts.validate_record)
+supplies the "declared value" half; this resolver only asks whether the field is present and
+lets validate_record decide validity - it does not re-implement the enum check.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ import nogap_required_kinds as rk                                            # n
 from nogap_methodology import can_transition                                 # noqa: E402
 
 
-class StrategyDecisionEnforced(unittest.TestCase):
+class RiskLevelEnforced(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
@@ -41,17 +41,10 @@ class StrategyDecisionEnforced(unittest.TestCase):
         import test_methodology_build as chain
         self.chain = chain.build_p0_p11_chain(self.project)
 
-    def artifact_path(self, artifact_id: str) -> Path:
-        return na.artifacts_dir(self.project) / f"{artifact_id}.json"
-
-    def rewrite(self, artifact_id: str, **changes) -> None:
-        path = self.artifact_path(artifact_id)
+    def rewrite(self, artifact_id: str, **fields) -> None:
+        path = na.artifacts_dir(self.project) / f"{artifact_id}.json"
         record = json.loads(path.read_text(encoding="utf-8"))
-        for key, value in changes.items():
-            if key == "fields":
-                record["fields"].update(value)
-            else:
-                record[key] = value
+        record["fields"].update(fields)
         path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     def verdicts(self, phase_id: str, refs: list[str]) -> dict[str, rk.Verdict]:
@@ -68,66 +61,56 @@ class StrategyDecisionEnforced(unittest.TestCase):
         return can_transition(self.project, phase.allowed_next[0],
                               evidence_refs=["source-ref-1"], artifact_refs=refs)
 
-    # -- 1: resolves and VALIDATES against a real production artifact -----------------------
+    # -- B1: a real, valid risk_level resolves, VALIDATES, transition allowed ----------------
 
-    def test_strategy_decision_validates_a_real_artifact(self):
-        ref = self.chain["P5"]["artifact_id"]
-        verdict = self.verdicts("P5", [ref])["STRATEGY_DECISION"]
+    def test_valid_risk_level_validates_and_allows_transition(self):
+        ref = self.chain["P2"]["artifact_id"]
+        verdict = self.verdicts("P2", [ref])["RISK_LEVEL"]
         self.assertEqual(verdict.status, rk.PASS)
         self.assertEqual(verdict.outcome, rk.VALIDATED)
         self.assertFalse(verdict.blocks_transition)
-        self.assertTrue(self.forward("P5", [ref])["allowed"])
+        self.assertTrue(self.forward("P2", [ref])["allowed"])
 
-    # -- 2: an out-of-enum value is INVALID --------------------------------------------------
+    # -- B2: tampered risk_level -> BLOCKED, attributable to RISK_LEVEL ----------------------
 
-    def test_strategy_outside_the_enum_is_invalid(self):
-        ref = self.chain["P5"]["artifact_id"]
-        self.rewrite(ref, fields={"selected_strategy": "ACQUIHIRE"})
-        verdict = self.verdicts("P5", [ref])["STRATEGY_DECISION"]
+    def test_tampered_risk_level_blocks_and_is_attributed_to_risk_level(self):
+        ref = self.chain["P2"]["artifact_id"]
+        self.rewrite(ref, risk_level="catastrophic")
+        verdict = self.verdicts("P2", [ref])["RISK_LEVEL"]
         self.assertEqual(verdict.status, rk.INVALID)
         self.assertTrue(verdict.blocks_transition)
-        result = self.forward("P5", [ref])
+        result = self.forward("P2", [ref])
         self.assertFalse(result["allowed"])
-        self.assertTrue(any("STRATEGY_DECISION" in r for r in result["blocked_reasons"]))
+        self.assertTrue(any("RISK_LEVEL" in r for r in result["blocked_reasons"]))
 
-    # -- 3: FORK - a non-binary value - VALIDATES, the whole point of the rename ------------
+    # -- B3: regression pin - tampered claim_strength still blocked by CLAIM_STRENGTH --------
 
-    def test_fork_strategy_validates(self):
-        """The specific case the old binary name BUILD_VS_BUY_DECISION could not express."""
-        ref = self.chain["P5"]["artifact_id"]
-        self.rewrite(ref, fields={"selected_strategy": "FORK"})
-        verdict = self.verdicts("P5", [ref])["STRATEGY_DECISION"]
-        self.assertEqual(verdict.status, rk.PASS)
-        self.assertEqual(verdict.outcome, rk.VALIDATED)
-        self.assertTrue(self.forward("P5", [ref])["allowed"])
-
-    # -- unresolvable gap_analysis_refs fails the artifact's own contract, INVALID ----------
-
-    def test_unresolvable_gap_analysis_refs_is_invalid(self):
-        ref = self.chain["P5"]["artifact_id"]
-        self.rewrite(ref, fields={"gap_analysis_refs": ["no-such-gap-analysis"]})
-        verdict = self.verdicts("P5", [ref])["STRATEGY_DECISION"]
+    def test_tampered_claim_strength_still_blocks_via_claim_strength_kind(self):
+        ref = self.chain["P2"]["artifact_id"]
+        self.rewrite(ref, claim_strength="extreme")
+        verdict = self.verdicts("P2", [ref])["CLAIM_STRENGTH"]
         self.assertEqual(verdict.status, rk.INVALID)
         self.assertTrue(verdict.blocks_transition)
+        result = self.forward("P2", [ref])
+        self.assertFalse(result["allowed"])
+        self.assertTrue(any("CLAIM_STRENGTH" in r for r in result["blocked_reasons"]))
 
-    # -- 4: no phase contract anywhere still names the old kind ------------------------------
+    # -- no phase contract anywhere still names the old kind ----------------------------------
 
     def test_no_phase_contract_references_the_old_name(self):
         methodology_dir = ROOT / "methodology" / "phases"
         for path in sorted(methodology_dir.glob("p*.json")):
             data = json.loads(path.read_text(encoding="utf-8"))
-            self.assertNotIn("BUILD_VS_BUY_DECISION", data.get("required_artifacts") or [],
+            self.assertNotIn("RISK_CLASSIFICATION", data.get("required_artifacts") or [],
                              f"{path.name} required_artifacts still names the old kind")
-            self.assertNotIn("BUILD_VS_BUY_DECISION", data.get("required_inputs") or [],
+            self.assertNotIn("RISK_CLASSIFICATION", data.get("required_inputs") or [],
                              f"{path.name} required_inputs still names the old kind")
 
-    def test_p5_and_p6_declare_the_new_name(self):
-        p05 = json.loads((ROOT / "methodology/phases/p05.json").read_text(encoding="utf-8"))
-        p06 = json.loads((ROOT / "methodology/phases/p06.json").read_text(encoding="utf-8"))
-        self.assertIn("STRATEGY_DECISION", p05["required_artifacts"])
-        self.assertIn("STRATEGY_DECISION", p06["required_inputs"])
+    def test_p02_declares_the_new_name(self):
+        p02 = json.loads((ROOT / "methodology/phases/p02.json").read_text(encoding="utf-8"))
+        self.assertIn("RISK_LEVEL", p02["required_artifacts"])
 
-    # -- 5: the partition guard still holds ---------------------------------------------------
+    # -- partition guard: exactly 25 enforced / 12 deferred, RISK_LEVEL moved -----------------
 
     def test_partition_guard_holds(self):
         declared = rk.declared_required_kinds()
@@ -136,11 +119,12 @@ class StrategyDecisionEnforced(unittest.TestCase):
         self.assertEqual(enforced & deferred, set())
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
-        self.assertIn("STRATEGY_DECISION", enforced)
-        self.assertNotIn("STRATEGY_DECISION", deferred)
-        self.assertNotIn("BUILD_VS_BUY_DECISION", enforced | deferred)
+        self.assertIn("RISK_LEVEL", enforced)
+        self.assertNotIn("RISK_LEVEL", deferred)
+        self.assertNotIn("RISK_CLASSIFICATION", enforced | deferred)
         self.assertEqual(len(enforced), 25)
         self.assertEqual(len(deferred), 12)
+        self.assertEqual(len(declared), 37)
 
 
 if __name__ == "__main__":
