@@ -531,12 +531,14 @@ def freeze_release_candidate(project: Path, release_candidate_id: str, *, actor:
             )
 
     artifact_fingerprints = {ref: _artifact_content_hash(project, ref) for ref in record["artifact_refs"]}
-    # A1: freeze still emits V1 - flipping this to V2 (and snapshotting evidence_refs
-    # into freeze_record) is D4-PRE-A2, not here.
-    fingerprint_version = CANDIDATE_FINGERPRINT_VERSION_LEGACY
+    # D4-PRE-A2: freeze now emits V2 - the fingerprint includes evidence_refs, and the
+    # freeze_record snapshots the exact evidence set frozen (the freeze record is what
+    # declares what was frozen). V1 records already on disk are untouched and stay V1.
+    fingerprint_version = "2"
     fingerprint = compute_candidate_fingerprint(
         record["code_revision"], artifact_fingerprints, record["included_task_refs"],
-        record["included_requirement_refs"], record["verification_refs"], version=fingerprint_version,
+        record["included_requirement_refs"], record["verification_refs"], record["evidence_refs"],
+        version=fingerprint_version,
     )
     record["artifact_fingerprints"] = artifact_fingerprints
     record["candidate_fingerprint"] = fingerprint
@@ -547,6 +549,7 @@ def freeze_release_candidate(project: Path, release_candidate_id: str, *, actor:
         "actor_id": actor.strip(), "reason": reason.strip(), "timestamp": _now(), "candidate_fingerprint": fingerprint,
         "candidate_fingerprint_version": fingerprint_version,
         "artifact_refs": list(record["artifact_refs"]), "verification_refs": list(record["verification_refs"]),
+        "evidence_refs": list(record["evidence_refs"]),
         "known_limitations": list(record["known_limitations"]),
     }
     _append_history(record, "FROZEN", actor, reason, candidate_fingerprint=fingerprint)
@@ -572,7 +575,13 @@ def invalidate_release_candidate(project: Path, release_candidate_id: str, *, ac
 def detect_candidate_drift(project: Path, release_candidate_id: str) -> list[str]:
     """Recomputes each frozen artifact's content hash NOW and compares to what was
     captured at freeze time. Never mutates the candidate - drift is reported, not
-    silently tolerated or silently fixed."""
+    silently tolerated or silently fixed.
+
+    D4-PRE-A2: for a V2-frozen candidate, also compares the CURRENT evidence_refs
+    against the evidence set captured in freeze_record at freeze time. This is a
+    set comparison (like every other list member here) - reordering alone is never
+    reported as drift. A V1 record has no fingerprint-frozen evidence bundle (see
+    has_fingerprint_frozen_evidence_bundle) and is never evidence-drift-checked."""
     record = _load_or_raise(project, "release_candidates", release_candidate_id, "release_candidate_id")
     if record["status"] != "FROZEN":
         return []
@@ -583,7 +592,32 @@ def detect_candidate_drift(project: Path, release_candidate_id: str) -> list[str
             reasons.append(f"artifact {artifact_id} no longer resolves")
         elif current_hash != frozen_hash:
             reasons.append(f"artifact {artifact_id} content changed since freeze")
+    if has_fingerprint_frozen_evidence_bundle(record):
+        frozen_evidence = set(record["freeze_record"].get("evidence_refs", []))
+        current_evidence = set(record.get("evidence_refs", []))
+        removed = frozen_evidence - current_evidence
+        added = current_evidence - frozen_evidence
+        if removed:
+            reasons.append(f"evidence_refs removed since freeze: {sorted(removed)}")
+        if added:
+            reasons.append(f"evidence_refs added since freeze: {sorted(added)}")
     return reasons
+
+
+def has_fingerprint_frozen_evidence_bundle(record: dict[str, Any]) -> bool:
+    """Answers "does this candidate have a fingerprint-frozen evidence bundle?" -
+    true only for a FROZEN candidate whose fingerprint was computed with V2 (which
+    includes evidence_refs in the fingerprint payload and snapshots them in
+    freeze_record). A V1 record - legacy or otherwise - never has one: V1's
+    fingerprint payload never included evidence_refs, so treating it as having a
+    frozen evidence bundle would be a fake trust upgrade, not a compatibility
+    convention. This is lifecycle-owner state only; it resolves no semantic kind
+    and is not an EVIDENCE_BUNDLE resolver."""
+    return (
+        record.get("status") == "FROZEN"
+        and record.get("candidate_fingerprint_version") == "2"
+        and isinstance(record.get("freeze_record"), dict)
+    )
 
 
 def select_current_release_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any]:
