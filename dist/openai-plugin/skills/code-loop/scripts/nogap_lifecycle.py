@@ -303,21 +303,30 @@ def _evidence_ids(project: Path) -> set[str] | None:
     evidence_dir = project.resolve() / ".code-loop" / "runtime" / "evidence"
     if not evidence_dir.is_dir():
         return None
-    ids: set[str] = set()
-    for path in evidence_dir.glob("*.json"):
+    ids: dict[str, Path] = {}
+    for path in sorted(evidence_dir.glob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+        except (OSError, json.JSONDecodeError) as exc:
+            raise MethodologyValidationError(
+                f"lifecycle: unreadable/malformed evidence record {path}: {exc}"
+            ) from exc
         if isinstance(data, dict) and isinstance(data.get("id"), str):
-            ids.add(data["id"])
-    return ids
+            evidence_id = data["id"]
+            if evidence_id in ids:
+                raise MethodologyValidationError(
+                    f"lifecycle: duplicate evidence id {evidence_id!r} in {ids[evidence_id]} and {path}"
+                )
+            ids[evidence_id] = path
+    return set(ids)
 
 
 def _check_evidence_refs(project: Path, refs: list[str]) -> list[str]:
-    known = _evidence_ids(project)
-    if known is None or not refs:
+    if not refs:
         return []
+    known = _evidence_ids(project)
+    if known is None:
+        return list(refs)
     return [ref for ref in refs if ref not in known]
 
 
