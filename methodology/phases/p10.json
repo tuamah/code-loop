@@ -15,6 +15,12 @@
     "architect",
     "researcher"
   ],
+  "artifact_field_bindings": {
+    "BENCHMARK_PROTOCOL": {
+      "artifact_type": "P10_BASELINE",
+      "field": "measurement_procedure"
+    }
+  },
   "exit_gate": {
     "description": "A baseline and a benchmark protocol with primary/secondary metrics exist before any gate is frozen.",
     "checks": [
