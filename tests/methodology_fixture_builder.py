@@ -106,11 +106,23 @@ class FixtureBuilder:
         return self.patch_path
 
     def _artifact_for(self, phase_id: str) -> str | None:
-        """Create the artifact this phase owes, if it has a declared type, with real refs."""
-        from nogap_artifacts import PHASE_TO_ARTIFACT_TYPE
+        """Create the artifact this phase owes, if it has a declared type, with real refs.
+
+        Single-owner phases only (D6-PRE-A). PHASE_TO_ARTIFACT_TYPE deliberately excludes
+        multi-owner phases (e.g. P9, once it gains a second artifact type), so a phase_id absent
+        here is either "owns no artifact type at all" (returns None, unchanged) or "owns more
+        than one" (fails loudly below) - never silently resolved to one of several real types.
+        """
+        from nogap_artifacts import PHASE_TO_ARTIFACT_TYPE, PHASE_TO_ARTIFACT_TYPES
 
         artifact_type = PHASE_TO_ARTIFACT_TYPE.get(phase_id)
         if artifact_type is None:
+            if len(PHASE_TO_ARTIFACT_TYPES.get(phase_id, ())) > 1:
+                raise ValueError(
+                    f"{phase_id} owns more than one artifact type "
+                    f"({PHASE_TO_ARTIFACT_TYPES[phase_id]!r}) - _artifact_for() only builds "
+                    f"single-owner phases; use an explicit multi-owner builder instead"
+                )
             return None
         extra = {"status": "VERIFICATION_COMPLETE_AWAITING_DECISION"} if (
             artifact_type == "P18_VERIFICATION_RESULT") else {}
