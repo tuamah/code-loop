@@ -439,6 +439,71 @@ class P10BaselineTests(unittest.TestCase):
             # (the artifact itself preserves its original value; nothing in this module ever
             # rewrites another artifact's fields in place, satisfying "cannot silently change")
 
+    def test_secondary_metrics_may_be_empty_but_must_exist(self) -> None:
+        """METRICS-PRE (F2b Rev 2.1 sec 2.5): secondary_metrics MUST exist but MAY be empty -
+        "a baseline with one measure is legitimate". primary_metric has no such exception."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            init_project(project, "research", "low", "low", actor="test")
+            p10 = create_artifact(project, "P10_BASELINE", {
+                "baseline_description": "manual process", "primary_metric": "completion time",
+                "secondary_metrics": [], "measurement_procedure": "manual timing",
+            }, actor="researcher")
+            self.assertEqual(p10["fields"]["secondary_metrics"], [])
+
+    def test_secondary_metrics_absent_entirely_still_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            init_project(project, "research", "low", "low", actor="test")
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                create_artifact(project, "P10_BASELINE", {
+                    "baseline_description": "manual process", "primary_metric": "completion time",
+                    "measurement_procedure": "manual timing",
+                }, actor="researcher")
+            self.assertIn("secondary_metrics", str(ctx.exception))
+
+    def test_primary_metric_empty_still_rejected(self) -> None:
+        """allow_empty_fields is scoped to secondary_metrics only - primary_metric keeps the
+        ordinary non-empty rule."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            init_project(project, "research", "low", "low", actor="test")
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                create_artifact(project, "P10_BASELINE", {
+                    "baseline_description": "manual process", "primary_metric": "",
+                    "secondary_metrics": [], "measurement_procedure": "manual timing",
+                }, actor="researcher")
+            self.assertIn("primary_metric", str(ctx.exception))
+
+    def test_allow_empty_fields_scoped_to_p10_only(self) -> None:
+        """The mechanism is per-type: another artifact type's required list field (P1_SCOPE's
+        in_scope) is untouched and still rejects empty."""
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            init_project(project, "research", "low", "low", actor="test")
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                create_artifact(project, "P1_SCOPE", {
+                    "problem_statement": "x", "in_scope": [], "out_of_scope": ["y"],
+                    "constraints": ["c"], "dependencies": [], "known_assumptions": [],
+                }, actor="researcher")
+            self.assertIn("in_scope", str(ctx.exception))
+
+    def test_allow_empty_fields_with_unknown_name_fails_closed(self) -> None:
+        """A typo'd or stale allow_empty_fields entry (not in required_fields) is a silent
+        no-op at validation time, so it is instead rejected structurally by the same guard
+        that runs at import time - exercised directly here against a mutated copy, since the
+        real module already loaded successfully with valid data."""
+        import nogap_artifact_types as nat
+
+        original = nat.ARTIFACT_TYPES["P10_BASELINE"]["allow_empty_fields"]
+        nat.ARTIFACT_TYPES["P10_BASELINE"]["allow_empty_fields"] = frozenset({"scondary_metrics"})
+        try:
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                nat._validate_allow_empty_fields()
+            self.assertIn("scondary_metrics", str(ctx.exception))
+        finally:
+            nat.ARTIFACT_TYPES["P10_BASELINE"]["allow_empty_fields"] = original
+
 
 class P11Tests(unittest.TestCase):
     def test_14_p11_gate_references_real_req_ids(self) -> None:
