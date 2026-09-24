@@ -1415,6 +1415,7 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
                     "executor_actor_id": executor_actor_id, "levels_attempted": levels_attempted,
                     "levels_passed": levels_passed, "deterministic_result": deterministic_result,
                     "reproducibility_result": "PENDING", "independent_review_result": "PENDING",
+                    "independent_review_performed": False,
                 },
                 actor=args.actor, status=result_status, evidence_refs=list(written),
             )
@@ -1530,17 +1531,23 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
     if methodology_tracked and not halted:
         if review_performed:
             independent_review_result = check_status
+            independent_review_performed = True
             review_reason = "independent review recorded"
         elif depth["independent_review_required"]:
             independent_review_result = "inconclusive"
+            independent_review_performed = False
             review_reason = "independent review is required at this profile but was not performed (pass --review with a second ready AgentRuntime)"
         else:
             independent_review_result = "SKIPPED_PER_PROFILE_POLICY"
+            independent_review_performed = False
             review_reason = f"P18 is skippable at profile {depth['profile']}"
 
         verification_result = update_verification_result(
             project_root, verification_result["fields"]["verification_run_id"], args.actor, review_reason,
-            field_updates={"independent_review_result": independent_review_result},
+            field_updates={
+                "independent_review_result": independent_review_result,
+                "independent_review_performed": independent_review_performed,
+            },
         )
         _finalize_verification(project_root, verification_result, gate, args.actor)
 

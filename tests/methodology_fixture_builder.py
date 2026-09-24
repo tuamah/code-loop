@@ -382,6 +382,7 @@ _FIELDS: dict[str, Any] = {
         levels_attempted=["STATIC_CHECKS"], deterministic_result="passed",
         reproducibility_result="SKIPPED_PER_PROFILE_POLICY",
         independent_review_result="SKIPPED_PER_PROFILE_POLICY",
+        independent_review_performed=False,
         task_id=self.artifacts["P12"]["fields"]["task_id"],
         **_binding_snapshot(self)),
     "P14_SELF_CHECK": lambda self: dict(
