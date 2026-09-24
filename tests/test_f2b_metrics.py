@@ -66,8 +66,8 @@ class MetricsEnforced(unittest.TestCase):
         deferred = set(rk.DEFERRED_KINDS)
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
-        self.assertEqual(len(enforced), 31)
-        self.assertEqual(len(deferred), 6)
+        self.assertEqual(len(enforced), 32)
+        self.assertEqual(len(deferred), 5)
         self.assertIn("METRICS", enforced)
         self.assertNotIn("METRICS", deferred)
 
