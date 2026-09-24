@@ -901,9 +901,19 @@ def cmd_run(args: argparse.Namespace) -> None:
     requirement_refs = task_contract["fields"].get("requirement_refs", []) if task_contract else None
     task_id = task_contract["fields"]["task_id"] if task_contract else None
     methodology_version = task_contract["methodology_version"] if task_contract else None
+    # G1-B: the candidate is born here - the first place the (task, patch) pairing exists.
+    # One patch-hash value feeds both the evidence binding and the P14 self-check, so their
+    # equality is structural. Untracked runs have no task contract: nothing is fabricated.
+    run_patch_hash = compute_patch_hash(result.patch) if task_contract is not None else None
+    if task_contract is not None:
+        import nogap_verify_binding as vb
+
+        run_candidate_hash = vb.compute_candidate_hash(task_id, run_patch_hash)
+    else:
+        run_candidate_hash = None
     evidence_id, artifact_path = write_isolated_run_evidence(
         root, run_id, result, actor, exec_status, execution_status, reason,
-        evidence_class="execution", candidate_hash=None,
+        evidence_class="execution", candidate_hash=run_candidate_hash,
         dispatch_id=dispatch_id, provider=selected["provider"], runtime_id=selected["runtime"],
         task_id=task_id, requirement_refs=requirement_refs, methodology_version=methodology_version,
     )
@@ -926,7 +936,7 @@ def cmd_run(args: argparse.Namespace) -> None:
                 create_self_check(
                     project_root, task_contract, evidence_id,
                     changed_files=sorted(touched_paths(result.patch)),
-                    patch_hash=compute_patch_hash(result.patch),
+                    patch_hash=run_patch_hash,
                     process_outcome=result.process_outcome,
                     expected_effect_result=f"{effect.outcome}: {effect.reason}",
                     actor=actor,
