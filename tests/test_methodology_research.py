@@ -97,6 +97,19 @@ class ResearchFixture(unittest.TestCase):
         fields.update(overrides)
         return nr.record_experiment_result(self.project, experiment_id, **fields)
 
+    def _real_evidence(self) -> str:
+        """A real record in the runtime evidence ledger, in the ledger's own shape -
+        never a fabricated ref string, since evidence refs now resolve against a real
+        ledger whenever one exists (D4-PRE-B2)."""
+        import uuid
+
+        runtime_dir = self.project / ".code-loop" / "runtime" / "evidence"
+        runtime_dir.mkdir(parents=True, exist_ok=True)
+        evidence_id = f"evidence-{uuid.uuid4().hex[:12]}"
+        (runtime_dir / f"{evidence_id}.json").write_text(
+            json.dumps({"id": evidence_id, "status": "passed"}), encoding="utf-8")
+        return evidence_id
+
     def observe(self, experiment_id: str, metric_name: str, value: float, **overrides: Any) -> dict[str, Any]:
         fields = dict(experiment_id=experiment_id, metric_name=metric_name, metric_value=value, actor="scientist", reason="record")
         fields.update(overrides)
@@ -124,10 +137,11 @@ class ResearchFixture(unittest.TestCase):
         p = self.frozen_protocol(q["question_id"], hypothesis_refs=[h["hypothesis_id"]], claim_strength=claim_strength)
         e = self.make_experiment(p["protocol_id"], hypothesis_refs=[h["hypothesis_id"]])
         e = self.complete(e["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 2.0, raw_evidence_refs=["ev-1"])
+        evidence_id = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 2.0, raw_evidence_refs=[evidence_id])
         c = self.make_claim(q["question_id"], claim_strength=claim_strength, hypothesis_refs=[h["hypothesis_id"]], protocol_refs=[p["protocol_id"]])
         overrides = dict(protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]], observation_refs=[o["observation_id"]],
-                          evidence_refs=["ev-1"], hypothesis_refs=[h["hypothesis_id"]])
+                          evidence_refs=[evidence_id], hypothesis_refs=[h["hypothesis_id"]])
         overrides.update(assess_overrides)
         a = self.assess(c["claim_id"], "SUPPORTED", **overrides)
         return {"question": q, "hypothesis": h, "protocol": p, "experiment": e, "observation": o, "claim": c, "assessment": a}
@@ -395,7 +409,8 @@ class ObservationTests(ResearchFixture):
         e = self.make_experiment(p["protocol_id"])
         with self.assertRaises(MethodologyValidationError):
             self.observe(e["experiment_id"], "M", 3.5)  # no raw_evidence_refs
-        self.observe(e["experiment_id"], "M", 3.5, raw_evidence_refs=["ev-1"])  # succeeds with refs
+        ev1 = self._real_evidence()
+        self.observe(e["experiment_id"], "M", 3.5, raw_evidence_refs=[ev1])  # succeeds with refs
 
     def test_25_observation_separated_from_interpretation(self) -> None:
         q = self.make_question()
@@ -471,20 +486,22 @@ class OutcomeTests(ResearchFixture):
             failure=[{"metric": "M", "comparator": "<", "value": 0}],
         )
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o1 = self.observe(e["experiment_id"], "M", 2.0, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o1 = self.observe(e["experiment_id"], "M", 2.0, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         a = self.assess(c["claim_id"], "PARTIALLY_SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                         observation_refs=[o1["observation_id"]], evidence_refs=["ev-1"])
+                         observation_refs=[o1["observation_id"]], evidence_refs=[ev1])
         self.assertEqual(a["outcome"], "PARTIALLY_SUPPORTED")
 
     def test_34_refuted_outcome_preserved(self) -> None:
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         a = self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                         observation_refs=[o["observation_id"]], evidence_refs=["ev-1"])
+                         observation_refs=[o["observation_id"]], evidence_refs=[ev1])
         self.assertEqual(a["outcome"], "REFUTED")
 
     def test_35_inconclusive_outcome_preserved(self) -> None:
@@ -507,7 +524,8 @@ class OutcomeTests(ResearchFixture):
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
-            self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]], evidence_refs=["ev-1"])
+            ev1 = self._real_evidence()
+            self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]], evidence_refs=[ev1])
 
     def test_44_required_evidence_missing_blocks_supported(self) -> None:
         q = self.make_question()
@@ -523,31 +541,34 @@ class OutcomeTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])  # fails success_criteria (M >= 1.0)
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])  # fails success_criteria (M >= 1.0)
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
             self.assess(c["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                        observation_refs=[o["observation_id"]], evidence_refs=["ev-1"])
+                        observation_refs=[o["observation_id"]], evidence_refs=[ev1])
 
     def test_47_required_reproducibility_missing_blocks_high_supported(self) -> None:
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"], claim_strength="HIGH", required_validation_level="LEVEL_3_DIFFICULT")
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], claim_strength="HIGH", protocol_refs=[p["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
             self.assess(c["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                        observation_refs=[o["observation_id"]], evidence_refs=["ev-1"], reproducibility_status="NOT_ATTEMPTED")
+                        observation_refs=[o["observation_id"]], evidence_refs=[ev1], reproducibility_status="NOT_ATTEMPTED")
 
     def test_48_required_independent_assessment_missing_blocks_high_supported(self) -> None:
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"], claim_strength="HIGH")
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], claim_strength="HIGH", protocol_refs=[p["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
             self.assess(c["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                        observation_refs=[o["observation_id"]], evidence_refs=["ev-1"], reproducibility_status="REPRODUCED",
+                        observation_refs=[o["observation_id"]], evidence_refs=[ev1], reproducibility_status="REPRODUCED",
                         assessor_role="SELF")
 
     def test_49_self_assessment_not_represented_as_independent(self) -> None:
@@ -575,10 +596,11 @@ class NegativeResultTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         a = self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                         observation_refs=[o["observation_id"]], evidence_refs=["ev-1"])
+                         observation_refs=[o["observation_id"]], evidence_refs=[ev1])
         self.assertIsNotNone(nr.load_assessment(self.project, a["assessment_id"]))
         self.assertIn(a["assessment_id"], nr.load_claim(self.project, c["claim_id"])["assessment_refs"])
 
@@ -586,14 +608,16 @@ class NegativeResultTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o_bad = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o_bad = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         refuted = self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                               observation_refs=[o_bad["observation_id"]], evidence_refs=["ev-1"])
-        o_good = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-2"])
+                               observation_refs=[o_bad["observation_id"]], evidence_refs=[ev1])
+        ev2 = self._real_evidence()
+        o_good = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=[ev2])
         c2 = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]], statement="revised narrower claim")
         supported = self.assess(c2["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                                 observation_refs=[o_good["observation_id"]], evidence_refs=["ev-2"])
+                                 observation_refs=[o_good["observation_id"]], evidence_refs=[ev2])
         self.assertEqual(nr.load_assessment(self.project, refuted["assessment_id"])["outcome"], "REFUTED")
         self.assertEqual(supported["outcome"], "SUPPORTED")
 
@@ -610,13 +634,14 @@ class InconclusiveResultTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"], claim_strength="HIGH", required_validation_level="LEVEL_3_DIFFICULT")
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-1"])  # favorable
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=[ev1])  # favorable
         c = self.make_claim(q["question_id"], claim_strength="HIGH", protocol_refs=[p["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
             self.assess(c["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                        observation_refs=[o["observation_id"]], evidence_refs=["ev-1"], reproducibility_status="NOT_ATTEMPTED")
+                        observation_refs=[o["observation_id"]], evidence_refs=[ev1], reproducibility_status="NOT_ATTEMPTED")
         inc = self.assess(c["claim_id"], "INCONCLUSIVE", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                           observation_refs=[o["observation_id"]], evidence_refs=["ev-1"], reproducibility_status="NOT_ATTEMPTED",
+                           observation_refs=[o["observation_id"]], evidence_refs=[ev1], reproducibility_status="NOT_ATTEMPTED",
                            rationale="favorable but reproducibility not attempted")
         self.assertEqual(inc["outcome"], "INCONCLUSIVE")
 
@@ -700,11 +725,12 @@ class BaselineDatasetSeedTests(ResearchFixture):
             success=[{"metric": "M", "comparator": ">=", "value": 1.0, "aggregation": "all"}],
         )
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        favorable = self.observe(e["experiment_id"], "M", 5.0, seed=1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        favorable = self.observe(e["experiment_id"], "M", 5.0, seed=1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
             self.assess(c["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                        observation_refs=[favorable["observation_id"]], evidence_refs=["ev-1"])
+                        observation_refs=[favorable["observation_id"]], evidence_refs=[ev1])
 
     def test_scenario_f_multi_seed_aggregate_criterion_not_satisfied_by_cherrypick(self) -> None:
         q = self.make_question()
@@ -714,11 +740,12 @@ class BaselineDatasetSeedTests(ResearchFixture):
             failure=[{"metric": "AUPRC", "comparator": "<=", "vs_baseline": True, "aggregation": "all"}],
         )
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        obs = [self.observe(e["experiment_id"], "AUPRC", v, seed=s, raw_evidence_refs=["ev-1"]) for s, v in [(1, 0.75), (2, 0.68), (3, 0.72)]]
+        ev1 = self._real_evidence()
+        obs = [self.observe(e["experiment_id"], "AUPRC", v, seed=s, raw_evidence_refs=[ev1]) for s, v in [(1, 0.75), (2, 0.68), (3, 0.72)]]
         c = self.make_claim(q["question_id"], claim_type="COMPARATIVE", baseline_ref="B", baseline_metric=0.70, protocol_refs=[p["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
             self.assess(c["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                        observation_refs=[o["observation_id"] for o in obs], evidence_refs=["ev-1"])
+                        observation_refs=[o["observation_id"] for o in obs], evidence_refs=[ev1])
 
     def test_55_leakage_control_requirement_represented(self) -> None:
         q = self.make_question()
@@ -740,19 +767,23 @@ class AnalysisModeTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"], primary_metric="AUPRC", secondary_metrics=["AUROC"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        self.observe(e["experiment_id"], "AUPRC", 0.1, raw_evidence_refs=["ev-1"])  # primary fails
-        self.observe(e["experiment_id"], "AUROC", 0.95, raw_evidence_refs=["ev-2"])  # secondary looks great
+        ev1 = self._real_evidence()
+        self.observe(e["experiment_id"], "AUPRC", 0.1, raw_evidence_refs=[ev1])  # primary fails
+        ev2 = self._real_evidence()
+        self.observe(e["experiment_id"], "AUROC", 0.95, raw_evidence_refs=[ev2])  # secondary looks great
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
             self.assess(c["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                        observation_refs=[], evidence_refs=["ev-2"])  # criteria still evaluated against primary_metric only
+                        observation_refs=[], evidence_refs=[ev2])  # criteria still evaluated against primary_metric only
 
     def test_scenario_d_post_hoc_metric_switch(self) -> None:
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"], primary_metric="AUPRC")
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        self.observe(e["experiment_id"], "AUPRC", 0.1, raw_evidence_refs=["ev-1"])
-        auroc_obs = self.observe(e["experiment_id"], "AUROC", 0.95, raw_evidence_refs=["ev-2"])
+        ev1 = self._real_evidence()
+        self.observe(e["experiment_id"], "AUPRC", 0.1, raw_evidence_refs=[ev1])
+        ev2 = self._real_evidence()
+        auroc_obs = self.observe(e["experiment_id"], "AUROC", 0.95, raw_evidence_refs=[ev2])
         amended = nr.amend_protocol(self.project, p["protocol_id"], field_updates={
             "primary_metric": "AUROC",
             "success_criteria": [{"metric": "AUROC", "comparator": ">=", "value": 0.9, "aggregation": "mean"}],
@@ -764,7 +795,7 @@ class AnalysisModeTests(ResearchFixture):
             protocol_refs=[p["protocol_id"]], actor="a", reason="post-hoc claim",
         )
         result = self.assess(exploratory_claim["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]],
-                              experiment_refs=[e["experiment_id"]], observation_refs=[auroc_obs["observation_id"]], evidence_refs=["ev-2"],
+                              experiment_refs=[e["experiment_id"]], observation_refs=[auroc_obs["observation_id"]], evidence_refs=[ev2],
                               analysis_mode="POST_HOC")
         self.assertEqual(result["analysis_mode"], "POST_HOC")
 
@@ -790,10 +821,11 @@ class AuthoritySeparationTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                    observation_refs=[o["observation_id"]], evidence_refs=["ev-1"])
+                    observation_refs=[o["observation_id"]], evidence_refs=[ev1])
         failures_dir = self.project / ".code-loop" / "methodology" / "failures"
         self.assertFalse(failures_dir.is_dir() and any(failures_dir.glob("*.json")))
 
@@ -913,21 +945,23 @@ class ClaimStrengthEvidenceDepthTests(ResearchFixture):
         q = self.make_question()
         p_low = self.frozen_protocol(q["question_id"], claim_strength="LOW")
         e_low = self.complete(self.make_experiment(p_low["protocol_id"])["experiment_id"])
-        o_low = self.observe(e_low["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o_low = self.observe(e_low["experiment_id"], "M", 5.0, raw_evidence_refs=[ev1])
         c_low = self.make_claim(q["question_id"], claim_strength="LOW", protocol_refs=[p_low["protocol_id"]])
         low_result = self.assess(c_low["claim_id"], "SUPPORTED", protocol_refs=[p_low["protocol_id"]],
                                   experiment_refs=[e_low["experiment_id"]], observation_refs=[o_low["observation_id"]],
-                                  evidence_refs=["ev-1"], reproducibility_status="NOT_REQUIRED", assessor_role="SELF")
+                                  evidence_refs=[ev1], reproducibility_status="NOT_REQUIRED", assessor_role="SELF")
         self.assertEqual(low_result["outcome"], "SUPPORTED")
 
         p_high = self.frozen_protocol(q["question_id"], claim_strength="HIGH")
         e_high = self.complete(self.make_experiment(p_high["protocol_id"])["experiment_id"])
-        o_high = self.observe(e_high["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-2"])
+        ev2 = self._real_evidence()
+        o_high = self.observe(e_high["experiment_id"], "M", 5.0, raw_evidence_refs=[ev2])
         c_high = self.make_claim(q["question_id"], claim_strength="HIGH", protocol_refs=[p_high["protocol_id"]])
         with self.assertRaises(MethodologyValidationError):
             self.assess(c_high["claim_id"], "SUPPORTED", protocol_refs=[p_high["protocol_id"]],
                         experiment_refs=[e_high["experiment_id"]], observation_refs=[o_high["observation_id"]],
-                        evidence_refs=["ev-2"], reproducibility_status="NOT_REQUIRED", assessor_role="SELF")
+                        evidence_refs=[ev2], reproducibility_status="NOT_REQUIRED", assessor_role="SELF")
 
 
 # --- M7-H / M7-I integration and regression -------------------------------------
@@ -957,7 +991,7 @@ class RegressionUnaffectedTests(ResearchFixture):
         }, actor="team")
         order = ["P0", "P1", "P2", "P3"]
         for current, nxt in zip(order, order[1:]):
-            evidence_refs = ["source-ref-1"] if current == "P2" else []
+            evidence_refs = [self._real_evidence()] if current == "P2" else []
             transition(self.project, nxt, "team", f"{current} obligations satisfied",
                        artifact_refs=[made[current]["artifact_id"]], evidence_refs=evidence_refs, authority_class="tool")
 
@@ -1023,10 +1057,11 @@ class MemoryIntegrationTests(ResearchFixture):
         q2 = self.make_question()
         p2 = self.frozen_protocol(q2["question_id"])
         e2 = self.complete(self.make_experiment(p2["protocol_id"])["experiment_id"])
-        o2 = self.observe(e2["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-r"])
+        evr = self._real_evidence()
+        o2 = self.observe(e2["experiment_id"], "M", 0.1, raw_evidence_refs=[evr])
         c2 = self.make_claim(q2["question_id"], protocol_refs=[p2["protocol_id"]])
         refuted = self.assess(c2["claim_id"], "REFUTED", protocol_refs=[p2["protocol_id"]], experiment_refs=[e2["experiment_id"]],
-                               observation_refs=[o2["observation_id"]], evidence_refs=["ev-r"])
+                               observation_refs=[o2["observation_id"]], evidence_refs=[evr])
 
         q3 = self.make_question()
         c3 = self.make_claim(q3["question_id"])
@@ -1059,17 +1094,19 @@ class MemoryIntegrationTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         refuted = self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                               observation_refs=[o["observation_id"]], evidence_refs=["ev-1"])
+                               observation_refs=[o["observation_id"]], evidence_refs=[ev1])
         snapshot1 = nm.rebuild_memory(self.project, actor="tester")
         self.assertTrue(any(f["claim_id"] == c["claim_id"] for f in snapshot1["refuted_findings"]))
 
-        o2 = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-2"])
+        ev2 = self._real_evidence()
+        o2 = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=[ev2])
         c2 = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]], statement="revised claim")
         self.assess(c2["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                    observation_refs=[o2["observation_id"]], evidence_refs=["ev-2"])
+                    observation_refs=[o2["observation_id"]], evidence_refs=[ev2])
         snapshot2 = nm.rebuild_memory(self.project, actor="tester")
         self.assertTrue(any(f["claim_id"] == c2["claim_id"] for f in snapshot2["supported_findings"]))
         # earlier negative result remains queryable from research history, even
@@ -1254,10 +1291,11 @@ class SingleOwnerCurrentAssessmentTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         refuted = self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                               observation_refs=[o["observation_id"]], evidence_refs=["ev-1"])
+                               observation_refs=[o["observation_id"]], evidence_refs=[ev1])
         inc = self.assess(c["claim_id"], "INCONCLUSIVE", rationale="re-examined, unclear")
         self.assertEqual(nr.load_assessment(self.project, refuted["assessment_id"])["outcome"], "REFUTED")
         self.assertEqual(nr.load_assessment(self.project, inc["assessment_id"])["outcome"], "INCONCLUSIVE")
@@ -1268,17 +1306,19 @@ class SingleOwnerCurrentAssessmentTests(ResearchFixture):
         q = self.make_question()
         p = self.frozen_protocol(q["question_id"])
         e = self.complete(self.make_experiment(p["protocol_id"])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]])
         refuted = self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                               observation_refs=[o["observation_id"]], evidence_refs=["ev-1"])
+                               observation_refs=[o["observation_id"]], evidence_refs=[ev1])
         snapshot1 = nm.rebuild_memory(self.project, actor="tester")
         self.assertTrue(any(f["claim_id"] == c["claim_id"] for f in snapshot1["refuted_findings"]))
 
-        o2 = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-2"])
+        ev2 = self._real_evidence()
+        o2 = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=[ev2])
         c2 = self.make_claim(q["question_id"], protocol_refs=[p["protocol_id"]], statement="revised claim")
         self.assess(c2["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                    observation_refs=[o2["observation_id"]], evidence_refs=["ev-2"])
+                    observation_refs=[o2["observation_id"]], evidence_refs=[ev2])
         snapshot2 = nm.rebuild_memory(self.project, actor="tester")
         self.assertTrue(any(f["claim_id"] == c2["claim_id"] for f in snapshot2["supported_findings"]))
         self.assertEqual(nr.load_assessment(self.project, refuted["assessment_id"])["outcome"], "REFUTED")
@@ -1301,16 +1341,18 @@ class ScenarioBTests(ResearchFixture):
         h = self.make_hypothesis(q["question_id"])
         p = self.frozen_protocol(q["question_id"], hypothesis_refs=[h["hypothesis_id"]])
         e = self.complete(self.make_experiment(p["protocol_id"], hypothesis_refs=[h["hypothesis_id"]])["experiment_id"])
-        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=["ev-1"])
+        ev1 = self._real_evidence()
+        o = self.observe(e["experiment_id"], "M", 0.1, raw_evidence_refs=[ev1])
         c = self.make_claim(q["question_id"], hypothesis_refs=[h["hypothesis_id"]], protocol_refs=[p["protocol_id"]])
         a1 = self.assess(c["claim_id"], "REFUTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                          observation_refs=[o["observation_id"]], evidence_refs=["ev-1"], hypothesis_refs=[h["hypothesis_id"]])
+                          observation_refs=[o["observation_id"]], evidence_refs=[ev1], hypothesis_refs=[h["hypothesis_id"]])
         self.assertEqual(a1["outcome"], "REFUTED")
 
         c2 = self.make_claim(q["question_id"], statement="narrower revised claim", protocol_refs=[p["protocol_id"]])
-        o2 = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=["ev-2"])
+        ev2 = self._real_evidence()
+        o2 = self.observe(e["experiment_id"], "M", 5.0, raw_evidence_refs=[ev2])
         a2 = self.assess(c2["claim_id"], "SUPPORTED", protocol_refs=[p["protocol_id"]], experiment_refs=[e["experiment_id"]],
-                          observation_refs=[o2["observation_id"]], evidence_refs=["ev-2"])
+                          observation_refs=[o2["observation_id"]], evidence_refs=[ev2])
         self.assertEqual(a2["outcome"], "SUPPORTED")
 
         reloaded_original = nr.load_assessment(self.project, a1["assessment_id"])

@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -99,8 +100,45 @@ def run_script(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, "scripts/nogap.py", *args], cwd=ROOT, text=True, capture_output=True)
 
 
+def _iso_now() -> str:
+    """UTC timestamp in the same shape production evidence records use - nogap.py's
+    validate step requires provenance.created_at to be a non-empty string."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _ensure_runtime(project: Path, objective: str) -> None:
+    """Idempotently establish the Trust runtime once, before any evidence write -
+    `nogap init` refuses a project whose runtime directory already exists and is
+    non-empty."""
+    root = project.resolve() / ".code-loop" / "runtime"
+    if root.exists() and any(root.iterdir()):
+        return
+    result = run_script("init", str(project), "--objective", objective)
+    assert result.returncode == 0, f"runtime init failed: {result.stdout}{result.stderr}"
+
+
+def _record_source_evidence(project: Path, actor: str) -> str:
+    """A real record in the runtime evidence ledger (P3's source-reference evidence),
+    in the ledger's own shape - never a fabricated ref string."""
+    evidence_dir = project.resolve() / ".code-loop" / "runtime" / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    evidence_id = f"evidence-source-{uuid.uuid4().hex[:12]}"
+    (evidence_dir / f"{evidence_id}.json").write_text(json.dumps({
+        "id": evidence_id,
+        "run_id": "run-0001",
+        "kind": "source_references",
+        "status": "passed",
+        "provenance": {"created_by": actor, "actor_id": actor, "authority": "tool", "created_at": _iso_now()},
+        "summary": "fixture prior-art source references",
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return evidence_id
+
+
 def build_p0_p11_chain(
     project: Path, actor: str = "team", p7_extra: dict | None = None, p8_extra: dict | None = None,
+    objective: str = "P0-P11 chain fixture",
 ) -> dict[str, dict]:
     """Minimal valid P0-P11 chain (mirrors tests/test_methodology_artifacts.py's helper,
     duplicated here to keep this file self-contained per this repo's convention of one
@@ -108,10 +146,11 @@ def build_p0_p11_chain(
     all the way to P11 via the real transition engine, since M7-F's barrier checks
     current_phase, not just artifact presence.
 
-    Call this BEFORE `nogap init` (the Trust Runtime): P3's phase contract requires
-    non-empty evidence_refs to leave it, and once .code-loop/runtime/evidence/ exists,
-    those refs are resolved against it - so this only works with a made-up evidence id
-    while there is no runtime evidence ledger yet to disagree with it."""
+    Establishes the Trust runtime itself (idempotently) before writing P3's evidence
+    record, so a real evidence id is always available to resolve the ref against -
+    a caller that also wants to init explicitly (with its own objective text) should
+    pass `objective` here instead of calling `nogap init` a second time."""
+    _ensure_runtime(project, objective)
     made: dict[str, dict] = {}
     made["P0"] = create_artifact(project, "P0_PROJECT_INTENT", {
         "project_name": "demo", "intent_type": mstatus(project)["intent"], "problem_summary": "x",
@@ -171,7 +210,7 @@ def build_p0_p11_chain(
 
     order = ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]
     for current, nxt in zip(order, order[1:]):
-        evidence_refs = ["source-ref-1"] if current == "P3" else []
+        evidence_refs = [_record_source_evidence(project, actor)] if current == "P3" else []
         transition(
             project, nxt, actor, f"{current} obligations satisfied",
             artifact_refs=[made[current]["artifact_id"]], evidence_refs=evidence_refs, authority_class="tool",
@@ -335,13 +374,8 @@ class ExecutionBindingTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.project = Path(self.tmp.name)
         init_git_repo(self.project)
-        # Methodology chain (with transitions) must be built BEFORE `nogap init`: P3's
-        # required_evidence would otherwise be checked against a real (initially empty)
-        # runtime evidence ledger instead of accepted at face value. See
-        # build_p0_p11_chain's docstring.
         init_project(self.project, "research", "low", "low", actor="test")
-        self.chain = build_p0_p11_chain(self.project)
-        run_script("init", str(self.project), "--objective", "M7-F build binding")
+        self.chain = build_p0_p11_chain(self.project, objective="M7-F build binding")
         self.contract = make_task_contract(self.project, self.chain)
         self._original_adapters = dict(nogap_adapters.ADAPTERS)
 
@@ -451,9 +485,8 @@ class GateRelationshipTests(unittest.TestCase):
             project = Path(tmp)
             init_git_repo(project)
             init_project(project, "research", "low", "low", actor="test")
-            chain = build_p0_p11_chain(project)  # must precede `nogap init` - see its docstring
+            chain = build_p0_p11_chain(project, objective="gate hash linkage")
 
-            run_script("init", str(project), "--objective", "gate hash linkage")
             run_script("freeze", str(project))
             gate_path = project / ".code-loop" / "runtime" / "gates" / "gate-0001.json"
             gate = json.loads(gate_path.read_text(encoding="utf-8"))
@@ -476,11 +509,10 @@ class GateRelationshipTests(unittest.TestCase):
             project = Path(tmp)
             init_git_repo(project)
             init_project(project, "research", "low", "low", actor="test")
-            chain = build_p0_p11_chain(project)  # must precede `nogap init` - see its docstring
+            chain = build_p0_p11_chain(project)
             # the P11 plan created by build_p0_p11_chain declares a DIFFERENT required_commands
             self.assertNotEqual(chain["P11"]["fields"]["required_commands"], ["python -m pytest"])
 
-            run_script("init", str(project))
             gate_path = project / ".code-loop" / "runtime" / "gates" / "gate-0001.json"
             gate = json.loads(gate_path.read_text(encoding="utf-8"))
             gate["rules"]["required_commands"] = ["python -m pytest"]
@@ -522,10 +554,8 @@ class ManualLiveScenarioTests(unittest.TestCase):
         run_script("methodology", "init", str(self.project), "--intent", "research", "--risk", "low", "--claim-strength", "low")
         init_project_state_dir = self.project / ".code-loop" / "methodology"
         self.assertTrue(init_project_state_dir.is_dir())
-        # build a full chain BEFORE `nogap init` (see build_p0_p11_chain's docstring), then
-        # corrupt P11's requirement_refs to a fake REQ id
-        chain = build_p0_p11_chain(self.project)
-        run_script("init", str(self.project), "--objective", "scenario C")
+        # build a full chain, then corrupt P11's requirement_refs to a fake REQ id
+        chain = build_p0_p11_chain(self.project, objective="scenario C")
         p11_path = self.project / ".code-loop" / "methodology" / "artifacts" / f"{chain['P11']['artifact_id']}.json"
         record = json.loads(p11_path.read_text(encoding="utf-8"))
         record["fields"]["requirement_refs"] = ["REQ-999"]

@@ -83,8 +83,12 @@ class Matrix(unittest.TestCase):
     def forward(self, phase_id: str, refs: list[str]) -> dict:
         self.at(phase_id)
         phase = nm.load_methodology().get_phase(phase_id)
+        # None of the phases this helper drives (P1, P4, P13) require evidence to leave,
+        # so no evidence_refs are supplied - the matrix below is exclusively about artifact
+        # verdicts, and a fabricated evidence ref would now be rejected by the real ledger
+        # build_p0_p11_chain establishes, for no reason relevant to what this test checks.
         return can_transition(self.project, phase.allowed_next[0],
-                              evidence_refs=["source-ref-1"], artifact_refs=refs)
+                              evidence_refs=[], artifact_refs=refs)
 
     # -- VALIDATED (control) ----------------------------------------------------------------
 

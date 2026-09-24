@@ -358,21 +358,85 @@ class EvidenceResolutionTests(unittest.TestCase):
                                 artifact_refs=p3_artifacts)
             self.assertEqual(state["current_phase"], "P4")
 
-    def test_unresolvable_evidence_ref_accepted_when_no_runtime_exists(self) -> None:
-        # "rejected if resolvable" - with no runtime evidence ledger at all, there's nothing to
-        # resolve against, so a ref is accepted at face value rather than fabricating a rejection.
+    def test_evidence_ref_blocked_when_no_runtime_exists(self) -> None:
+        # D4-PRE-B2 revoked the old "accepted at face value" convention: absence of a
+        # runtime is NOT evidence of validity when there are refs to resolve. A non-empty
+        # evidence_refs with no ledger to resolve against is now unresolved, same as an
+        # unknown ref against a real ledger - never blanket acceptance.
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_project(project, "research", "low", "low", actor="test")
             # materialize_evidence=False: this test is ABOUT the absence of a ledger, so the
-            # fixture must not create one. The unresolvable evidence ref is the SUBJECT here,
-            # not scaffolding - it is what "accepted at face value" means.
+            # fixture must not create one. The unresolvable evidence ref is the SUBJECT here -
+            # it is what "blocked with no ledger to resolve against" means.
             advance(project, "P1", "P2", "P3", materialize_evidence=False)
-            state = transition(project, "P4", actor="team", reason="no runtime to check against",
-                                evidence_refs=["anything-goes-here"],
-                                artifact_refs=real_refs(project, "P3",
-                                                        materialize_evidence=False)[0])
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                transition(project, "P4", actor="team", reason="no runtime to check against",
+                           evidence_refs=["anything-goes-here"],
+                           artifact_refs=real_refs(project, "P3",
+                                                   materialize_evidence=False)[0])
+            self.assertIn("unknown evidence reference", str(ctx.exception))
+            self.assertEqual(status(project)["current_phase"], "P3")
+
+    def test_evidence_ref_resolution_matrix_at_the_transition_gate(self) -> None:
+        """Dedicated coverage for D4-PRE-B2's shared evidence-ledger reader, at the one
+        site with the largest blast radius (the phase-transition gate in
+        nogap_methodology._evaluate_transition). Several other suites (test_f2a_verdict_
+        matrix.py, test_f2b_*.py) moved their `forward()` dry-run helpers to
+        `evidence_refs=[]` because the artifact-verdict matrix they test has nothing to do
+        with evidence resolution - this test is the explicit replacement coverage for the
+        evidence-resolution path itself, in one place, proving all three outcomes:
+          1. a transition citing a REAL evidence ref present in the ledger passes
+          2. the same transition citing an UNKNOWN ref fails
+          3. non-empty refs with NO ledger at all (never materialized) fails
+        (2) is already exercised by test_14 above and (3) by the test right above this one;
+        this test exists so the three outcomes are visible together as one matrix, not
+        scattered incidentally across other tests' setup.
+        """
+        # (1) and (2): real ledger, resolvable vs. unresolvable ref.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            init_project(project, "research", "low", "low", actor="test")
+            advance(project, "P1", "P2", "P3")
+            p3_artifacts = real_refs(project, "P3")[0]
+            evidence_dir = project / ".code-loop" / "runtime" / "evidence"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            (evidence_dir / "evidence-matrix-real.json").write_text(
+                json.dumps({"id": "evidence-matrix-real", "status": "passed"}), encoding="utf-8")
+
+            # (1) PASSES: the ref resolves against the real ledger.
+            state = transition(project, "P4", actor="team", reason="real ref resolves",
+                               evidence_refs=["evidence-matrix-real"], artifact_refs=p3_artifacts)
             self.assertEqual(state["current_phase"], "P4")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            init_project(project, "research", "low", "low", actor="test")
+            advance(project, "P1", "P2", "P3")
+            p3_artifacts = real_refs(project, "P3")[0]
+            evidence_dir = project / ".code-loop" / "runtime" / "evidence"
+            evidence_dir.mkdir(parents=True, exist_ok=True)
+            (evidence_dir / "evidence-matrix-real.json").write_text(
+                json.dumps({"id": "evidence-matrix-real", "status": "passed"}), encoding="utf-8")
+
+            # (2) FAILS: a ledger exists, but this ref isn't in it.
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                transition(project, "P4", actor="team", reason="unknown ref against a real ledger",
+                           evidence_refs=["evidence-matrix-unknown"], artifact_refs=p3_artifacts)
+            self.assertIn("unknown evidence reference", str(ctx.exception))
+            self.assertEqual(status(project)["current_phase"], "P3")
+
+        # (3) FAILS: non-empty refs, no ledger materialized at all.
+        with tempfile.TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            init_project(project, "research", "low", "low", actor="test")
+            advance(project, "P1", "P2", "P3", materialize_evidence=False)
+            with self.assertRaises(MethodologyValidationError) as ctx:
+                transition(project, "P4", actor="team", reason="no ledger to resolve against",
+                           evidence_refs=["evidence-matrix-missing-ledger"],
+                           artifact_refs=real_refs(project, "P3", materialize_evidence=False)[0])
+            self.assertIn("unknown evidence reference", str(ctx.exception))
+            self.assertEqual(status(project)["current_phase"], "P3")
 
 
 class ProfileAndSkipTests(unittest.TestCase):

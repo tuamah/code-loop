@@ -26,7 +26,7 @@ from nogap_execution import ExecutionHandle, GitWorktreeExecutionBackend  # noqa
 sys.path.insert(0, str(ROOT / "tests"))
 
 
-def govern(project: Path) -> None:
+def govern(project: Path, objective: str = "P0-P11 chain fixture") -> None:
     """Give the project real methodology state, permitted to BUILD.
 
     Since closure item 3, `nogap execute` is authorized by the same prebuild barrier as the
@@ -36,15 +36,17 @@ def govern(project: Path) -> None:
     There is no seam here and no override, because `nogap execute` runs in a subprocess and
     the production path has nothing that would let one in.
 
-    Must run BEFORE `nogap init`: P3 needs non-empty evidence_refs to leave it, and once
-    the runtime evidence ledger exists those refs are resolved against it.
+    `test_methodology_build.build_p0_p11_chain` establishes the Trust runtime itself
+    (idempotently) before writing P3's real evidence record, so a caller that wants a
+    specific `--objective` text passes it here rather than calling `nogap init` again
+    afterward - `nogap init` refuses once the runtime directory is non-empty.
     """
     from nogap_methodology import init_project as _mtd_init
 
     import test_methodology_build as _chain
 
     _mtd_init(project, "research", "low", "low", actor="test")
-    _chain.build_p0_p11_chain(project)
+    _chain.build_p0_p11_chain(project, objective=objective)
 
 
 def run_script(*args: str) -> subprocess.CompletedProcess[str]:
@@ -155,18 +157,24 @@ class ExecuteCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_git_repo(project)
-            govern(project)
-            run_script("init", str(project), "--objective", "execute writes evidence")
+            govern(project, objective="execute writes evidence")
+            runtime = project / ".code-loop" / "runtime"
+            # Baseline BEFORE execute: govern()'s chain fixture legitimately writes its own
+            # (P3) evidence record establishing the runtime, so the assertion below is on
+            # the DELTA execute() itself produces, not a fixed total that would break again
+            # the next time a builder legitimately adds preparatory evidence.
+            baseline_evidence = len(list((runtime / "evidence").glob("*.json")))
             result = run_script("execute", str(project), "--", sys.executable, "-c", "open('out.txt','w').write('x')")
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-            runtime = project / ".code-loop" / "runtime"
             evidence_files = list((runtime / "evidence").glob("*.json"))
             artifact_files = list((runtime / "artifacts").glob("*.patch"))
-            self.assertEqual(len(evidence_files), 1)
+            self.assertEqual(len(evidence_files), baseline_evidence + 1)
             self.assertEqual(len(artifact_files), 1)
 
-            evidence = json.loads(evidence_files[0].read_text(encoding="utf-8"))
+            new_evidence_files = [p for p in evidence_files if p.stem.startswith("evidence-exec-")]
+            self.assertEqual(len(new_evidence_files), 1)
+            evidence = json.loads(new_evidence_files[0].read_text(encoding="utf-8"))
             self.assertEqual(evidence["kind"], "execution")
             self.assertEqual(evidence["status"], "passed")
             self.assertEqual(evidence["provenance"]["authority"], "execution")
@@ -182,8 +190,7 @@ class ExecuteCommandTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
             init_git_repo(project)
-            govern(project)
-            run_script("init", str(project), "--objective", "timeout flag regression")
+            govern(project, objective="timeout flag regression")
             result = run_script(
                 "execute", str(project), "--timeout", "2", "--",
                 sys.executable, "-c", "import time; time.sleep(30)",
