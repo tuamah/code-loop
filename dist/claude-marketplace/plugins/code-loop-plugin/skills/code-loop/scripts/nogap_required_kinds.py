@@ -42,6 +42,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+#: Closed registry of semantic resolver NAMES a phase contract may declare in
+#: `semantic_resolvers` (F2b Rev 2.1). Hand-written, membership only: nogap_methodology.py
+#: imports this at load time to reject any unrecognized name. A name here does NOT by itself
+#: enforce anything - kind resolution is still governed solely by ENFORCED_KINDS/DEFERRED_KINDS.
+SEMANTIC_RESOLVER_NAMES: frozenset[str] = frozenset({
+    "EVIDENCE_BUNDLE_RESOLVER",
+})
+
 # -- verdicts -------------------------------------------------------------------------------
 
 PASS = "PASS"

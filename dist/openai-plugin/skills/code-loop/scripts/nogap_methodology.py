@@ -31,6 +31,7 @@ from typing import Any
 from nogap_artifact_types import ARTIFACT_TYPES
 from nogap_errors import MethodologyValidationError
 from nogap_evidence_ledger import read_evidence_ledger
+from nogap_required_kinds import SEMANTIC_RESOLVER_NAMES
 
 ROOT = Path(__file__).resolve().parents[1]
 METHODOLOGY_DIR = ROOT / "methodology"
@@ -72,6 +73,7 @@ class PhaseContract:
     required_evidence: list[str] = field(default_factory=list)
     required_roles: list[str] = field(default_factory=list)
     artifact_field_bindings: dict[str, dict[str, str]] = field(default_factory=dict)
+    semantic_resolvers: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -150,6 +152,16 @@ def _parse_phase_contract(data: Any, source: Path) -> PhaseContract:
             f"{source}: artifact_field_bindings[{kind!r}] must be an object with exactly 'artifact_type' and 'field' string keys",
         )
         bindings[kind] = {"artifact_type": binding["artifact_type"], "field": binding["field"]}
+    resolvers_raw = data.get("semantic_resolvers", {})
+    _require(isinstance(resolvers_raw, dict), f"{source}: semantic_resolvers must be a JSON object")
+    resolvers: dict[str, str] = {}
+    for kind, name in resolvers_raw.items():
+        _require(isinstance(kind, str) and kind, f"{source}: semantic_resolvers key must be a non-empty string")
+        _require(
+            isinstance(name, str) and name,
+            f"{source}: semantic_resolvers[{kind!r}] must be a non-empty resolver name string",
+        )
+        resolvers[kind] = name
     return PhaseContract(
         id=data["id"],
         macro_phase=data["macro_phase"],
@@ -165,6 +177,7 @@ def _parse_phase_contract(data: Any, source: Path) -> PhaseContract:
         required_evidence=list(data.get("required_evidence", [])),
         required_roles=list(data.get("required_roles", [])),
         artifact_field_bindings=bindings,
+        semantic_resolvers=resolvers,
     )
 
 
@@ -217,6 +230,34 @@ def _validate_artifact_field_bindings(phases: dict[str, "PhaseContract"]) -> Non
                 )
             else:
                 seen[kind] = binding_key
+
+
+def _validate_semantic_resolvers(phases: dict[str, "PhaseContract"]) -> None:
+    """Fail-closed load-time validation of each phase's semantic_resolvers.
+
+    Mirrors _validate_artifact_field_bindings: every declared kind must be one of the phase's
+    required_artifacts, every resolver name must be in the closed SEMANTIC_RESOLVER_NAMES
+    registry (no fallback), and one kind may not be declared with different resolver names
+    across phases. Runs unconditionally inside load_methodology().
+    """
+    seen: dict[str, str] = {}
+    for phase in phases.values():
+        for kind, name in phase.semantic_resolvers.items():
+            _require(
+                kind in phase.required_artifacts,
+                f"{phase.id}: semantic_resolvers declares {kind!r}, which is not in this phase's required_artifacts",
+            )
+            _require(
+                name in SEMANTIC_RESOLVER_NAMES,
+                f"{phase.id}: semantic_resolvers[{kind!r}] references unknown resolver {name!r}",
+            )
+            if kind in seen:
+                _require(
+                    seen[kind] == name,
+                    f"conflicting semantic_resolvers for {kind!r}: {seen[kind]!r} (already declared) vs {name!r} (in {phase.id})",
+                )
+            else:
+                seen[kind] = name
 
 
 def load_methodology(methodology_dir: Path = METHODOLOGY_DIR) -> MethodologyDefinition:
@@ -298,6 +339,7 @@ def load_methodology(methodology_dir: Path = METHODOLOGY_DIR) -> MethodologyDefi
     _require(set(profiles) == PROFILES, f"expected profiles {sorted(PROFILES)}, found {sorted(profiles)}")
 
     _validate_artifact_field_bindings(phases)
+    _validate_semantic_resolvers(phases)
 
     return MethodologyDefinition(
         methodology_id=top["methodology_id"],
