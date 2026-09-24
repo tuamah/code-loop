@@ -200,6 +200,7 @@ ENFORCED_KINDS: dict[str, Any] = {
     "TASK_CONTRACT": WholeArtifact("P12_TASK_CONTRACT"),
     "VERIFICATION_PLAN": WholeArtifact("P15_VERIFICATION_PLAN"),
     "SCOPE": WholeArtifact("P1_SCOPE"),
+    "METRICS": WholeArtifact("P10_BASELINE"),
 
     # -- a file produced by the work --
     "PATCH": ProjectFile(),
@@ -265,7 +266,6 @@ DEFERRED_KINDS: frozenset[str] = frozenset({
     "COST_MODEL",             # GP-13
     "RUNTIME_STRUCTURE",      # no declared field in P9_GOVERNANCE
     "MEMORY_CONFIGURATION",   # GP-9
-    "METRICS",                # P10 declares primary_metric/secondary_metrics; coverage unclear
     "GOLDEN_GATES",           # no declared field in P11_GATE_PLAN
 })
 
