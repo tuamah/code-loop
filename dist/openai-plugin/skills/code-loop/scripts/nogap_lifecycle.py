@@ -43,11 +43,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from nogap_artifacts import load_artifact
 from nogap_evidence_ledger import read_evidence_ledger
+from nogap_verify_binding import load_task_contract
 from nogap_methodology import (
     MethodologyValidationError,
     _now,
@@ -433,6 +435,36 @@ def recompute_candidate_fingerprint_for_record(record: dict[str, Any]) -> str:
     )
 
 
+def _validate_candidate_bindings(project: Path, included_task_refs: list[str], candidate_bindings: Any) -> None:
+    """G1-C1 owner-side schema validation of candidate_bindings (task_id -> candidate_hash).
+    Syntactic + task-contract resolution only: no P18 attestation (G1-C2) and no
+    completeness requirement (G1-C3, freeze-time)."""
+    _require(isinstance(candidate_bindings, dict), "lifecycle: candidate_bindings must be a dict")
+    _require(len(set(included_task_refs)) == len(included_task_refs),
+             f"lifecycle: duplicate included_task_refs: {sorted(t for t in set(included_task_refs) if included_task_refs.count(t) > 1)}")
+    for task_id in included_task_refs:
+        load_task_contract(project, task_id)
+    for task_id, candidate_hash in candidate_bindings.items():
+        _require(task_id in included_task_refs, f"lifecycle: candidate_bindings key {task_id!r} is not in included_task_refs")
+        _require(isinstance(candidate_hash, str) and re.fullmatch(r"[0-9a-f]{64}", candidate_hash) is not None,
+                 f"lifecycle: candidate_bindings[{task_id!r}] is not a 64-char lowercase hex candidate_hash")
+
+
+def update_release_candidate_bindings(
+    project: Path, release_candidate_id: str, *, actor: str, reason: str, candidate_bindings: dict[str, str],
+) -> dict[str, Any]:
+    """G1-C1: the only mutator of candidate_bindings; DRAFT/ASSEMBLED only."""
+    record = _load_or_raise(project, "release_candidates", release_candidate_id, "release_candidate_id")
+    _require(record["status"] in {"DRAFT", "ASSEMBLED"},
+             f"lifecycle: cannot update candidate_bindings from status {record['status']!r}")
+    _require_actor_reason(actor, reason, "update_release_candidate_bindings")
+    bindings = dict(candidate_bindings) if isinstance(candidate_bindings, dict) else candidate_bindings
+    _validate_candidate_bindings(project, list(record.get("included_task_refs", [])), bindings)
+    record["candidate_bindings"] = bindings
+    _append_history(record, "CANDIDATE_BINDINGS_UPDATED", actor, reason)
+    return _save(project, "release_candidates", record, "release_candidate_id")
+
+
 def create_release_candidate(
     project: Path, *, version: str, candidate_ref: str, actor: str, reason: str,
     code_revision: str | None = None, branch: str | None = None, project_id: str | None = None,
@@ -440,10 +472,13 @@ def create_release_candidate(
     evidence_refs: list[str] = (), verification_refs: list[str] = (), research_refs: list[str] = (),
     decision_refs: list[str] = (), known_failures: list[str] = (), known_limitations: list[str] = (),
     known_risks: list[str] = (), release_candidate_id: str | None = None,
+    candidate_bindings: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     _require(bool(version and version.strip()), "create_release_candidate requires a non-empty version")
     _require(bool(candidate_ref and candidate_ref.strip()), "create_release_candidate requires a non-empty candidate_ref")
     _require_actor_reason(actor, reason, "create_release_candidate")
+    candidate_bindings = dict(candidate_bindings or {})
+    _validate_candidate_bindings(project, list(included_task_refs), candidate_bindings)
     unresolved = (
         _check_artifact_refs(project, list(artifact_refs))
         + _check_evidence_refs(project, list(evidence_refs) + list(verification_refs))
@@ -466,6 +501,7 @@ def create_release_candidate(
         "artifact_refs": list(artifact_refs), "evidence_refs": list(evidence_refs), "verification_refs": list(verification_refs),
         "research_refs": list(research_refs), "decision_refs": list(decision_refs),
         "known_failures": list(known_failures), "known_limitations": list(known_limitations), "known_risks": list(known_risks),
+        "candidate_bindings": candidate_bindings,
         "freeze_status": "NOT_FROZEN", "freeze_record": None, "status": "DRAFT",
         "candidate_fingerprint": None, "artifact_fingerprints": {},
         "supersedes": None, "superseded_by": None,
