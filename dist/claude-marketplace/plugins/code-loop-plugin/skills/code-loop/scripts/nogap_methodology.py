@@ -29,6 +29,8 @@ from pathlib import Path
 from typing import Any
 
 from nogap_artifact_types import ARTIFACT_TYPES
+from nogap_errors import MethodologyValidationError
+from nogap_evidence_ledger import read_evidence_ledger
 
 ROOT = Path(__file__).resolve().parents[1]
 METHODOLOGY_DIR = ROOT / "methodology"
@@ -38,10 +40,6 @@ LOOPS = {"research_loop", "build_loop", "verify_loop", "repair_loop", "improveme
 PROFILES = {"LIGHT", "STANDARD", "STRICT"}
 PRINCIPLE_CLASSES = {"A", "B", "C"}
 LOOP_STATUSES = {"ACTIVE", "RESOLVED", "BLOCKED", "INCONCLUSIVE"}
-
-
-class MethodologyValidationError(Exception):
-    """Raised for any malformed contract or unknown reference. Fail closed, never partial-load."""
 
 
 def _read_json(path: Path) -> Any:
@@ -593,24 +591,6 @@ def _effective_profile_for_phase(state: dict[str, Any], phase: PhaseContract) ->
     return state["effective_profile"]
 
 
-def _runtime_evidence_ids(project: Path) -> set[str] | None:
-    """Ids found under <project>/.code-loop/runtime/evidence (M6's evidence ledger), or None
-    if that runtime doesn't exist at all - nothing to resolve against, so refs are accepted at
-    face value rather than fabricating a rejection for a project with no runtime yet."""
-    evidence_dir = project.resolve() / ".code-loop" / "runtime" / "evidence"
-    if not evidence_dir.is_dir():
-        return None
-    ids: set[str] = set()
-    for path in evidence_dir.glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict) and isinstance(data.get("id"), str):
-            ids.add(data["id"])
-    return ids
-
-
 def _is_skippable(definition: MethodologyDefinition, state: dict[str, Any], phase: PhaseContract) -> bool:
     effective = _effective_profile_for_phase(state, phase)
     profile_obj = definition.get_profile(effective)
@@ -737,8 +717,8 @@ def _evaluate_transition(
                 check_required_kinds(project, list(current.required_artifacts), artifact_refs)):
             reasons.append(f"{current_id} required artifact {verdict}")
 
-    known_evidence = _runtime_evidence_ids(project)
-    if known_evidence is not None and evidence_refs:
+    known_evidence = read_evidence_ledger(project).ids
+    if evidence_refs:
         unknown = [ref for ref in evidence_refs if ref not in known_evidence]
         if unknown:
             reasons.append(f"unknown evidence reference(s), not found in the runtime evidence ledger: {unknown}")
