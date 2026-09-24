@@ -142,8 +142,8 @@ class StrategyDecisionEnforced(unittest.TestCase):
         self.assertIn("STRATEGY_DECISION", enforced)
         self.assertNotIn("STRATEGY_DECISION", deferred)
         self.assertNotIn("BUILD_VS_BUY_DECISION", enforced | deferred)
-        self.assertEqual(len(enforced), 31)
-        self.assertEqual(len(deferred), 6)
+        self.assertEqual(len(enforced), 32)
+        self.assertEqual(len(deferred), 5)
 
 
 if __name__ == "__main__":
