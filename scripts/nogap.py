@@ -1244,7 +1244,7 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
         raise SystemExit("FAIL: no frozen gate to verify against; run 'nogap freeze' first")
     gate = frozen_gates[0]
 
-    from nogap_verification import run_deterministic_layer, run_independent_review_layer
+    from nogap_verification import required_commands_from_gate, run_deterministic_layer, run_independent_review_layer
 
     project_root = Path(args.path).resolve()
     written: list[str] = []
@@ -1304,7 +1304,8 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
                     "required_levels": depth["required_levels"],
                     "required_validation_levels": depth["required_validation_levels"],
                     "required_evidence_kinds": (
-                        ["deterministic"]
+                        ["effect_scope"]
+                        + (["deterministic"] if required_commands_from_gate(gate) else [])
                         + (["reproducibility"] if depth["reproducibility_required"] else [])
                         + (["independent_review"] if depth["independent_review_required"] else [])
                     ),
