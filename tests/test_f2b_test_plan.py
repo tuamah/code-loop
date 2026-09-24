@@ -89,8 +89,8 @@ class TestPlanEnforced(unittest.TestCase):
         deferred = set(rk.DEFERRED_KINDS)
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
-        self.assertEqual(len(enforced), 30)
-        self.assertEqual(len(deferred), 7)
+        self.assertEqual(len(enforced), 31)
+        self.assertEqual(len(deferred), 6)
 
     # -- T1: a real, valid required_tests resolves, VALIDATES, transition allowed -----
 
