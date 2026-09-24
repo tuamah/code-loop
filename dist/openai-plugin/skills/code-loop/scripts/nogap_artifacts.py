@@ -231,8 +231,14 @@ def _check_fields(artifact_type: str, fields: dict[str, Any], effective_profile:
     info = ARTIFACT_TYPES[artifact_type]
     problems = []
     required = list(info["required_fields"]) + _cumulative_profile_fields(artifact_type, effective_profile)
+    # A required field ordinarily means "present AND non-empty". allow_empty_fields names the
+    # closed, per-type exception: "present" is still mandatory (an absent field is still
+    # rejected), but an empty value (e.g. []) is legitimate content, not a missing requirement.
+    allow_empty = info.get("allow_empty_fields", frozenset())
     for key in required:
-        if key not in fields or _is_empty(fields[key]):
+        if key not in fields or fields[key] is None:
+            problems.append(f"missing or empty required field: {key}")
+        elif key not in allow_empty and _is_empty(fields[key]):
             problems.append(f"missing or empty required field: {key}")
     return problems
 
