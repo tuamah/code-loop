@@ -144,7 +144,7 @@ def build_full_chain(project: Path, actor: str = "team", p7_extra: dict | None =
 
     made["P11_GATE_PLAN"] = create_artifact(project, "P11_GATE_PLAN", {
         "gate_id": "gate-plan-1", "required_tests": ["unit", "integration"],
-        "evidence_requirements": ["execution", "verification"], "stop_conditions": ["security fail"],
+        "evidence_requirements": ["execution"], "stop_conditions": ["security fail"],
         "verification_depth": "standard", "requirement_refs": [req1["fields"]["requirement_id"]],
         "required_commands": ["python -m pytest"], "forbidden_paths": ["secrets.env"],
     }, actor=actor)
