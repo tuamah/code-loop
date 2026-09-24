@@ -236,6 +236,7 @@ class VerifyCandidateBuilder(unittest.TestCase):
         init_git_repo(self.project)
         init_project(self.project, *self.profile_args, actor="test")
         self.chain = build_p0_p11_chain(self.project, objective="M7-G verify binding")
+        self.freeze_gate()
         self.contract = make_task_contract(self.project, self.chain)
 
         self._original_adapters = dict(nogap_adapters.ADAPTERS)
@@ -250,7 +251,11 @@ class VerifyCandidateBuilder(unittest.TestCase):
         self.tmp.cleanup()
 
     def freeze_gate(self) -> None:
-        run_script("freeze", str(self.project))
+        # F2b GOLDEN_GATES: freeze before BUILD (documented lifecycle). Idempotent, so
+        # the many later self.freeze_gate() calls scattered across this file's test
+        # methods remain harmless no-ops once setUp already froze a bound gate here.
+        from methodology_fixture_builder import freeze_gate_before_build
+        freeze_gate_before_build(self.project)
 
     def latest_result(self) -> dict[str, Any]:
         return list_artifacts(self.project, artifact_type="P18_VERIFICATION_RESULT")[-1]
@@ -351,8 +356,17 @@ class PreflightAndPlanTests(VerifyCandidateBuilder):
 
 class DeterministicAndReproducibilityTests(VerifyCandidateBuilder):
     def _mutate_gate_rules_before_freeze(self, **rule_updates: Any) -> None:
+        # setUp already froze a gate with a default binding condition (GOLDEN_GATES needs
+        # one bound BEFORE BUILD). These tests need their OWN custom rules frozen instead,
+        # so the gate is reset to draft first - the same reset-and-refreeze convention this
+        # file already uses elsewhere for its stale-gate scenarios - then mutated and
+        # frozen exactly once with the real content this test is about.
         gate_path = self.project / ".code-loop" / "runtime" / "gates" / "gate-0001.json"
         gate = json.loads(gate_path.read_text(encoding="utf-8"))
+        gate["status"] = "draft"
+        gate.pop("hash", None)
+        gate.pop("frozen_by", None)
+        gate.pop("frozen_at", None)
         gate["rules"].update(rule_updates)
         gate_path.write_text(json.dumps(gate), encoding="utf-8")
         self.freeze_gate()
@@ -412,13 +426,14 @@ class StandardProfileReproducibilityTests(unittest.TestCase):
             p7_extra={"responsibilities": ["r"], "interfaces": ["i"], "external_dependencies": ["d"]},
             objective="M7-G STANDARD verify",
         )
+        from methodology_fixture_builder import freeze_gate_before_build
+        freeze_gate_before_build(self.project)
         self.contract = make_task_contract(self.project, self.chain)
 
         self._original_adapters = dict(nogap_adapters.ADAPTERS)
         nogap_adapters.ADAPTERS.clear()
         nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.contract["fields"]["task_id"]))
-        run_script("freeze", str(self.project))
 
     def tearDown(self) -> None:
         nogap_adapters.ADAPTERS.clear()
@@ -499,12 +514,13 @@ class StalenessTests(unittest.TestCase):
         init_git_repo(self.project)
         init_project(self.project, "research", "low", "low", actor="test")
         self.chain = build_p0_p11_chain(self.project, objective="M7-G staleness")
+        from methodology_fixture_builder import freeze_gate_before_build
+        freeze_gate_before_build(self.project)
         self.contract = make_task_contract(self.project, self.chain)
         self._original_adapters = dict(nogap_adapters.ADAPTERS)
         nogap_adapters.ADAPTERS.clear()
         nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.contract["fields"]["task_id"]))
-        run_script("freeze", str(self.project))
         nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.result = list_artifacts(self.project, artifact_type="P18_VERIFICATION_RESULT")[-1]
         self.assertEqual(self.result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
@@ -609,12 +625,13 @@ class ManualLiveScenarioTests(unittest.TestCase):
         init_git_repo(self.project)
         init_project(self.project, "research", "low", "low", actor="test")
         self.chain = build_p0_p11_chain(self.project, objective="M7-G scenario")
+        from methodology_fixture_builder import freeze_gate_before_build
+        freeze_gate_before_build(self.project)
         self.contract = make_task_contract(self.project, self.chain)
         self._original_adapters = dict(nogap_adapters.ADAPTERS)
         nogap_adapters.ADAPTERS.clear()
         nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.contract["fields"]["task_id"]))
-        run_script("freeze", str(self.project))
 
     def tearDown(self) -> None:
         nogap_adapters.ADAPTERS.clear()

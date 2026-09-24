@@ -28,7 +28,7 @@ import nogap  # noqa: E402
 import nogap_adapters  # noqa: E402
 import nogap_failure as nf  # noqa: E402
 import nogap_lifecycle as nlc  # noqa: E402
-from methodology_fixture_builder import real_candidate_bindings  # noqa: E402
+from methodology_fixture_builder import freeze_gate_before_build, real_candidate_bindings  # noqa: E402
 from nogap_artifacts import create_artifact  # noqa: E402
 from nogap_methodology import (  # noqa: E402
     MethodologyValidationError,
@@ -238,6 +238,9 @@ class LifecycleFixture(unittest.TestCase):
         init_git_repo(self.project)
         init_project(self.project, *self.profile_args, actor="test")
         self.chain = build_p0_p11_chain(self.project, objective="lifecycle fixture")
+        # F2b GOLDEN_GATES: the documented lifecycle freezes gates before BUILD, not
+        # after - must happen before cmd_run's internal P11->P12 transition below.
+        freeze_gate_before_build(self.project)
         self.contract = make_task_contract(self.project, self.chain)
         self.task_id = self.contract["fields"]["task_id"]
 
@@ -245,7 +248,6 @@ class LifecycleFixture(unittest.TestCase):
         nogap_adapters.ADAPTERS.clear()
         nogap_adapters.ADAPTERS["codex"] = StubAdapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.task_id))
-        run_script("freeze", str(self.project))
         nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.assertEqual(mstatus(self.project)["current_phase"], "P18")
         self.exec_evidence_id = next((self.project / ".code-loop" / "runtime" / "evidence").glob("evidence-exec-*.json")).stem
@@ -401,6 +403,8 @@ class StandardProfileLifecycleFixture(LifecycleFixture):
         if self.profile_args[1] == "high" and self.profile_args[2] == "high":  # STRICT needs additional P7 fields
             p7_extra.update({"failure_domains": ["fd1"], "data_security_boundaries": ["dsb1"]})
         self.chain = build_p0_p11_chain(self.project, p7_extra=p7_extra, objective="standard lifecycle fixture")
+        # F2b GOLDEN_GATES: freeze before BUILD, matching the documented lifecycle.
+        freeze_gate_before_build(self.project)
         self.contract = make_task_contract(self.project, self.chain)
         self.task_id = self.contract["fields"]["task_id"]
 
@@ -409,7 +413,6 @@ class StandardProfileLifecycleFixture(LifecycleFixture):
         nogap_adapters.ADAPTERS["codex"] = StubAdapter("codex")
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.task_id))
-        run_script("freeze", str(self.project))
         nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result_path = next((self.project / ".code-loop" / "methodology" / "artifacts").glob("p18_verification_result-*.json"))
         self.verification_status = json.loads(result_path.read_text(encoding="utf-8"))["status"]

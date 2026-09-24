@@ -376,6 +376,8 @@ class ExecutionBindingTests(unittest.TestCase):
         init_git_repo(self.project)
         init_project(self.project, "research", "low", "low", actor="test")
         self.chain = build_p0_p11_chain(self.project, objective="M7-F build binding")
+        from methodology_fixture_builder import freeze_gate_before_build
+        freeze_gate_before_build(self.project)
         self.contract = make_task_contract(self.project, self.chain)
         self._original_adapters = dict(nogap_adapters.ADAPTERS)
 
@@ -487,7 +489,8 @@ class GateRelationshipTests(unittest.TestCase):
             init_project(project, "research", "low", "low", actor="test")
             chain = build_p0_p11_chain(project, objective="gate hash linkage")
 
-            run_script("freeze", str(project))
+            from methodology_fixture_builder import freeze_gate_before_build
+            freeze_gate_before_build(project)
             gate_path = project / ".code-loop" / "runtime" / "gates" / "gate-0001.json"
             gate = json.loads(gate_path.read_text(encoding="utf-8"))
             contract = make_task_contract(project, chain)

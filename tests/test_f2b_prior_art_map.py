@@ -66,8 +66,8 @@ class PriorArtMapEnforced(unittest.TestCase):
         deferred = set(rk.DEFERRED_KINDS)
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
-        self.assertEqual(len(enforced), 33)
-        self.assertEqual(len(deferred), 4)
+        self.assertEqual(len(enforced), 34)
+        self.assertEqual(len(deferred), 3)
         self.assertIn("PRIOR_ART_MAP", enforced)
         self.assertNotIn("PRIOR_ART_MAP", deferred)
 
