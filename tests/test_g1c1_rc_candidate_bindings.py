@@ -19,7 +19,11 @@ from nogap_errors import MethodologyValidationError                       # noqa
 from test_evidence_classes import _git_project                            # noqa: E402
 from test_methodology_lifecycle import LifecycleFixture, make_task_contract                 # noqa: E402
 
-FREEZE_SOURCE_SHA256_PRE_G1C1 = "0e3f6f354fb6dcc82b23dc7e544b39e708967f59a71056b661b2331de8b7c349"
+# G1-C3: source pins of create/update as accepted at G1-C1/G1-C2 (d2e5bdf); G1-C3 must not change them.
+CREATE_UPDATE_SOURCE_SHA256 = {
+    "create_release_candidate": "f5bd54dfb905c3d9de1b1c01f862b559447c8274bd01f2f606f7d24cdd1004ec",
+    "update_release_candidate_bindings": "7d5e900b1fbbc0957bb7c74389677c5b3055ba519cc9160edb2d51aee63600d7",
+}
 H1 = hashlib.sha256(b"a").hexdigest()
 
 
@@ -85,10 +89,16 @@ class CandidateBindingsSchema(unittest.TestCase):
     def test_t7_not_in_rc_critical_fields(self):
         self.assertNotIn("candidate_bindings", nlc.RC_CRITICAL_FIELDS)
 
-    def test_t8_freeze_source_unchanged(self):
-        src = inspect.getsource(nlc.freeze_release_candidate)
-        self.assertEqual(hashlib.sha256(src.encode()).hexdigest(), FREEZE_SOURCE_SHA256_PRE_G1C1)
-        self.assertNotIn("candidate_bindings", src)
+    def test_t8_create_update_unchanged_and_enforcement_freeze_only(self):
+        # Replaces the pre-G1-C3 freeze-source pin (its purpose expired when G1-C3 was
+        # authorized to change freeze): create/update semantics stay as G1-C1 left them,
+        # and resolution/coverage enforcement stays out of them.
+        for name, pinned in CREATE_UPDATE_SOURCE_SHA256.items():
+            src = inspect.getsource(getattr(nlc, name))
+            with self.subTest(fn=name):
+                self.assertEqual(hashlib.sha256(src.encode()).hexdigest(), pinned)
+                self.assertNotIn("resolve_candidate_binding", src)
+        self.assertIn("resolve_candidate_bindings(", inspect.getsource(nlc.freeze_release_candidate))
 
     def test_t9b_update_rejects_invalidated(self):
         rc = self._create(included_task_refs=[self.task_a])

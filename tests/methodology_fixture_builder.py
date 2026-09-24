@@ -201,7 +201,8 @@ class FixtureBuilder:
         rc = nlc.create_release_candidate(
             self.project, version="0.0.1", candidate_ref="fixture-rc",
             code_revision="deadbeef", verification_refs=verification,
-            included_task_refs=tasks, actor=self.actor, reason="fixture candidate")
+            included_task_refs=tasks, candidate_bindings=real_candidate_bindings(self.project, tasks),
+            actor=self.actor, reason="fixture candidate")
         rc_id = rc["release_candidate_id"]
         nlc.freeze_release_candidate(self.project, rc_id, actor=self.actor, reason="freeze")
         readiness = nlc.evaluate_release_readiness(
@@ -276,6 +277,22 @@ def _ensure_frozen_gate(builder: "FixtureBuilder") -> str:
     gate = _frozen_gate(builder.project)
     assert gate and gate.get("hash"), "freeze did not produce a hashed gate"
     return gate["hash"]
+
+
+def real_candidate_bindings(project: Path, task_ids: list[str]) -> dict[str, str]:
+    """G1-C3 fixture repair: {task_id: candidate_hash} read from the REAL
+    P18_VERIFICATION_RESULT the production path already created for each task. Never
+    computed or invented. A task with no P18 is left unbound (freeze then fails closed,
+    honestly); more than one P18 for a task is refused rather than picking one."""
+    from nogap_artifacts import list_artifacts
+    bindings: dict[str, str] = {}
+    for task_id in task_ids:
+        matches = [r for r in list_artifacts(project, artifact_type="P18_VERIFICATION_RESULT")
+                   if r["fields"].get("task_id") == task_id]
+        assert len(matches) <= 1, f"fixture: {len(matches)} P18 records for {task_id!r}; refusing to pick one"
+        if matches:
+            bindings[task_id] = matches[0]["fields"]["candidate_hash"]
+    return bindings
 
 
 def _binding_snapshot(self) -> dict[str, Any]:
@@ -518,7 +535,8 @@ def advance_via_real_pipeline(project: Path, actor: str = "fixture") -> "Fixture
     rc = nlc.create_release_candidate(
         project, version="0.0.1", candidate_ref="fixture-rc", code_revision="deadbeef",
         verification_refs=builder.evidence_ids, included_task_refs=[task_id],
-        decision_refs=[decision["id"]], actor=actor, reason="fixture candidate")
+        decision_refs=[decision["id"]], candidate_bindings=real_candidate_bindings(project, [task_id]),
+        actor=actor, reason="fixture candidate")
     rc_id = rc["release_candidate_id"]
     nlc.freeze_release_candidate(project, rc_id, actor=actor, reason="freeze")
     readiness = nlc.evaluate_release_readiness(
