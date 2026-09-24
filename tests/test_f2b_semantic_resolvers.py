@@ -1,7 +1,7 @@
 """F2b D4 Step 0: PhaseContract.semantic_resolvers, parsed and validated fail-closed at
-methodology load time against the closed SEMANTIC_RESOLVER_NAMES registry.
+methodology load time against the closed SEMANTIC_RESOLVERS registry.
 
-Declaration only: this does not enforce EVIDENCE_BUNDLE (it stays in DEFERRED_KINDS).
+Step 0 was declaration only; D4 has since moved EVIDENCE_BUNDLE into ENFORCED_KINDS.
 """
 
 from __future__ import annotations
@@ -76,8 +76,8 @@ class SemanticResolversCase(unittest.TestCase):
     def test_t4_same_kind_different_names_across_phases_fails(self):
         self.set_resolvers("p19", dict(DECL))
         self.set_resolvers("p18", {"EVIDENCE_BUNDLE": "OTHER_RESOLVER"}, add_required="EVIDENCE_BUNDLE")
-        widened = nm.SEMANTIC_RESOLVER_NAMES | {"OTHER_RESOLVER"}
-        with mock.patch.object(nm, "SEMANTIC_RESOLVER_NAMES", widened):
+        widened = {"OTHER_RESOLVER": rk.SemanticResolverSpec(kind="EVIDENCE_BUNDLE")}
+        with mock.patch.dict(rk.SEMANTIC_RESOLVERS, widened):
             self.assert_rejected("conflicting semantic_resolvers for 'EVIDENCE_BUNDLE'")
 
     # T5
@@ -109,14 +109,14 @@ class RealMethodology(unittest.TestCase):
     def test_t6_real_methodology_loads_with_p19_declaration(self):
         m = nm.load_methodology()
         self.assertEqual(m.phases["P19"].semantic_resolvers, DECL)
-        # Declaration only: the kind is still deferred in this step.
-        self.assertIn("EVIDENCE_BUNDLE", rk.DEFERRED_KINDS)
-        self.assertNotIn("EVIDENCE_BUNDLE", rk.ENFORCED_KINDS)
+        # D4 overturns Step 0's premise by design: the kind is now enforced.
+        self.assertIn("EVIDENCE_BUNDLE", rk.ENFORCED_KINDS)
+        self.assertNotIn("EVIDENCE_BUNDLE", rk.DEFERRED_KINDS)
 
     def test_registry_is_closed_literal(self):
-        self.assertIsInstance(rk.SEMANTIC_RESOLVER_NAMES, frozenset)
-        self.assertIn("EVIDENCE_BUNDLE_RESOLVER", rk.SEMANTIC_RESOLVER_NAMES)
-        self.assertIs(nm.SEMANTIC_RESOLVER_NAMES, rk.SEMANTIC_RESOLVER_NAMES)
+        self.assertIsInstance(rk.SEMANTIC_RESOLVERS, dict)
+        self.assertIn("EVIDENCE_BUNDLE_RESOLVER", rk.SEMANTIC_RESOLVERS)
+        self.assertIs(nm.SEMANTIC_RESOLVERS, rk.SEMANTIC_RESOLVERS)
 
 
 class NoDynamicResolution(unittest.TestCase):
@@ -129,16 +129,16 @@ class NoDynamicResolution(unittest.TestCase):
         registry_src = (ROOT / "scripts" / "nogap_required_kinds.py").read_text(encoding="utf-8")
         tree = ast.parse(registry_src)
         for node in tree.body:
-            if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == "SEMANTIC_RESOLVER_NAMES":
+            if isinstance(node, ast.AnnAssign) and getattr(node.target, "id", None) == "SEMANTIC_RESOLVERS":
                 sources.append(ast.unparse(node))
-                call = node.value
-                self.assertIsInstance(call, ast.Call)
-                self.assertEqual(call.func.id, "frozenset")
-                self.assertIsInstance(call.args[0], ast.Set)
-                self.assertTrue(all(isinstance(e, ast.Constant) and isinstance(e.value, str) for e in call.args[0].elts))
+                literal = node.value
+                self.assertIsInstance(literal, ast.Dict)
+                self.assertTrue(all(isinstance(k, ast.Constant) and isinstance(k.value, str) for k in literal.keys))
+                self.assertTrue(all(isinstance(v, ast.Call) and v.func.id == "SemanticResolverSpec"
+                                    for v in literal.values))
                 break
         else:
-            self.fail("SEMANTIC_RESOLVER_NAMES not found as a literal assignment")
+            self.fail("SEMANTIC_RESOLVERS not found as a literal assignment")
         banned = {"getattr", "__import__", "import_module", "eval", "exec", "globals", "locals", "vars"}
         for src in sources:
             for node in ast.walk(ast.parse(src)):

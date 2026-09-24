@@ -285,7 +285,7 @@ class PartitionGuard(unittest.TestCase):
 
     def test_every_enforced_kind_has_a_known_resolver_class(self):
         known = (rk.ArtifactField, rk.WholeArtifact, rk.ProjectFile,
-                 rk.LedgerEvidence, rk.LifecycleRecord)
+                 rk.LedgerEvidence, rk.LifecycleRecord, rk.EvidenceBundle)
         for kind, spec in rk.ENFORCED_KINDS.items():
             self.assertIsInstance(spec, known, f"{kind} has no known resolver class")
 

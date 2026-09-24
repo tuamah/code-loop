@@ -42,14 +42,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-#: Closed registry of semantic resolver NAMES a phase contract may declare in
-#: `semantic_resolvers` (F2b Rev 2.1). Hand-written, membership only: nogap_methodology.py
-#: imports this at load time to reject any unrecognized name. A name here does NOT by itself
-#: enforce anything - kind resolution is still governed solely by ENFORCED_KINDS/DEFERRED_KINDS.
-SEMANTIC_RESOLVER_NAMES: frozenset[str] = frozenset({
-    "EVIDENCE_BUNDLE_RESOLVER",
-})
-
 # -- verdicts -------------------------------------------------------------------------------
 
 PASS = "PASS"
@@ -161,6 +153,18 @@ class LifecycleRecord:
     collection: str
 
 
+@dataclass(frozen=True)
+class EvidenceBundle:
+    """EVIDENCE_BUNDLE (F2b Rev 2.1 section 2.11): the evidence set frozen with a V3 release candidate.
+
+    A marker with no fields because the check is COMPOSITE and fits none of the other shapes:
+    it needs the RC's frozen state, its candidate_bindings resolved to real P18 results, the
+    frozen evidence_refs snapshot resolved in the ledger, and class coverage against the union
+    of every valid P11 plan and the P15 plans those P18 results name. No single artifact field,
+    whole artifact, file, ledger kind or lifecycle collection expresses that.
+    """
+
+
 #: Every mapping below is taken from an actual declaration: an exact field name in
 #: ARTIFACT_TYPES, a type whose name the kind repeats, or a resolver class decided explicitly.
 ENFORCED_KINDS: dict[str, Any] = {
@@ -201,7 +205,38 @@ ENFORCED_KINDS: dict[str, Any] = {
     "OPERATIONAL_OBSERVATIONS": LifecycleRecord("operations"),
     "IMPROVEMENT_PROPOSAL": LifecycleRecord("improvements"),
     "LIFECYCLE_DECISION": LifecycleRecord("lifecycle_decisions"),
+
+    # -- composite: the frozen RC's evidence bundle (section 2.11) --
+    "EVIDENCE_BUNDLE": EvidenceBundle(),
 }
+
+
+@dataclass(frozen=True)
+class SemanticResolverSpec:
+    """A named semantic resolver a phase contract may declare, and the ONE kind it is for."""
+
+    kind: str
+
+
+#: Closed registry of semantic resolvers a phase contract may declare in `semantic_resolvers`
+#: (F2b Rev 2.1). Hand-written literal. nogap_methodology.py rejects any name not here and runs
+#: `semantic_resolver_agreement_problem` at load time, so contract declaration, this registry
+#: and the ENFORCED_KINDS implementation must all agree.
+SEMANTIC_RESOLVERS: dict[str, SemanticResolverSpec] = {
+    "EVIDENCE_BUNDLE_RESOLVER": SemanticResolverSpec(kind="EVIDENCE_BUNDLE"),
+}
+
+
+def semantic_resolver_agreement_problem(kind: str, name: str) -> str | None:
+    """Three-way agreement for one `{kind: name}` declaration; None when it holds."""
+    spec = SEMANTIC_RESOLVERS.get(name)
+    if spec is None:
+        return f"references unknown resolver {name!r}"
+    if spec.kind != kind:
+        return f"resolver {name!r} is registered for kind {spec.kind!r}, not {kind!r}"
+    if kind not in ENFORCED_KINDS:
+        return f"resolver {name!r} is declared for {kind!r}, which has no implementation in ENFORCED_KINDS"
+    return None
 
 #: Declared by the methodology, semantics NOT yet decided. Enumerated, versioned and tested.
 #: Each becomes an ENFORCED entry in F2b; none is guessed at in the meantime. Two of them are
@@ -219,10 +254,6 @@ DEFERRED_KINDS: frozenset[str] = frozenset({
     "GOLDEN_GATES",           # no declared field in P11_GATE_PLAN
     "TEST_PLAN",              # no declared field in P11_GATE_PLAN
     "REVIEW_VERDICT",         # P18 declares independent_review_result; binding rule undecided
-    "EVIDENCE_BUNDLE",        # no record type of its own anywhere in nogap_lifecycle. The
-                              # first draft mapped it to release_candidates because an RC
-                              # carries evidence_refs - a judgement, not a declaration, and
-                              # exactly the invention this map exists to prevent.
 })
 
 
@@ -442,6 +473,121 @@ def _check_lifecycle_kind(
                    f"no reference resolved to a {spec.collection} record")
 
 
+def _check_evidence_bundle_kind(
+    project: Path, kind: str, spec: EvidenceBundle, refs: list[str],
+) -> Verdict:
+    """Section 2.11, per resolvable release candidate, first failing condition wins.
+
+    Deliberately NOT here: any status judgment on P18 results or on evidence records (R3/R7:
+    resolution and class presence are not acceptance), and any supersession concept for P11 or
+    evidence (none exists in the schema).
+    """
+    # Same resolution approach as _check_lifecycle_kind: the lifecycle owner's loader.
+    from nogap_artifacts import list_artifacts, validate_record
+    from nogap_evidence_classes import EVIDENCE_CLASSES
+    from nogap_evidence_ledger import read_evidence_ledger
+    from nogap_lifecycle import (
+        _load_one, has_fingerprint_frozen_candidate_bindings,
+        has_fingerprint_frozen_evidence_bundle, resolve_candidate_bindings)
+    from nogap_methodology import MethodologyValidationError
+
+    def bundle_problem(ref: str, record: dict[str, Any]) -> str | None:
+        if record.get("status") != "FROZEN":                                   # b
+            return f"{ref} is not FROZEN (status={record.get('status')!r})"
+        version = record.get("candidate_fingerprint_version")
+        if version != "3":                                                     # c
+            return f"{ref} has candidate_fingerprint_version={version!r}, not '3'"
+        if not has_fingerprint_frozen_evidence_bundle(record):                 # d
+            return f"{ref} has no fingerprint-frozen evidence bundle"
+        if not has_fingerprint_frozen_candidate_bindings(record):              # e
+            return f"{ref} has no fingerprint-frozen candidate_bindings"
+        bindings = record.get("candidate_bindings")
+        tasks = record.get("included_task_refs")
+        if not isinstance(bindings, dict) or not isinstance(tasks, list):
+            return f"{ref} candidate_bindings/included_task_refs are malformed"
+        if set(bindings) != set(tasks):                                        # f
+            return (f"{ref} candidate_bindings do not cover included_task_refs exactly: "
+                    f"missing={sorted(set(tasks) - set(bindings))} "
+                    f"extra={sorted(set(bindings) - set(tasks))}")
+        try:                                                                   # g
+            p18s = resolve_candidate_bindings(project, bindings)
+        except MethodologyValidationError as exc:
+            return f"{ref} candidate binding does not resolve: {exc}"
+        snapshot = record["freeze_record"].get("evidence_refs")                # h
+        if not isinstance(snapshot, list) or not snapshot:
+            return f"{ref} frozen evidence_refs snapshot is empty or malformed"
+        try:
+            ledger = read_evidence_ledger(project)
+        except MethodologyValidationError as exc:
+            return f"{ref} evidence ledger will not read: {exc}"
+        pairs = set(bindings.items())
+        covered: set[str] = set()
+        for eid in snapshot:                                                   # i
+            path = ledger.ids.get(eid) if isinstance(eid, str) else None
+            if path is None:
+                return f"{ref} frozen evidence ref {eid!r} does not resolve in the evidence ledger"
+            try:
+                evidence = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                return f"{ref} frozen evidence ref {eid!r} will not load: {exc}"
+            if (not isinstance(evidence, dict) or evidence.get("id") != eid
+                    or not isinstance(evidence.get("provenance"), dict)):
+                return f"{ref} frozen evidence ref {eid!r} is a malformed evidence record"
+            evidence_class = evidence.get("evidence_class")
+            if evidence_class not in EVIDENCE_CLASSES:                         # j: legacy covers nothing
+                continue
+            provenance = evidence["provenance"]
+            if (provenance.get("task_id"), provenance.get("candidate_hash")) not in pairs:
+                continue                                                       # k: unbound covers nothing
+            covered.add(evidence_class)
+        p11s = [r for r in list_artifacts(project, artifact_type="P11_GATE_PLAN")
+                if not validate_record(project, r)]
+        if not p11s:                                                           # l
+            return f"{ref}: no valid P11_GATE_PLAN in the project; an absent source is not an empty requirement"
+        required: set[str] = set()
+        for plan in p11s:
+            values = plan["fields"].get("evidence_requirements")
+            if not isinstance(values, list):
+                return f"{ref}: {plan.get('artifact_id')} evidence_requirements is not a list"
+            required |= set(values)
+        p15s = [r for r in list_artifacts(project, artifact_type="P15_VERIFICATION_PLAN")
+                if not validate_record(project, r)]
+        for task_id, p18 in sorted(p18s.items()):
+            plan_id = p18["fields"].get("verification_plan_id")
+            plans = [r for r in p15s if r["fields"].get("verification_plan_id") == plan_id]
+            if len(plans) != 1:
+                return (f"{ref}: P18 {p18.get('artifact_id')} for {task_id!r} names verification_plan_id="
+                        f"{plan_id!r}, which resolves to {len(plans)} valid P15_VERIFICATION_PLAN records")
+            values = plans[0]["fields"].get("required_evidence_kinds")
+            if not isinstance(values, list):
+                return f"{ref}: {plans[0].get('artifact_id')} required_evidence_kinds is not a list"
+            required |= set(values)
+        missing = sorted(required - covered)                                   # m
+        if missing:
+            return (f"{ref} leaves required evidence class(es) uncovered by bound, classed "
+                    f"frozen evidence: {missing}")
+        return None
+
+    problems: list[str] = []
+    for ref in refs:                                                           # a
+        if not isinstance(ref, str) or not ref.strip():
+            continue
+        try:
+            record = _load_one(project, "release_candidates", ref)
+        except MethodologyValidationError as exc:
+            problems.append(f"{ref} will not load: {exc}")
+            continue
+        if record is None:
+            continue
+        problem = bundle_problem(ref, record)
+        if problem is None:                                                    # o
+            return Verdict(kind, PASS, f"{ref} (frozen V3 evidence bundle covers its required classes)")
+        problems.append(problem)
+    if problems:
+        return Verdict(kind, INVALID, "; ".join(problems))
+    return Verdict(kind, MISSING, "no resolvable release candidate")
+
+
 def check_required_kinds(
     project: Path, required_kinds: list[str], artifact_refs: list[str],
 ) -> list[Verdict]:
@@ -475,6 +621,8 @@ def check_required_kinds(
             verdicts.append(_check_evidence_kind(project, kind, spec, refs))
         elif isinstance(spec, LifecycleRecord):
             verdicts.append(_check_lifecycle_kind(project, kind, spec, refs))
+        elif isinstance(spec, EvidenceBundle):
+            verdicts.append(_check_evidence_bundle_kind(project, kind, spec, refs))
         else:  # pragma: no cover - the map is closed and tested
             verdicts.append(Verdict(kind, UNMAPPED, f"unknown resolver class {type(spec)}"))
     return verdicts
