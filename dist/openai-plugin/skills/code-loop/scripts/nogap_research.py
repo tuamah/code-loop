@@ -48,6 +48,7 @@ from statistics import mean
 from typing import Any
 
 from nogap_artifacts import load_artifact, list_artifacts
+from nogap_evidence_ledger import read_evidence_ledger
 from nogap_methodology import (
     MethodologyValidationError,
     _now,
@@ -273,25 +274,10 @@ def _load_or_raise(project: Path, loader, record_id: str, label: str) -> dict[st
 
 # --- reference resolution ----------------------------------------------------
 
-def _evidence_ids(project: Path) -> set[str] | None:
-    evidence_dir = project.resolve() / ".code-loop" / "runtime" / "evidence"
-    if not evidence_dir.is_dir():
-        return None
-    ids: set[str] = set()
-    for path in evidence_dir.glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict) and isinstance(data.get("id"), str):
-            ids.add(data["id"])
-    return ids
-
-
 def _check_evidence_refs(project: Path, refs: list[str]) -> list[str]:
-    known = _evidence_ids(project)
-    if known is None or not refs:
+    if not refs:
         return []
+    known = read_evidence_ledger(project).ids
     return [ref for ref in refs if ref not in known]
 
 

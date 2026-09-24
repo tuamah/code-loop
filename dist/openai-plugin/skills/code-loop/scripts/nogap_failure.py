@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from nogap_artifacts import load_artifact
+from nogap_evidence_ledger import read_evidence_ledger
 from nogap_methodology import (
     MethodologyValidationError,
     _now,
@@ -177,28 +178,13 @@ def _require_predecessor(record: dict[str, Any], step_name: str, allowed: set[st
         )
 
 
-def _runtime_evidence_ids(project: Path) -> set[str] | None:
-    evidence_dir = project.resolve() / ".code-loop" / "runtime" / "evidence"
-    if not evidence_dir.is_dir():
-        return None
-    ids: set[str] = set()
-    for path in evidence_dir.glob("*.json"):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(data, dict) and isinstance(data.get("id"), str):
-            ids.add(data["id"])
-    return ids
-
-
 def _check_evidence_refs(project: Path, refs: list[str]) -> list[str]:
-    """Unknown/stale references are rejected where resolvable - i.e. only when the
-    ledger exists at all; a project with no runtime yet accepts refs at face value
-    (nothing to resolve against), matching nogap_methodology's own convention."""
-    known = _runtime_evidence_ids(project)
-    if known is None or not refs:
+    """Unknown/stale references are rejected against the shared evidence ledger. A
+    missing ledger resolves nothing - a non-empty ref list is unresolved, never
+    accepted at face value."""
+    if not refs:
         return []
+    known = read_evidence_ledger(project).ids
     return [ref for ref in refs if ref not in known]
 
 
@@ -209,15 +195,14 @@ def _check_artifact_refs(project: Path, refs: list[str]) -> list[str]:
 def _check_mixed_refs(project: Path, refs: list[str]) -> list[str]:
     """For a reference that may legitimately be EITHER a methodology artifact (an
     ADR, a P3_PRIOR_ART record, a requirement, ...) OR M6 runtime evidence (execution/
-    verification evidence): unresolved only if it matches neither. Evidence
-    resolution falls back to face-value acceptance when the ledger doesn't exist yet,
-    matching the established convention elsewhere in this codebase."""
-    known_evidence = _runtime_evidence_ids(project)
+    verification evidence): unresolved only if it matches neither. A missing evidence
+    ledger resolves nothing, so such a ref only resolves via the artifact side."""
+    known_evidence = read_evidence_ledger(project).ids
 
     def _resolves(ref: str) -> bool:
         if load_artifact(project, ref) is not None:
             return True
-        return known_evidence is None or ref in known_evidence
+        return ref in known_evidence
 
     return [ref for ref in refs if not _resolves(ref)]
 
@@ -517,7 +502,7 @@ def select_repair(
     # justifies this transition; the candidate's own supporting refs (often
     # methodology artifacts like an ADR) go through artifact_refs instead, alongside
     # the failure_id itself.
-    known_evidence = _runtime_evidence_ids(project) or set()
+    known_evidence = read_evidence_ledger(project).ids
     transition_evidence_refs = [ref for ref in record["evidence_refs"] if ref in known_evidence]
     if not transition_evidence_refs:
         transition_evidence_refs = [ref for ref in candidate["evidence_refs"] if ref in known_evidence]
