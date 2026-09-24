@@ -175,6 +175,19 @@ class ReviewVerdict:
     """
 
 
+@dataclass(frozen=True)
+class RequirementCoverage:
+    """REQUIREMENTS (F2b Rev 2.1 section 2.10): the authoritative ACTIVE P6_REQUIREMENT set -
+    "the complete set of requirements currently in force", not "a requirement exists". A
+    marker with no fields: the check is a project-wide read of every P6_REQUIREMENT (never
+    just the supplied refs) plus an EXACT match against the P6-typed refs actually supplied,
+    which fits none of the other resolver shapes. Unlike EVIDENCE_BUNDLE/REVIEW_VERDICT this
+    stays entirely inside P6_REQUIREMENT - no cross-artifact linkage, no lifecycle owner, no
+    semantic_resolvers declaration (F2b sec 2.10's own "deliberate independence": the rule
+    depends only on P6 itself, never P7 or P11).
+    """
+
+
 #: Every mapping below is taken from an actual declaration: an exact field name in
 #: ARTIFACT_TYPES, a type whose name the kind repeats, or a resolver class decided explicitly.
 ENFORCED_KINDS: dict[str, Any] = {
@@ -202,6 +215,9 @@ ENFORCED_KINDS: dict[str, Any] = {
     "SCOPE": WholeArtifact("P1_SCOPE"),
     "METRICS": WholeArtifact("P10_BASELINE"),
     "PRIOR_ART_MAP": WholeArtifact("P3_PRIOR_ART"),
+
+    # -- project-wide authoritative-set coverage (section 2.10) --
+    "REQUIREMENTS": RequirementCoverage(),
 
     # -- a file produced by the work --
     "PATCH": ProjectFile(),
@@ -262,7 +278,6 @@ def semantic_resolver_agreement_problem(kind: str, name: str) -> str | None:
 #: GP-13, which is independent evidence that this list is a real contract gap rather than an
 #: artifact of how the map was built.
 DEFERRED_KINDS: frozenset[str] = frozenset({
-    "REQUIREMENTS",           # plural kind, per-requirement artifacts: coverage rule undecided
     "COST_MODEL",             # GP-13
     "RUNTIME_STRUCTURE",      # no declared field in P9_GOVERNANCE
     "MEMORY_CONFIGURATION",   # GP-9
@@ -635,6 +650,66 @@ def _check_review_verdict_kind(
     return Verdict(kind, MISSING, "no resolvable release candidate")
 
 
+def _check_requirement_coverage_kind(
+    project: Path, kind: str, spec: RequirementCoverage, refs: list[str],
+) -> Verdict:
+    """Section 2.10, in the rule's own written order: R's structural integrity first (empty,
+    duplicates, contract validity - properties of R itself, independent of what was
+    supplied), then coverage against the supplied P6-typed refs. Deliberately independent of
+    P7/P11 and of the evidence ledger - reads only P6_REQUIREMENT.
+    """
+    from nogap_artifacts import list_artifacts, load_artifact, validate_record
+
+    all_p6 = list_artifacts(project, artifact_type="P6_REQUIREMENT")
+    active = [r for r in all_p6 if r.get("status") == "ACTIVE"]
+
+    if not active:                                                        # rule 1
+        return Verdict(kind, MISSING, "no ACTIVE P6_REQUIREMENT exists in the project")
+
+    ids_seen: dict[str, list[str]] = {}
+    for record in active:
+        rid = record["fields"].get("requirement_id")
+        ids_seen.setdefault(rid, []).append(record["artifact_id"])
+    duplicates = {rid: aids for rid, aids in ids_seen.items() if len(aids) > 1}
+    if duplicates:                                                        # rule 3
+        return Verdict(kind, INVALID,
+                       f"duplicate requirement_id among ACTIVE requirements: {duplicates}")
+
+    invalid = {r["artifact_id"]: validate_record(project, r) for r in active}
+    invalid = {aid: problems for aid, problems in invalid.items() if problems}
+    if invalid:                                                            # rule 2
+        return Verdict(kind, INVALID,
+                       f"ACTIVE requirement(s) fail validate_record: {invalid}")
+
+    # Only refs that resolve to a REAL P6_REQUIREMENT participate here - a transition's other
+    # required kinds (declared on the same phase) legitimately cite refs of other types, and
+    # this resolver must not fail closed over refs that were never meant for it.
+    supplied_p6: dict[str, dict[str, Any]] = {}
+    for ref in refs:
+        if not isinstance(ref, str) or not ref.strip():
+            continue
+        record = load_artifact(project, ref)
+        if record is not None and record.get("artifact_type") == "P6_REQUIREMENT":
+            supplied_p6[ref] = record
+
+    active_ids = {r["artifact_id"] for r in active}
+    stale_extra = sorted(ref for ref, r in supplied_p6.items()
+                         if r["artifact_id"] not in active_ids)
+    if stale_extra:                                                        # rule 5
+        return Verdict(kind, STALE,
+                       f"non-ACTIVE (or superseded/rejected/otherwise-obsolete) requirement "
+                       f"reference(s) offered in place of the active set: {stale_extra}")
+
+    covered_ids = {r["artifact_id"] for r in supplied_p6.values()}
+    missing = sorted(active_ids - covered_ids)
+    if missing:                                                            # rule 4
+        return Verdict(kind, MISSING,
+                       f"ACTIVE requirement(s) not covered by the references supplied: {missing}")
+
+    return Verdict(kind, PASS,
+                   f"{len(active)} ACTIVE requirement(s) exactly covered: {sorted(active_ids)}")
+
+
 def check_required_kinds(
     project: Path, required_kinds: list[str], artifact_refs: list[str],
 ) -> list[Verdict]:
@@ -672,6 +747,8 @@ def check_required_kinds(
             verdicts.append(_check_evidence_bundle_kind(project, kind, spec, refs))
         elif isinstance(spec, ReviewVerdict):
             verdicts.append(_check_review_verdict_kind(project, kind, spec, refs))
+        elif isinstance(spec, RequirementCoverage):
+            verdicts.append(_check_requirement_coverage_kind(project, kind, spec, refs))
         else:  # pragma: no cover - the map is closed and tested
             verdicts.append(Verdict(kind, UNMAPPED, f"unknown resolver class {type(spec)}"))
     return verdicts
