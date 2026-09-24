@@ -371,6 +371,7 @@ CANDIDATE_FINGERPRINT_VERSION_LEGACY = "1"
 def _candidate_fingerprint_payload_v1(
     code_revision: str | None, artifact_fingerprints: dict[str, str], included_task_refs: list[str],
     included_requirement_refs: list[str], verification_refs: list[str], evidence_refs: list[str],
+    candidate_bindings: dict[str, str] = {},
 ) -> dict[str, Any]:
     return {
         "code_revision": code_revision or "",
@@ -384,6 +385,7 @@ def _candidate_fingerprint_payload_v1(
 def _candidate_fingerprint_payload_v2(
     code_revision: str | None, artifact_fingerprints: dict[str, str], included_task_refs: list[str],
     included_requirement_refs: list[str], verification_refs: list[str], evidence_refs: list[str],
+    candidate_bindings: dict[str, str] = {},
 ) -> dict[str, Any]:
     payload = _candidate_fingerprint_payload_v1(
         code_revision, artifact_fingerprints, included_task_refs, included_requirement_refs, verification_refs,
@@ -393,18 +395,33 @@ def _candidate_fingerprint_payload_v2(
     return payload
 
 
+def _candidate_fingerprint_payload_v3(
+    code_revision: str | None, artifact_fingerprints: dict[str, str], included_task_refs: list[str],
+    included_requirement_refs: list[str], verification_refs: list[str], evidence_refs: list[str],
+    candidate_bindings: dict[str, str],
+) -> dict[str, Any]:
+    # G1-C3: V2 payload plus candidate_bindings, canonicalized like artifact_fingerprints.
+    payload = _candidate_fingerprint_payload_v2(
+        code_revision, artifact_fingerprints, included_task_refs, included_requirement_refs, verification_refs,
+        evidence_refs,
+    )
+    payload["candidate_bindings"] = dict(sorted(candidate_bindings.items()))
+    return payload
+
+
 # Explicit dispatcher - the SOLE place version->algorithm mapping is made. Do not
 # branch on candidate_fingerprint_version anywhere else.
 _CANDIDATE_FINGERPRINT_ALGORITHMS = {
     "1": _candidate_fingerprint_payload_v1,
     "2": _candidate_fingerprint_payload_v2,
+    "3": _candidate_fingerprint_payload_v3,
 }
 
 
 def compute_candidate_fingerprint(
     code_revision: str | None, artifact_fingerprints: dict[str, str], included_task_refs: list[str],
     included_requirement_refs: list[str], verification_refs: list[str], evidence_refs: list[str] = (),
-    *, version: str = CANDIDATE_FINGERPRINT_VERSION_LEGACY,
+    *, version: str = CANDIDATE_FINGERPRINT_VERSION_LEGACY, candidate_bindings: dict[str, str] = {},
 ) -> str:
     """Pure, deterministic identity of a candidate's material inputs - never a
     function of timestamps. Same logical inputs -> same fingerprint.
@@ -416,7 +433,7 @@ def compute_candidate_fingerprint(
         raise MethodologyValidationError(f"lifecycle: unknown candidate_fingerprint_version {version!r}")
     payload = build_payload(
         code_revision, artifact_fingerprints, included_task_refs, included_requirement_refs, verification_refs,
-        list(evidence_refs),
+        list(evidence_refs), dict(candidate_bindings),
     )
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
 
@@ -431,7 +448,7 @@ def recompute_candidate_fingerprint_for_record(record: dict[str, Any]) -> str:
     return compute_candidate_fingerprint(
         record.get("code_revision"), record.get("artifact_fingerprints", {}), record.get("included_task_refs", []),
         record.get("included_requirement_refs", []), record.get("verification_refs", []),
-        record.get("evidence_refs", []), version=version,
+        record.get("evidence_refs", []), version=version, candidate_bindings=record.get("candidate_bindings", {}),
     )
 
 
@@ -578,15 +595,27 @@ def freeze_release_candidate(project: Path, release_candidate_id: str, *, actor:
                 f"methodology transition from {state['current_phase']!r}: {'; '.join(dry_run['blocked_reasons'])}"
             )
 
+    # G1-C3: candidate_bindings resolution is mandatory at freeze (and only here). Both
+    # checks run before any mutation or phase transition; either failure fails closed.
+    bindings = record.get("candidate_bindings", {})
+    _require(isinstance(bindings, dict), "lifecycle: candidate_bindings must be a dict")
+    missing = sorted(set(record["included_task_refs"]) - set(bindings))
+    extra = sorted(set(bindings) - set(record["included_task_refs"]))
+    _require(not missing and not extra,
+             f"lifecycle: cannot freeze {release_candidate_id} - candidate_bindings must cover included_task_refs "
+             f"exactly; missing={missing} extra={extra}")
+    resolve_candidate_bindings(project, bindings)
+
     artifact_fingerprints = {ref: _artifact_content_hash(project, ref) for ref in record["artifact_refs"]}
     # D4-PRE-A2: freeze now emits V2 - the fingerprint includes evidence_refs, and the
     # freeze_record snapshots the exact evidence set frozen (the freeze record is what
     # declares what was frozen). V1 records already on disk are untouched and stay V1.
-    fingerprint_version = "2"
+    # G1-C3: freeze now emits V3 (V2 + candidate_bindings); V1/V2 records stay as-is.
+    fingerprint_version = "3"
     fingerprint = compute_candidate_fingerprint(
         record["code_revision"], artifact_fingerprints, record["included_task_refs"],
         record["included_requirement_refs"], record["verification_refs"], record["evidence_refs"],
-        version=fingerprint_version,
+        version=fingerprint_version, candidate_bindings=bindings,
     )
     record["artifact_fingerprints"] = artifact_fingerprints
     record["candidate_fingerprint"] = fingerprint
@@ -598,6 +627,7 @@ def freeze_release_candidate(project: Path, release_candidate_id: str, *, actor:
         "candidate_fingerprint_version": fingerprint_version,
         "artifact_refs": list(record["artifact_refs"]), "verification_refs": list(record["verification_refs"]),
         "evidence_refs": list(record["evidence_refs"]),
+        "candidate_bindings": dict(record["candidate_bindings"]),
         "known_limitations": list(record["known_limitations"]),
     }
     _append_history(record, "FROZEN", actor, reason, candidate_fingerprint=fingerprint)
@@ -660,10 +690,34 @@ def has_fingerprint_frozen_evidence_bundle(record: dict[str, Any]) -> bool:
     fingerprint payload never included evidence_refs, so treating it as having a
     frozen evidence bundle would be a fake trust upgrade, not a compatibility
     convention. This is lifecycle-owner state only; it resolves no semantic kind
-    and is not an EVIDENCE_BUNDLE resolver."""
+    and is not an EVIDENCE_BUNDLE resolver.
+
+    G1-C3: V3 is a semantic superset of V2's evidence-bundle guarantee - it still
+    includes evidence_refs in the fingerprint payload and snapshots them in
+    freeze_record, then adds candidate_bindings. Recognizing V3 here is not a trust
+    upgrade (V1 still gets nothing) and keeps one predicate for one truth:
+        V1 -> no frozen evidence-bundle guarantee
+        V2 -> yes
+        V3 -> yes"""
     return (
         record.get("status") == "FROZEN"
-        and record.get("candidate_fingerprint_version") == "2"
+        and record.get("candidate_fingerprint_version") in ("2", "3")
+        and isinstance(record.get("freeze_record"), dict)
+    )
+
+
+def has_fingerprint_frozen_candidate_bindings(record: dict[str, Any]) -> bool:
+    """Answers "does this candidate have a fingerprint-frozen, fully-resolved candidate
+    binding?" - true only for a FROZEN candidate whose fingerprint was computed with V3
+    (freeze enforced exact coverage of included_task_refs and resolution of every pair
+    to a real P18_VERIFICATION_RESULT, and the fingerprint payload includes
+    candidate_bindings). A V1 or V2 record never has one: treating an older version as
+    having it would be a fake trust upgrade, not a compatibility convention. This is
+    lifecycle-owner state only; it resolves nothing, carries no EVIDENCE_BUNDLE/D4
+    semantic-kind logic, and makes no P18 status or acceptance judgment."""
+    return (
+        record.get("status") == "FROZEN"
+        and record.get("candidate_fingerprint_version") == "3"
         and isinstance(record.get("freeze_record"), dict)
     )
 
