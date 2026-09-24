@@ -28,5 +28,8 @@
     "P18"
   ],
   "failure_transition": "P13",
-  "minimum_profile": "LIGHT"
+  "minimum_profile": "LIGHT",
+  "semantic_resolvers": {
+    "EVIDENCE_BUNDLE": "EVIDENCE_BUNDLE_RESOLVER"
+  }
 }
