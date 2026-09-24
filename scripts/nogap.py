@@ -1526,28 +1526,38 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
                 )
                 written.append(evidence_id)
                 review_performed = True
+                review_evidence_id = evidence_id
                 print(f"  [independent review by {reviewer.id}] {check_status} ({check_execution_status}: {check_reason})")
 
     if methodology_tracked and not halted:
         if review_performed:
             independent_review_result = check_status
             independent_review_performed = True
+            review_evidence_ref = review_evidence_id
             review_reason = "independent review recorded"
         elif depth["independent_review_required"]:
             independent_review_result = "inconclusive"
             independent_review_performed = False
+            review_evidence_ref = None
             review_reason = "independent review is required at this profile but was not performed (pass --review with a second ready AgentRuntime)"
         else:
             independent_review_result = "SKIPPED_PER_PROFILE_POLICY"
             independent_review_performed = False
+            review_evidence_ref = None
             review_reason = f"P18 is skippable at profile {depth['profile']}"
+
+        review_field_updates = {
+            "independent_review_result": independent_review_result,
+            "independent_review_performed": independent_review_performed,
+        }
+        # D5 (REVIEW_VERDICT): the ref is present ONLY for an evidence-backed outcome. Never
+        # written as None/empty - its ABSENCE from fields is what "forbidden" means downstream.
+        if review_evidence_ref is not None:
+            review_field_updates["review_evidence_ref"] = review_evidence_ref
 
         verification_result = update_verification_result(
             project_root, verification_result["fields"]["verification_run_id"], args.actor, review_reason,
-            field_updates={
-                "independent_review_result": independent_review_result,
-                "independent_review_performed": independent_review_performed,
-            },
+            field_updates=review_field_updates,
         )
         _finalize_verification(project_root, verification_result, gate, args.actor)
 

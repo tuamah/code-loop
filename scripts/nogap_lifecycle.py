@@ -49,7 +49,7 @@ from typing import Any
 
 from nogap_artifacts import list_artifacts, load_artifact
 from nogap_evidence_ledger import read_evidence_ledger
-from nogap_verify_binding import load_task_contract
+from nogap_verify_binding import load_task_contract, verification_staleness
 from nogap_methodology import (
     MethodologyValidationError,
     _now,
@@ -491,6 +491,112 @@ def resolve_candidate_bindings(project: Path, candidate_bindings: dict[str, str]
     _require(isinstance(candidate_bindings, dict), "lifecycle: candidate_bindings must be a dict")
     return {task_id: resolve_candidate_binding(project, task_id, candidate_hash)
             for task_id, candidate_hash in candidate_bindings.items()}
+
+
+def review_verdict_problem(project: Path, release_candidate_id: str) -> str | None:
+    """D5 (REVIEW_VERDICT, F2b Rev 2.1 section 2.6/2.6.1): the reason the RC's independent
+    review verdicts are not yet real and bound, or None when every one of them is.
+
+    Runs pre-freeze, at P18->P19 (freeze_release_candidate()'s own can_transition(P19) dry
+    run, BEFORE candidate_bindings is resolved/validated and BEFORE the RC is ever FROZEN).
+    Unlike D4's EVIDENCE_BUNDLE (checked later, at P19->P20, against an already-frozen V3
+    snapshot), this deliberately never requires FROZEN status or a fingerprint version -
+    requiring either here would make freeze's own dry run unsatisfiable before freeze could
+    ever run, a circular dependency. Composite over EVERY task the RC declares, exactly the
+    way EVIDENCE_BUNDLE is composite over its evidence set: candidate_bindings is the RC's
+    own explicit selection of which P18 speaks for which task, so it is the only selection
+    used here - never verification_refs, never "latest", never a ledger scan.
+    """
+    from nogap import EVIDENCE_STATUS
+    from nogap_build import _frozen_gate
+
+    record = _load_one(project, "release_candidates", release_candidate_id)
+    if record is None:
+        return f"{release_candidate_id} does not resolve to a release candidate"
+
+    included = record.get("included_task_refs")
+    bindings = record.get("candidate_bindings")
+    if not isinstance(included, list) or not isinstance(bindings, dict):
+        return f"{release_candidate_id}: included_task_refs/candidate_bindings are malformed"
+    if set(bindings) != set(included):
+        return (f"{release_candidate_id}: candidate_bindings do not cover included_task_refs "
+                f"exactly; missing={sorted(set(included) - set(bindings))} "
+                f"extra={sorted(set(bindings) - set(included))}")
+
+    # Not caught here: resolve_candidate_bindings/read_evidence_ledger raise
+    # MethodologyValidationError on genuine resolution failure, and this module never
+    # swallows one into a soft return - the caller (nogap_required_kinds.py) converts it
+    # to a Verdict, same as it already does around _load_one for this same kind.
+    p18s = resolve_candidate_bindings(project, bindings)
+    ledger = read_evidence_ledger(project)
+
+    gate = _frozen_gate(project)
+    gate_hash = gate.get("hash") if gate else None
+
+    for task_id, p18 in sorted(p18s.items()):
+        fields = p18["fields"]
+        stale = verification_staleness(project, p18, gate_hash)
+        if stale:
+            return f"{release_candidate_id}: P18 for {task_id!r} is stale: {'; '.join(stale)}"
+
+        performed = fields.get("independent_review_performed")
+        result = fields.get("independent_review_result")
+        ref = fields.get("review_evidence_ref")
+
+        if performed is False:
+            if ref not in (None, ""):
+                return (f"{release_candidate_id}: P18 for {task_id!r} has "
+                        f"independent_review_performed=False but carries review_evidence_ref "
+                        f"{ref!r} (forbidden)")
+            if result not in {"PENDING", "SKIPPED_PER_PROFILE_POLICY", "inconclusive"}:
+                return (f"{release_candidate_id}: P18 for {task_id!r} has "
+                        f"independent_review_performed=False but independent_review_result="
+                        f"{result!r}, not a not-attempted outcome")
+            continue
+        if performed is not True:
+            return (f"{release_candidate_id}: P18 for {task_id!r} independent_review_performed "
+                    f"is not a boolean (got {performed!r})")
+
+        # performed is True: an evidence-backed outcome is mandatory, and so is its ref.
+        if result not in EVIDENCE_STATUS:
+            return (f"{release_candidate_id}: P18 for {task_id!r} has "
+                    f"independent_review_performed=True but independent_review_result="
+                    f"{result!r}, not a real evidence outcome")
+        if not isinstance(ref, str) or not ref.strip():
+            return (f"{release_candidate_id}: P18 for {task_id!r} has "
+                    f"independent_review_performed=True but no review_evidence_ref")
+
+        path = ledger.ids.get(ref)
+        if path is None:
+            return (f"{release_candidate_id}: P18 for {task_id!r} review_evidence_ref {ref!r} "
+                    f"does not resolve in the evidence ledger")
+        try:
+            evidence = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            return f"{release_candidate_id}: P18 for {task_id!r} review_evidence_ref {ref!r} will not load: {exc}"
+        if not isinstance(evidence, dict) or evidence.get("id") != ref:
+            return f"{release_candidate_id}: P18 for {task_id!r} review_evidence_ref {ref!r} is a malformed evidence record"
+        if evidence.get("evidence_class") != "independent_review":
+            return (f"{release_candidate_id}: P18 for {task_id!r} review_evidence_ref {ref!r} has "
+                    f"evidence_class={evidence.get('evidence_class')!r}, not 'independent_review'")
+        provenance = evidence.get("provenance")
+        if not isinstance(provenance, dict):
+            return f"{release_candidate_id}: P18 for {task_id!r} review_evidence_ref {ref!r} has no provenance"
+        if (provenance.get("task_id") != task_id
+                or provenance.get("candidate_hash") != fields.get("candidate_hash")):
+            return (f"{release_candidate_id}: P18 for {task_id!r} review_evidence_ref {ref!r} is "
+                    f"not bound to this task/candidate (provenance task_id="
+                    f"{provenance.get('task_id')!r} candidate_hash={provenance.get('candidate_hash')!r})")
+        if evidence.get("status") != result:
+            return (f"{release_candidate_id}: P18 for {task_id!r} independent_review_result="
+                    f"{result!r} does not equal evidence.status={evidence.get('status')!r}")
+        actor_id = provenance.get("actor_id")
+        executor_actor_id = fields.get("executor_actor_id")
+        if not actor_id or not executor_actor_id or actor_id == executor_actor_id:
+            return (f"{release_candidate_id}: P18 for {task_id!r} reviewer identity {actor_id!r} "
+                    f"is not independent from executor identity {executor_actor_id!r}")
+
+    return None
 
 
 def update_release_candidate_bindings(
