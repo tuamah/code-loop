@@ -186,25 +186,25 @@ class Matrix(unittest.TestCase):
     # -- DEFERRED ---------------------------------------------------------------------------------
 
     def test_deferred_does_not_block_and_never_reads_as_pass(self):
-        """P10 declares BASELINE (enforced), BENCHMARK_PROTOCOL (enforced), METRICS
-        (deferred). D5's SCOPE (F2b) moved P1's own former example, BASELINE(P10), to
-        enforced, so this now uses the next still-deferred kind with an enforced sibling."""
-        ref = self.chain["P10"]["artifact_id"]
-        found = self.verdicts("P10", [ref])
-        self.assertEqual(found["METRICS"].status, rk.DEFERRED)
-        self.assertEqual(found["METRICS"].outcome, rk.DEFERRED_OUTCOME)
-        self.assertNotEqual(found["METRICS"].status, rk.PASS)
-        self.assertNotEqual(found["METRICS"].outcome, rk.VALIDATED)
-        self.assertFalse(found["METRICS"].blocks_transition)
-        self.assertTrue(self.forward("P10", [ref])["allowed"])
+        """P8 declares ADR (enforced), COST_MODEL (deferred). F2b's METRICS moved P10's own
+        former example, BASELINE(P10)/METRICS, to enforced, so this now uses the next
+        still-deferred kind with an enforced sibling."""
+        ref = self.chain["P8"]["artifact_id"]
+        found = self.verdicts("P8", [ref])
+        self.assertEqual(found["COST_MODEL"].status, rk.DEFERRED)
+        self.assertEqual(found["COST_MODEL"].outcome, rk.DEFERRED_OUTCOME)
+        self.assertNotEqual(found["COST_MODEL"].status, rk.PASS)
+        self.assertNotEqual(found["COST_MODEL"].outcome, rk.VALIDATED)
+        self.assertFalse(found["COST_MODEL"].blocks_transition)
+        self.assertTrue(self.forward("P8", [ref])["allowed"])
 
     def test_deferred_is_visible_in_the_report_under_its_own_name(self):
-        ref = self.chain["P10"]["artifact_id"]
-        phase = nm.load_methodology().get_phase("P10")
+        ref = self.chain["P8"]["artifact_id"]
+        phase = nm.load_methodology().get_phase("P8")
         text = rk.report(rk.check_required_kinds(
             self.project, list(phase.required_artifacts), [ref]))
-        self.assertIn("METRICS: DEFERRED", text)
-        self.assertIn("BASELINE: VALIDATED", text)
+        self.assertIn("COST_MODEL: DEFERRED", text)
+        self.assertIn("ADR: VALIDATED", text)
 
     def test_a_deferred_kind_cannot_be_satisfied_by_garbage_either(self):
         """DEFERRED is undecided, so it neither blocks nor endorses - and the ENFORCED kinds
