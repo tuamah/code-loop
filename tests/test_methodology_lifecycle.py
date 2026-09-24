@@ -690,10 +690,11 @@ class ReadinessTests(LifecycleFixture):
         # LIGHT profile (this fixture) - proves LIGHT is NOT exempt from minimum
         # P15/P16 verification (Blocker 1): a candidate referencing a task that was
         # never verified at all must not reach READY_FOR_DECISION even at LIGHT.
-        rc = self.frozen_candidate(included_task_refs=["TASK-NEVER-VERIFIED"])
+        unverified_task_id = make_task_contract(self.project, self.chain)["fields"]["task_id"]
+        rc = self.frozen_candidate(included_task_refs=[unverified_task_id])
         readiness = self.evaluate(rc["release_candidate_id"])
         self.assertEqual(readiness["readiness_outcome"], "NOT_READY")
-        self.assertTrue(any("TASK-NEVER-VERIFIED" in r for r in readiness["blocking_reasons"]))
+        self.assertTrue(any(unverified_task_id in r for r in readiness["blocking_reasons"]))
 
     def test_25_blocking_reasons_present_when_not_ready(self) -> None:
         rc = self.make_candidate()
@@ -1562,7 +1563,8 @@ class RegressionUnaffectedTests(LifecycleFixture):
 
 class LightVerificationSemanticsTests(LifecycleFixture):
     def test_blocker1_1_light_with_no_verification_cannot_be_ready(self) -> None:
-        rc = self.frozen_candidate(included_task_refs=["TASK-NEVER-VERIFIED"])
+        unverified_task_id = make_task_contract(self.project, self.chain)["fields"]["task_id"]
+        rc = self.frozen_candidate(included_task_refs=[unverified_task_id])
         readiness = self.evaluate(rc["release_candidate_id"])
         self.assertNotEqual(readiness["readiness_outcome"], "READY_FOR_DECISION")
         self.assertEqual(readiness["readiness_outcome"], "NOT_READY")
@@ -1837,7 +1839,8 @@ class ReadinessSplitBrainTests(LifecycleFixture):
     """P19 -> P20: only READY_FOR_DECISION is phase-completing."""
 
     def test_1_not_ready_does_not_force_p20_transition(self) -> None:
-        rc = self.frozen_candidate(included_task_refs=["TASK-NEVER-VERIFIED"])
+        unverified_task_id = make_task_contract(self.project, self.chain)["fields"]["task_id"]
+        rc = self.frozen_candidate(included_task_refs=[unverified_task_id])
         readiness = self.evaluate(rc["release_candidate_id"])
         self.assertEqual(readiness["readiness_outcome"], "NOT_READY")
         self.assertEqual(mstatus(self.project)["current_phase"], "P19")
