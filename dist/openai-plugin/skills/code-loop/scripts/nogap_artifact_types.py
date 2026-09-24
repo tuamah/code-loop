@@ -85,6 +85,9 @@ ARTIFACT_TYPES: dict[str, dict[str, Any]] = {
     "P10_BASELINE": {
         "phase_id": "P10",
         "required_fields": ["baseline_description", "primary_metric", "secondary_metrics", "measurement_procedure"],
+        # F2b METRICS (Rev 2.1 sec 2.5): secondary_metrics MUST exist but MAY be empty - "a
+        # baseline with one measure is legitimate". primary_metric has no such exception.
+        "allow_empty_fields": frozenset({"secondary_metrics"}),
         "profile_required_fields": {},
         "reference_fields": {},
     },
@@ -146,5 +149,26 @@ ARTIFACT_TYPES: dict[str, dict[str, Any]] = {
         "reference_fields": {"requirement_refs": "P6_REQUIREMENT_ID"},
     },
 }
+
+def _validate_allow_empty_fields() -> None:
+    """Fail-closed at import time: allow_empty_fields is an exception to a NAMED required
+    field's non-empty rule, never a free-standing declaration. A typo'd or stale name here
+    would silently do nothing at validation time (the field it meant to loosen stays
+    strictly required, and the name it actually spells matches no real field) - which is
+    exactly the kind of quiet no-op this whole methodology's fail-closed discipline exists
+    to rule out, so it is caught here instead, the moment the module loads."""
+    from nogap_errors import MethodologyValidationError
+
+    for artifact_type, info in ARTIFACT_TYPES.items():
+        allow_empty = info.get("allow_empty_fields", frozenset())
+        unknown = allow_empty - set(info["required_fields"])
+        if unknown:
+            raise MethodologyValidationError(
+                f"{artifact_type}: allow_empty_fields names {sorted(unknown)}, which "
+                f"{'is' if len(unknown) == 1 else 'are'} not in required_fields"
+            )
+
+
+_validate_allow_empty_fields()
 
 PHASE_TO_ARTIFACT_TYPE = {info["phase_id"]: name for name, info in ARTIFACT_TYPES.items()}
