@@ -54,7 +54,7 @@ def _records(project: Path) -> list[dict]:
 
 
 class DeclaredEquality(unittest.TestCase):
-    """T1/T4 on records written by the real pipeline."""
+    """T1 on records written by the real pipeline."""
 
     @classmethod
     def setUpClass(cls):
@@ -73,11 +73,40 @@ class DeclaredEquality(unittest.TestCase):
             self.assertEqual(r["provenance"].get("candidate_hash"), p18["candidate_hash"], r["evidence_class"])
             self.assertEqual(r["provenance"].get("task_id"), p18["task_id"], r["evidence_class"])
 
-    def test_t4_execution_evidence_is_unbound(self):
-        exe = [r for r in self.records if r.get("evidence_class") == "execution"]
-        self.assertTrue(exe)
-        for r in exe:
-            self.assertNotIn("candidate_hash", r["provenance"])
+
+
+class IneligibleExecutionIsUnbound(unittest.TestCase):
+    """T4 (narrowed by G1-B): execution paths with no task contract - cmd_execute and
+    untracked cmd_run - never get a fabricated candidate_hash. Tracked cmd_run is bound
+    by G1-B and is tested there."""
+
+    def test_t4_ineligible_execution_paths_are_unbound(self):
+        for path in ("cmd_execute", "untracked_cmd_run"):
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as tmp:
+                project = Path(tmp)
+                init_git_repo(project)
+                self.assertEqual(run_script("init", str(project), "--objective", "x").returncode, 0)
+                saved = dict(nogap_adapters.ADAPTERS)
+                nogap_adapters.ADAPTERS.clear()
+                nogap_adapters.ADAPTERS.update({"executor": StubExecutor("executor")})
+                try:
+                    with _ungoverned_project(), contextlib.redirect_stdout(io.StringIO()):
+                        if path == "cmd_execute":
+                            nogap.cmd_execute(argparse.Namespace(
+                                path=str(project), actor="t", timeout=60,
+                                worktree_command=[sys.executable, "-c", "open('t.txt','w').write('x')"]))
+                        else:
+                            self.assertEqual(run_script("freeze", str(project)).returncode, 0)
+                            nogap.cmd_run(argparse.Namespace(path=str(project), actor="t",
+                                                             execute=True, execute_timeout=60))
+                finally:
+                    nogap_adapters.ADAPTERS.clear()
+                    nogap_adapters.ADAPTERS.update(saved)
+                exe = [r for r in _records(project) if r.get("evidence_class") == "execution"]
+                self.assertTrue(exe)
+                for r in exe:
+                    self.assertNotIn("candidate_hash", r["provenance"])
+                    self.assertIsNone(r["provenance"].get("task_id"))
 
 
 class PatchMismatchGuard(unittest.TestCase):
