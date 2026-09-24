@@ -85,13 +85,26 @@ class TheGateIsReal(unittest.TestCase):
         self.assertTrue(reasons, "a fabricated gate hash was accepted as current")
         self.assertTrue(any("gate" in r.lower() for r in reasons), reasons)
 
-    def test_readiness_accepts_the_chain_the_builder_produces(self):
+    def test_synthetic_chain_cannot_pass_evidence_bundle_without_real_evidence(self):
         """End to end: task -> evidence -> self-check -> binding -> frozen gate -> readiness.
 
-        Every one of those links was invisible while a placeholder string satisfied the rule.
+        Since D4 (EVIDENCE_BUNDLE enforced) the synthetic walk STOPS at P19->P20: its evidence
+        has no evidence_class and no task/candidate binding, and its RC freezes an empty
+        evidence_refs snapshot. Readiness must refuse for exactly that reason.
         """
-        self.builder.advance_to("P21")
-        self.assertEqual(nm.status(self.project)["current_phase"], "P21")
+        import nogap_lifecycle as nlc
+
+        with self.assertRaises(nm.MethodologyValidationError) as ctx:
+            self.builder.advance_to("P21")
+        self.assertIn("readiness outcome is 'NOT_READY'", str(ctx.exception))
+        self.assertEqual(nm.status(self.project)["current_phase"], "P19")
+        (readiness,) = nlc.list_release_readiness(self.project)
+        self.assertEqual(readiness["readiness_outcome"], "NOT_READY")
+        rc_id = readiness["release_candidate_id"]
+        self.assertIn(
+            f"P19->P20 is not currently a legal methodology transition: P19 required artifact "
+            f"EVIDENCE_BUNDLE -> INVALID: {rc_id} frozen evidence_refs snapshot is empty or malformed",
+            readiness["blocking_reasons"])
 
 
 class BuilderIntegrity(unittest.TestCase):

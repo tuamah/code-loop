@@ -125,8 +125,8 @@ class RiskLevelEnforced(unittest.TestCase):
         self.assertIn("RISK_LEVEL", enforced)
         self.assertNotIn("RISK_LEVEL", deferred)
         self.assertNotIn("RISK_CLASSIFICATION", enforced | deferred)
-        self.assertEqual(len(enforced), 26)
-        self.assertEqual(len(deferred), 11)
+        self.assertEqual(len(enforced), 27)
+        self.assertEqual(len(deferred), 10)
         self.assertEqual(len(declared), 37)
 
 

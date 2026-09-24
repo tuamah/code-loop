@@ -535,6 +535,9 @@ def advance_via_real_pipeline(project: Path, actor: str = "fixture") -> "Fixture
     rc = nlc.create_release_candidate(
         project, version="0.0.1", candidate_ref="fixture-rc", code_revision="deadbeef",
         verification_refs=builder.evidence_ids, included_task_refs=[task_id],
+        evidence_refs=sorted(
+            p.stem for pattern in ("evidence-exec-*.json", "evidence-verify-*.json")
+            for p in (project.resolve() / ".code-loop" / "runtime" / "evidence").glob(pattern)),
         decision_refs=[decision["id"]], candidate_bindings=real_candidate_bindings(project, [task_id]),
         actor=actor, reason="fixture candidate")
     rc_id = rc["release_candidate_id"]

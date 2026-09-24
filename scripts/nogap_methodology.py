@@ -31,7 +31,7 @@ from typing import Any
 from nogap_artifact_types import ARTIFACT_TYPES
 from nogap_errors import MethodologyValidationError
 from nogap_evidence_ledger import read_evidence_ledger
-from nogap_required_kinds import SEMANTIC_RESOLVER_NAMES
+from nogap_required_kinds import SEMANTIC_RESOLVERS, semantic_resolver_agreement_problem
 
 ROOT = Path(__file__).resolve().parents[1]
 METHODOLOGY_DIR = ROOT / "methodology"
@@ -236,8 +236,9 @@ def _validate_semantic_resolvers(phases: dict[str, "PhaseContract"]) -> None:
     """Fail-closed load-time validation of each phase's semantic_resolvers.
 
     Mirrors _validate_artifact_field_bindings: every declared kind must be one of the phase's
-    required_artifacts, every resolver name must be in the closed SEMANTIC_RESOLVER_NAMES
-    registry (no fallback), and one kind may not be declared with different resolver names
+    required_artifacts, every resolver name must be in the closed SEMANTIC_RESOLVERS registry
+    (no fallback), be registered FOR that kind, and that kind must be implemented in
+    ENFORCED_KINDS (three-way agreement), and one kind may not be declared with different resolver names
     across phases. Runs unconditionally inside load_methodology().
     """
     seen: dict[str, str] = {}
@@ -248,9 +249,11 @@ def _validate_semantic_resolvers(phases: dict[str, "PhaseContract"]) -> None:
                 f"{phase.id}: semantic_resolvers declares {kind!r}, which is not in this phase's required_artifacts",
             )
             _require(
-                name in SEMANTIC_RESOLVER_NAMES,
+                name in SEMANTIC_RESOLVERS,
                 f"{phase.id}: semantic_resolvers[{kind!r}] references unknown resolver {name!r}",
             )
+            problem = semantic_resolver_agreement_problem(kind, name)
+            _require(problem is None, f"{phase.id}: semantic_resolvers[{kind!r}] {problem}")
             if kind in seen:
                 _require(
                     seen[kind] == name,

@@ -216,6 +216,14 @@ def make_task_contract(project: Path, chain: dict, actor: str = "architect") -> 
     return create_artifact(project, "P12_TASK_CONTRACT", fields, actor=actor)
 
 
+def bundle_evidence_ids(project: Path) -> list[str]:
+    """The canonical evidence ids the real pipeline wrote for the RC's evidence bundle (D4):
+    its execution evidence and its verification evidence, read from the ledger directory."""
+    evidence_dir = project / ".code-loop" / "runtime" / "evidence"
+    return sorted(p.stem for pattern in ("evidence-exec-*.json", "evidence-verify-*.json")
+                  for p in evidence_dir.glob(pattern))
+
+
 class LifecycleFixture(unittest.TestCase):
     """Reaches P18 with an ACCEPTED decision on real M6 execution/verification
     evidence (LIGHT profile - the same reliable path every prior milestone's test
@@ -256,6 +264,7 @@ class LifecycleFixture(unittest.TestCase):
             version="1.0.0", candidate_ref="rc-1.0.0", code_revision="abc123",
             included_task_refs=[self.task_id], included_requirement_refs=[self.chain["P6"]["fields"]["requirement_id"]],
             artifact_refs=[self.chain["P11"]["artifact_id"]], verification_refs=[self.exec_evidence_id],
+            evidence_refs=bundle_evidence_ids(self.project),
             known_limitations=["minor polish deferred"], actor="release-manager", reason="assemble candidate",
         )
         fields.update(overrides)
@@ -430,6 +439,7 @@ class StandardProfileLifecycleFixture(LifecycleFixture):
             version="1.0.0", candidate_ref="rc-1.0.0", code_revision="abc123",
             included_task_refs=[self.task_id], included_requirement_refs=[self.chain["P6"]["fields"]["requirement_id"]],
             artifact_refs=[self.chain["P11"]["artifact_id"]], verification_refs=[self.exec_evidence_id],
+            evidence_refs=bundle_evidence_ids(self.project),
             actor="release-manager", reason="assemble candidate",
         )
         fields.update(overrides)
