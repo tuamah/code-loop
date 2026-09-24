@@ -28,6 +28,7 @@ import nogap  # noqa: E402
 import nogap_adapters  # noqa: E402
 import nogap_failure as nf  # noqa: E402
 import nogap_lifecycle as nlc  # noqa: E402
+from methodology_fixture_builder import real_candidate_bindings  # noqa: E402
 from nogap_artifacts import create_artifact  # noqa: E402
 from nogap_methodology import (  # noqa: E402
     MethodologyValidationError,
@@ -261,6 +262,9 @@ class LifecycleFixture(unittest.TestCase):
         return nlc.create_release_candidate(self.project, **fields)
 
     def frozen_candidate(self, **overrides: Any) -> dict[str, Any]:
+        if "candidate_bindings" not in overrides:  # G1-C3: real P18-attested bindings only
+            tasks = overrides.get("included_task_refs", [self.task_id])
+            overrides["candidate_bindings"] = real_candidate_bindings(self.project, list(tasks))
         candidate = self.make_candidate(**overrides)
         return nlc.freeze_release_candidate(self.project, candidate["release_candidate_id"], actor="release-manager", reason="freeze")
 
@@ -268,6 +272,19 @@ class LifecycleFixture(unittest.TestCase):
         fields = dict(actor="release-manager", reason="evaluate readiness")
         fields.update(overrides)
         return nlc.evaluate_release_readiness(self.project, candidate_id, **fields)
+
+    def _assert_unverified_task_rejected_at_freeze(self, task_id: str) -> None:
+        """G1-C3: freeze fails closed naming the unbound task; the RC stays unfrozen."""
+        rc = self.make_candidate(included_task_refs=[task_id])
+        with self.assertRaises(MethodologyValidationError) as ctx:
+            nlc.freeze_release_candidate(self.project, rc["release_candidate_id"], actor="release-manager", reason="freeze")
+        self.assertIn(f"missing=[{task_id!r}]", str(ctx.exception))
+        self.assertEqual(nlc.load_release_candidate(self.project, rc["release_candidate_id"])["status"], "DRAFT")
+
+    def _set_real_p18_status(self, status: str) -> None:
+        import nogap_artifacts as na
+        (p18,) = na.list_artifacts(self.project, artifact_type="P18_VERIFICATION_RESULT")
+        na.update_verification_result(self.project, p18["fields"]["verification_run_id"], "test", "drive readiness", status=status)
 
     def make_deployment(self, candidate_id: str, readiness_id: str, **overrides: Any) -> dict[str, Any]:
         fields = dict(
@@ -419,6 +436,9 @@ class StandardProfileLifecycleFixture(LifecycleFixture):
         return nlc.create_release_candidate(self.project, **fields)
 
     def frozen_candidate(self, **overrides: Any) -> dict[str, Any]:
+        if "candidate_bindings" not in overrides:  # G1-C3: real P18-attested bindings only
+            tasks = overrides.get("included_task_refs", [self.task_id])
+            overrides["candidate_bindings"] = real_candidate_bindings(self.project, list(tasks))
         candidate = self.make_candidate(**overrides)
         return nlc.freeze_release_candidate(self.project, candidate["release_candidate_id"], actor="release-manager", reason="freeze")
 
@@ -490,13 +510,15 @@ class ReleaseCandidateTests(LifecycleFixture):
 
     # --- D4-PRE-A2: freeze now emits V2 -----------------------------------------
 
-    def test_a2_t1_freeze_emits_v2_stamped_in_record_and_freeze_record(self) -> None:
+    def test_a2_t1_freeze_emits_v3_stamped_in_record_and_freeze_record(self) -> None:
+        # G1-C3: a new freeze emits V3 (GENUINE_BEHAVIOUR_CHANGE from A2's V2).
         rc = self.frozen_candidate()
-        self.assertEqual(rc["candidate_fingerprint_version"], "2")
-        self.assertEqual(rc["freeze_record"]["candidate_fingerprint_version"], "2")
+        self.assertEqual(rc["candidate_fingerprint_version"], "3")
+        self.assertEqual(rc["freeze_record"]["candidate_fingerprint_version"], "3")
         expected = nlc.compute_candidate_fingerprint(
             rc["code_revision"], rc["artifact_fingerprints"], rc["included_task_refs"],
-            rc["included_requirement_refs"], rc["verification_refs"], rc["evidence_refs"], version="2",
+            rc["included_requirement_refs"], rc["verification_refs"], rc["evidence_refs"], version="3",
+            candidate_bindings=rc["candidate_bindings"],
         )
         self.assertEqual(rc["candidate_fingerprint"], expected)
         self.assertEqual(rc["freeze_record"]["candidate_fingerprint"], expected)
@@ -513,6 +535,18 @@ class ReleaseCandidateTests(LifecycleFixture):
         path.write_text(json.dumps(rc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         reasons = nlc.detect_candidate_drift(self.project, rc["release_candidate_id"])
         self.assertTrue(any("evidence_refs removed" in r for r in reasons), reasons)
+
+    def test_g1c3_v3_frozen_evidence_ref_change_still_detected_as_drift(self) -> None:
+        # G1-C3 decision 1: a real V3-frozen record keeps A2's evidence-drift detection.
+        rc = self.frozen_candidate(evidence_refs=[self.exec_evidence_id])
+        self.assertEqual(rc["candidate_fingerprint_version"], "3")
+        self.assertEqual(nlc.detect_candidate_drift(self.project, rc["release_candidate_id"]), [])
+        rc["evidence_refs"] = ["some-other-evidence-id"]
+        path = self.project / ".code-loop" / "methodology" / "lifecycle" / "release_candidates" / f"{rc['release_candidate_id']}.json"
+        path.write_text(json.dumps(rc, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        reasons = nlc.detect_candidate_drift(self.project, rc["release_candidate_id"])
+        self.assertIn(f"evidence_refs removed since freeze: {[self.exec_evidence_id]}", reasons)
+        self.assertIn("evidence_refs added since freeze: ['some-other-evidence-id']", reasons)
 
     def test_a2_t4_added_evidence_ref_detected_as_drift(self) -> None:
         rc = self.frozen_candidate(evidence_refs=[])
@@ -540,7 +574,8 @@ class ReleaseCandidateTests(LifecycleFixture):
         frozen_refs = [self.exec_evidence_id, "evidence-synthetic-2"]
         fp = nlc.compute_candidate_fingerprint(
             rc["code_revision"], rc["artifact_fingerprints"], rc["included_task_refs"],
-            rc["included_requirement_refs"], rc["verification_refs"], frozen_refs, version="2",
+            rc["included_requirement_refs"], rc["verification_refs"], frozen_refs,
+            version=rc["candidate_fingerprint_version"], candidate_bindings=rc.get("candidate_bindings", {}),
         )
         rc["candidate_fingerprint"] = fp
         rc["evidence_refs"] = list(frozen_refs)
@@ -691,10 +726,10 @@ class ReadinessTests(LifecycleFixture):
         # P15/P16 verification (Blocker 1): a candidate referencing a task that was
         # never verified at all must not reach READY_FOR_DECISION even at LIGHT.
         unverified_task_id = make_task_contract(self.project, self.chain)["fields"]["task_id"]
-        rc = self.frozen_candidate(included_task_refs=[unverified_task_id])
-        readiness = self.evaluate(rc["release_candidate_id"])
-        self.assertEqual(readiness["readiness_outcome"], "NOT_READY")
-        self.assertTrue(any(unverified_task_id in r for r in readiness["blocking_reasons"]))
+        # G1-C3 (GENUINE_BEHAVIOUR_CHANGE): a candidate containing a task with no resolved
+        # candidate binding is no longer constructible at FROZEN - it fails closed at
+        # freeze, before readiness is ever evaluated. The unverified task is rejected there.
+        self._assert_unverified_task_rejected_at_freeze(unverified_task_id)
 
     def test_25_blocking_reasons_present_when_not_ready(self) -> None:
         rc = self.make_candidate()
@@ -1564,10 +1599,10 @@ class RegressionUnaffectedTests(LifecycleFixture):
 class LightVerificationSemanticsTests(LifecycleFixture):
     def test_blocker1_1_light_with_no_verification_cannot_be_ready(self) -> None:
         unverified_task_id = make_task_contract(self.project, self.chain)["fields"]["task_id"]
-        rc = self.frozen_candidate(included_task_refs=[unverified_task_id])
-        readiness = self.evaluate(rc["release_candidate_id"])
-        self.assertNotEqual(readiness["readiness_outcome"], "READY_FOR_DECISION")
-        self.assertEqual(readiness["readiness_outcome"], "NOT_READY")
+        # G1-C3 (GENUINE_BEHAVIOUR_CHANGE): a candidate containing a task with no resolved
+        # candidate binding is no longer constructible at FROZEN - it fails closed at
+        # freeze, before readiness is ever evaluated. The unverified task is rejected there.
+        self._assert_unverified_task_rejected_at_freeze(unverified_task_id)
 
     def test_blocker1_2_light_with_legitimate_minimum_verification_can_be_ready(self) -> None:
         rc = self.frozen_candidate()  # references self.task_id, genuinely verified in setUp
@@ -1601,9 +1636,10 @@ class LightVerificationSemanticsTests(LifecycleFixture):
         second_task_id = second_contract["fields"]["task_id"]
         # deliberately never call nogap.cmd_run/cmd_verify for this second task - only
         # its contract exists, standing in for "no verification ever attempted"
-        rc = self.frozen_candidate(included_task_refs=[second_task_id])
-        readiness = self.evaluate(rc["release_candidate_id"])
-        self.assertNotEqual(readiness["readiness_outcome"], "READY_FOR_DECISION")
+        # G1-C3 (GENUINE_BEHAVIOUR_CHANGE): a candidate containing a task with no resolved
+        # candidate binding is no longer constructible at FROZEN - it fails closed at
+        # freeze, before readiness is ever evaluated. The unverified task is rejected there.
+        self._assert_unverified_task_rejected_at_freeze(second_task_id)
 
     def test_blocker1_5_no_second_verification_definition_in_lifecycle(self) -> None:
         import inspect
@@ -1839,8 +1875,12 @@ class ReadinessSplitBrainTests(LifecycleFixture):
     """P19 -> P20: only READY_FOR_DECISION is phase-completing."""
 
     def test_1_not_ready_does_not_force_p20_transition(self) -> None:
-        unverified_task_id = make_task_contract(self.project, self.chain)["fields"]["task_id"]
-        rc = self.frozen_candidate(included_task_refs=[unverified_task_id])
+        # G1-C3: an RC with an unverified task can no longer be frozen, so NOT_READY is
+        # driven through a VALID, freezable RC (real resolved binding) whose real P18 is
+        # then marked VERIFICATION_FAILED via the owner API (binding resolution is
+        # status-agnostic; readiness is not).
+        rc = self.frozen_candidate()
+        self._set_real_p18_status("VERIFICATION_FAILED")
         readiness = self.evaluate(rc["release_candidate_id"])
         self.assertEqual(readiness["readiness_outcome"], "NOT_READY")
         self.assertEqual(mstatus(self.project)["current_phase"], "P19")
@@ -1859,7 +1899,12 @@ class ReadinessSplitBrainTests(LifecycleFixture):
             "gate_plan_refs": [self.chain["P11"]["artifact_id"]], "allow_non_active_requirement_refs": True,
         }, actor="architect")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=second_contract["fields"]["task_id"]))
-        rc = self.frozen_candidate(included_task_refs=[second_contract["fields"]["task_id"]])
+        # G1-C3: that executed-but-unverified task has no P18, so it now fails closed at freeze.
+        self._assert_unverified_task_rejected_at_freeze(second_contract["fields"]["task_id"])
+        # The split-brain invariant is kept on a VALID, freezable RC whose real P18 is put
+        # back to VERIFICATION_IN_PROGRESS via the owner API (incomplete verification).
+        rc = self.frozen_candidate()
+        self._set_real_p18_status("VERIFICATION_IN_PROGRESS")
         readiness = self.evaluate(rc["release_candidate_id"])
         self.assertEqual(readiness["verification_status"], "INCOMPLETE")
         self.assertIn(readiness["readiness_outcome"], {"NOT_READY", "INCONCLUSIVE"})

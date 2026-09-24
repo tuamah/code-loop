@@ -101,12 +101,21 @@ def _fn(name):
 
 
 class Structural(unittest.TestCase):
-    def test_t6_not_wired_into_rc_mutation_paths(self):
-        for name in ("create_release_candidate", "update_release_candidate_bindings", "freeze_release_candidate"):
+    def test_t6_resolution_enforced_only_at_freeze(self):
+        # G1-C3 flipped the freeze half by design: freeze now enforces resolution.
+        # create/update still never resolve, and stay DRAFT/ASSEMBLED-only.
+        resolvers = {"resolve_candidate_binding", "resolve_candidate_bindings"}
+
+        def called(name):
             names = {n.id for n in ast.walk(_fn(name)) if isinstance(n, ast.Name)}
-            names |= {n.attr for n in ast.walk(_fn(name)) if isinstance(n, ast.Attribute)}
+            return names | {n.attr for n in ast.walk(_fn(name)) if isinstance(n, ast.Attribute)}
+        for name in ("create_release_candidate", "update_release_candidate_bindings"):
             with self.subTest(fn=name):
-                self.assertFalse({"resolve_candidate_binding", "resolve_candidate_bindings"} & names)
+                self.assertFalse(resolvers & called(name))
+        self.assertIn("resolve_candidate_bindings", called("freeze_release_candidate"))
+        self.assertIn('record["status"] in {"DRAFT", "ASSEMBLED"}',
+                      inspect.getsource(nlc.update_release_candidate_bindings))
+        self.assertIn('"status": "DRAFT"', inspect.getsource(nlc.create_release_candidate))
 
     def test_t7_no_status_read_in_resolution(self):
         for name in ("resolve_candidate_binding", "resolve_candidate_bindings"):
