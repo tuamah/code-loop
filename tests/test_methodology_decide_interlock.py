@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -99,7 +100,45 @@ def run_script(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run([sys.executable, "scripts/nogap.py", *args], cwd=ROOT, text=True, capture_output=True)
 
 
-def build_p0_p11_chain(project: Path, actor: str = "team", p7_extra: dict | None = None) -> dict[str, dict]:
+def _iso_now() -> str:
+    """UTC timestamp in the same shape production evidence records use - nogap.py's
+    validate step requires provenance.created_at to be a non-empty string."""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _ensure_runtime(project: Path, objective: str) -> None:
+    """Idempotently establish the Trust runtime once, before any evidence write -
+    `nogap init` refuses a project whose runtime directory already exists and is
+    non-empty."""
+    root = project.resolve() / ".code-loop" / "runtime"
+    if root.exists() and any(root.iterdir()):
+        return
+    result = run_script("init", str(project), "--objective", objective)
+    assert result.returncode == 0, f"runtime init failed: {result.stdout}{result.stderr}"
+
+
+def _record_source_evidence(project: Path, actor: str) -> str:
+    """A real record in the runtime evidence ledger (P3's source-reference evidence),
+    in the ledger's own shape - never a fabricated ref string."""
+    evidence_dir = project.resolve() / ".code-loop" / "runtime" / "evidence"
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    evidence_id = f"evidence-source-{uuid.uuid4().hex[:12]}"
+    (evidence_dir / f"{evidence_id}.json").write_text(json.dumps({
+        "id": evidence_id,
+        "run_id": "run-0001",
+        "kind": "source_references",
+        "status": "passed",
+        "provenance": {"created_by": actor, "actor_id": actor, "authority": "tool", "created_at": _iso_now()},
+        "summary": "fixture prior-art source references",
+    }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return evidence_id
+
+
+def build_p0_p11_chain(project: Path, actor: str = "team", p7_extra: dict | None = None,
+                        objective: str = "P0-P11 chain fixture") -> dict[str, dict]:
+    _ensure_runtime(project, objective)
     made: dict[str, dict] = {}
     made["P0"] = create_artifact(project, "P0_PROJECT_INTENT", {
         "project_name": "demo", "intent_type": mstatus(project)["intent"], "problem_summary": "x",
@@ -156,7 +195,7 @@ def build_p0_p11_chain(project: Path, actor: str = "team", p7_extra: dict | None
     }, actor=actor)
     order = ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]
     for current, nxt in zip(order, order[1:]):
-        evidence_refs = ["source-ref-1"] if current == "P3" else []
+        evidence_refs = [_record_source_evidence(project, actor)] if current == "P3" else []
         transition(project, nxt, actor, f"{current} obligations satisfied",
                    artifact_refs=[made[current]["artifact_id"]], evidence_refs=evidence_refs, authority_class="tool")
     return made
@@ -209,9 +248,8 @@ class InterlockFixture(unittest.TestCase):
         self.project = Path(self.tmp.name)
         init_git_repo(self.project)
         init_project(self.project, *self.profile_args, actor="test")
-        self.chain = build_p0_p11_chain(self.project, p7_extra=self.p7_extra)
+        self.chain = build_p0_p11_chain(self.project, p7_extra=self.p7_extra, objective="interlock fixture")
         self.contract = make_task_contract(self.project, self.chain)
-        run_script("init", str(self.project), "--objective", "interlock fixture")
 
         self._original_adapters = dict(nogap_adapters.ADAPTERS)
         nogap_adapters.ADAPTERS.clear()
@@ -357,9 +395,8 @@ class LightSkipSatisfiesPreconditionTests(unittest.TestCase):
             project = Path(tmp)
             init_git_repo(project)
             init_project(project, "research", "low", "low", actor="test")  # LIGHT
-            chain = build_p0_p11_chain(project)
+            chain = build_p0_p11_chain(project, objective="light skip precondition")
             contract = make_task_contract(project, chain)
-            run_script("init", str(project), "--objective", "light skip precondition")
 
             original_adapters = dict(nogap_adapters.ADAPTERS)
             nogap_adapters.ADAPTERS.clear()

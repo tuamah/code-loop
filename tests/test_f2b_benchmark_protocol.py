@@ -68,8 +68,11 @@ class BenchmarkProtocolEnforced(unittest.TestCase):
         state["current_phase"] = phase_id
         path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
         phase = nm.load_methodology().get_phase(phase_id)
+        # This helper drives phases whose leaving obligation under test is the artifact
+        # verdict, not evidence - a fabricated evidence ref would now be rejected by the
+        # real ledger build_p0_p11_chain establishes, for no reason relevant here.
         return can_transition(self.project, phase.allowed_next[0],
-                              evidence_refs=["source-ref-1"], artifact_refs=refs)
+                              evidence_refs=[], artifact_refs=refs)
 
     # -- T1: a real, valid measurement_procedure resolves, VALIDATES, transition allowed -----
 

@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 
 from nogap_artifacts import load_artifact
+from nogap_evidence_ledger import read_evidence_ledger
 from nogap_methodology import (
     MethodologyValidationError,
     _now,
@@ -299,34 +300,10 @@ def list_lifecycle_decisions(project: Path) -> list[dict[str, Any]]:
 
 # --- reference resolution ----------------------------------------------------
 
-def _evidence_ids(project: Path) -> set[str] | None:
-    evidence_dir = project.resolve() / ".code-loop" / "runtime" / "evidence"
-    if not evidence_dir.is_dir():
-        return None
-    ids: dict[str, Path] = {}
-    for path in sorted(evidence_dir.glob("*.json")):
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise MethodologyValidationError(
-                f"lifecycle: unreadable/malformed evidence record {path}: {exc}"
-            ) from exc
-        if isinstance(data, dict) and isinstance(data.get("id"), str):
-            evidence_id = data["id"]
-            if evidence_id in ids:
-                raise MethodologyValidationError(
-                    f"lifecycle: duplicate evidence id {evidence_id!r} in {ids[evidence_id]} and {path}"
-                )
-            ids[evidence_id] = path
-    return set(ids)
-
-
 def _check_evidence_refs(project: Path, refs: list[str]) -> list[str]:
     if not refs:
         return []
-    known = _evidence_ids(project)
-    if known is None:
-        return list(refs)
+    known = read_evidence_ledger(project).ids
     return [ref for ref in refs if ref not in known]
 
 
@@ -526,7 +503,7 @@ def freeze_release_candidate(project: Path, release_candidate_id: str, *, actor:
     _require_actor_reason(actor, reason, "freeze_release_candidate")
     _require(bool(record["code_revision"]), "lifecycle: freeze requires a non-empty code_revision")
 
-    known_evidence = _evidence_ids(project) or set()
+    known_evidence = read_evidence_ledger(project).ids
     transition_evidence_refs = [ref for ref in record["verification_refs"] if ref in known_evidence]
 
     state = load_state(project)
@@ -903,7 +880,7 @@ def record_deployment_result(
     if status == "SUCCEEDED":
         state = load_state(project)
         if state is not None and state["current_phase"] != "P21":
-            known_evidence = _evidence_ids(project) or set()
+            known_evidence = read_evidence_ledger(project).ids
             transition_evidence_refs = [ref for ref in prospective_evidence_refs if ref in known_evidence]
             # F2a-Lifecycle: P20 declares RELEASE_READINESS_CHECKLIST. This cited
             # deployment_id - the record being CREATED for the phase being entered - instead
@@ -1160,7 +1137,7 @@ def select_improvement(project: Path, improvement_id: str, *, actor: str, reason
 
     state = load_state(project)
     if state is not None and state["current_phase"] != "P22":
-        known_evidence = _evidence_ids(project) or set()
+        known_evidence = read_evidence_ledger(project).ids
         transition_evidence_refs = [ref for ref in record["evidence_refs"] if ref in known_evidence]
         # F2a-Lifecycle: P21 declares OPERATIONAL_OBSERVATIONS. This cited improvement_id -
         # the record being created for P22 - instead of the operational observations P21
@@ -1282,7 +1259,7 @@ def create_lifecycle_decision(
     needs_transition = state is not None and state["current_phase"] != "P23"
     transition_evidence_refs: list[str] = []
     if needs_transition:
-        known_evidence = _evidence_ids(project) or set()
+        known_evidence = read_evidence_ledger(project).ids
         transition_evidence_refs = [ref for ref in evidence_refs if ref in known_evidence]
         # F2a-Lifecycle: P22 declares IMPROVEMENT_PROPOSAL. This cited lifecycle_decision_id -
         # the record being created for P23. Same defect, third instance.
