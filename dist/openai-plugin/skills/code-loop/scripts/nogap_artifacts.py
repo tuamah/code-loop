@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 from nogap_artifact_types import ARTIFACT_TYPES, PHASE_TO_ARTIFACT_TYPE
+from nogap_evidence_classes import EVIDENCE_CLASSES
 from nogap_methodology import (
     CLAIM_STRENGTHS,
     MethodologyValidationError,
@@ -281,6 +282,13 @@ def validate_record(project: Path, record: dict[str, Any]) -> list[str]:
         return problems + ["artifact 'fields' must be an object"]
     problems.extend(_check_fields(artifact_type, fields, effective_profile))
     problems.extend(_check_references(project, artifact_type, fields))
+
+    for owner, field in (("P11_GATE_PLAN", "evidence_requirements"),
+                         ("P15_VERIFICATION_PLAN", "required_evidence_kinds")):
+        if artifact_type == owner and isinstance(fields.get(field), list):
+            unknown = [v for v in fields[field] if v not in EVIDENCE_CLASSES]
+            if unknown:
+                problems.append(f"{field} values must be in {sorted(EVIDENCE_CLASSES)}, got unknown {unknown!r}")
 
     if artifact_type == "P5_STRATEGY_DECISION":
         strategy = fields.get("selected_strategy")
