@@ -47,7 +47,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from nogap_artifacts import load_artifact
+from nogap_artifacts import list_artifacts, load_artifact
 from nogap_evidence_ledger import read_evidence_ledger
 from nogap_verify_binding import load_task_contract
 from nogap_methodology import (
@@ -448,6 +448,32 @@ def _validate_candidate_bindings(project: Path, included_task_refs: list[str], c
         _require(task_id in included_task_refs, f"lifecycle: candidate_bindings key {task_id!r} is not in included_task_refs")
         _require(isinstance(candidate_hash, str) and re.fullmatch(r"[0-9a-f]{64}", candidate_hash) is not None,
                  f"lifecycle: candidate_bindings[{task_id!r}] is not a 64-char lowercase hex candidate_hash")
+
+
+def resolve_candidate_binding(project: Path, task_id: str, candidate_hash: str) -> dict[str, Any]:
+    """G1-C2: resolve one declared (task_id, candidate_hash) pair to the single real
+    P18_VERIFICATION_RESULT attesting it. Status-agnostic by contract (D4 eligibility is
+    G1-C3); exact-pair lookup only, same query shape as nogap.py. Zero matches: unattested
+    binding, rejected. More than one: violates the one-P18-per-pair production invariant,
+    fails closed rather than picking one."""
+    matches = [
+        r for r in list_artifacts(project, artifact_type="P18_VERIFICATION_RESULT")
+        if r["fields"].get("task_id") == task_id and r["fields"].get("candidate_hash") == candidate_hash
+    ]
+    _require(bool(matches),
+             f"lifecycle: candidate_bindings[{task_id!r}] = {candidate_hash!r} resolves to no P18_VERIFICATION_RESULT")
+    _require(len(matches) == 1,
+             f"lifecycle: ambiguous candidate binding: {len(matches)} P18_VERIFICATION_RESULT records match "
+             f"task_id={task_id!r} candidate_hash={candidate_hash!r}: {sorted(r.get('artifact_id') for r in matches)}")
+    return matches[0]
+
+
+def resolve_candidate_bindings(project: Path, candidate_bindings: dict[str, str]) -> dict[str, dict[str, Any]]:
+    """G1-C2 bulk check: every pair in an RC's candidate_bindings must resolve. Validation
+    infrastructure only; not wired into any RC mutation path (G1-C3)."""
+    _require(isinstance(candidate_bindings, dict), "lifecycle: candidate_bindings must be a dict")
+    return {task_id: resolve_candidate_binding(project, task_id, candidate_hash)
+            for task_id, candidate_hash in candidate_bindings.items()}
 
 
 def update_release_candidate_bindings(
