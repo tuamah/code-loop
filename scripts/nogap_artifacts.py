@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from nogap_artifact_types import ARTIFACT_TYPES, PHASE_TO_ARTIFACT_TYPE
+from nogap_artifact_types import ARTIFACT_TYPES, PHASE_TO_ARTIFACT_TYPE, PHASE_TO_ARTIFACT_TYPES
 from nogap_evidence_classes import EVIDENCE_CLASSES
 from nogap_methodology import (
     CLAIM_STRENGTHS,
@@ -520,19 +520,23 @@ def prebuild_readiness(project: Path) -> dict[str, Any]:
     state, definition = _require_state(project)
     missing: list[str] = []
     for phase_id in PREBUILD_PHASES:
-        artifact_type = PHASE_TO_ARTIFACT_TYPE[phase_id]
-        records = get_phase_artifacts(project, phase_id)
-        # a requirement phase (P6) may have many records; every other phase needs at least one
-        if not records:
-            missing.append(f"{phase_id} ({artifact_type}): no artifact recorded")
-            continue
-        if artifact_type == "P6_REQUIREMENT":
-            active = [r for r in records if r.get("status") == "ACTIVE" or r.get("status") == "SATISFIED"]
-            if not active:
-                missing.append(f"{phase_id} (P6_REQUIREMENT): no ACTIVE or SATISFIED requirement recorded")
-        for record in records:
-            problems = validate_record(project, record)
-            missing.extend(f"{phase_id} ({record.get('artifact_id')}): {p}" for p in problems)
+        # D6-PRE-A: a phase may own more than one artifact type (P9). Index by the real 1:N
+        # ownership map directly - an unknown phase_id fails closed with a plain KeyError rather
+        # than being silently skipped.
+        artifact_types = PHASE_TO_ARTIFACT_TYPES[phase_id]
+        for artifact_type in artifact_types:
+            records = list_artifacts(project, artifact_type=artifact_type, phase_id=phase_id)
+            # a requirement phase (P6) may have many records; every other type needs at least one
+            if not records:
+                missing.append(f"{phase_id} ({artifact_type}): no artifact recorded")
+                continue
+            if artifact_type == "P6_REQUIREMENT":
+                active = [r for r in records if r.get("status") == "ACTIVE" or r.get("status") == "SATISFIED"]
+                if not active:
+                    missing.append(f"{phase_id} (P6_REQUIREMENT): no ACTIVE or SATISFIED requirement recorded")
+            for record in records:
+                problems = validate_record(project, record)
+                missing.extend(f"{phase_id} ({record.get('artifact_id')}): {p}" for p in problems)
 
     return {
         "ready": not missing,

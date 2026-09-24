@@ -171,4 +171,20 @@ def _validate_allow_empty_fields() -> None:
 
 _validate_allow_empty_fields()
 
-PHASE_TO_ARTIFACT_TYPE = {info["phase_id"]: name for name, info in ARTIFACT_TYPES.items()}
+# D6-PRE-A: a phase_id can own more than one artifact type (P9 -> GOVERNANCE, RUNTIME_STRUCTURE,
+# MEMORY_CONFIGURATION are three independent representations, not three fields of one artifact -
+# see docs/d6-runtime-structure-contract.md). PHASE_TO_ARTIFACT_TYPES is the real 1:N ownership
+# map; order matches ARTIFACT_TYPES' own declaration order, deterministically.
+PHASE_TO_ARTIFACT_TYPES: dict[str, tuple[str, ...]] = {}
+for _name, _info in ARTIFACT_TYPES.items():
+    PHASE_TO_ARTIFACT_TYPES.setdefault(_info["phase_id"], ())
+    PHASE_TO_ARTIFACT_TYPES[_info["phase_id"]] += (_name,)
+del _name, _info
+
+# Legacy compatibility map, single-owner phases ONLY. A phase with more than one artifact type
+# is deliberately ABSENT here - not resolved to a "first" or "last" type - so any old call site
+# still indexing this map on a multi-owner phase_id fails closed with a plain KeyError instead of
+# silently picking a winner by insertion order.
+PHASE_TO_ARTIFACT_TYPE: dict[str, str] = {
+    phase_id: types[0] for phase_id, types in PHASE_TO_ARTIFACT_TYPES.items() if len(types) == 1
+}
