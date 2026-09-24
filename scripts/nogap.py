@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from nogap_evidence_classes import EVIDENCE_CLASSES
+
 
 ROUTER_POLICY_PATH = Path(__file__).resolve().parents[1] / "runtime" / "config" / "model-router.policy.json"
 RUNTIME_DIRS = [
@@ -442,6 +444,10 @@ def cmd_validate(args: argparse.Namespace) -> None:
             raise SystemExit(f"FAIL: evidence {evidence_id} references a different run_id")
         if item.get("status") not in EVIDENCE_STATUS:
             raise SystemExit(f"FAIL: evidence {evidence_id} has invalid status")
+        # evidence_class is optional (legacy records have none and get none assigned);
+        # when present it must be a declared class. Never derived from `kind`.
+        if "evidence_class" in item and item["evidence_class"] not in EVIDENCE_CLASSES:
+            raise SystemExit(f"FAIL: evidence {evidence_id} has invalid evidence_class")
         provenance = item.get("provenance")
         if not isinstance(provenance, dict):
             raise SystemExit(f"FAIL: evidence {evidence_id} missing provenance")
@@ -890,6 +896,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     methodology_version = task_contract["methodology_version"] if task_contract else None
     evidence_id, artifact_path = write_isolated_run_evidence(
         root, run_id, result, actor, exec_status, execution_status, reason,
+        evidence_class="execution",
         dispatch_id=dispatch_id, provider=selected["provider"], runtime_id=selected["runtime"],
         task_id=task_id, requirement_refs=requirement_refs, methodology_version=methodology_version,
     )
@@ -937,6 +944,7 @@ def write_isolated_run_evidence(
     reason: str,
     *,
     authority: str = "execution",
+    evidence_class: str,
     kind: str = "execution",
     role: str = "implementer",
     event_type: str = "EXECUTION_COMPLETED",
@@ -1010,6 +1018,7 @@ def write_isolated_run_evidence(
         "id": evidence_id,
         "run_id": run_id,
         "kind": kind,
+        "evidence_class": evidence_class,
         "status": status,
         "provenance": provenance,
         "summary": f"{execution_status}: {reason} (process_outcome={result.process_outcome}, returncode={result.returncode})",
@@ -1079,6 +1088,7 @@ def cmd_execute(args: argparse.Namespace) -> None:
     exec_status, execution_status, reason = classify_generic_execution(result)
     evidence_id, artifact_path = write_isolated_run_evidence(
         root, run_id, result, args.actor, exec_status, execution_status, reason,
+        evidence_class="execution",
     )
     print(
         f"execution {result.execution_id}: {exec_status} (returncode={result.returncode}) "
@@ -1330,8 +1340,10 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
     deterministic_statuses: list[str] = []
     for check in run_deterministic_layer(project_root, patch, gate, timeout=args.timeout):
         kind = "review" if check.check == "effect-scope" else "test"
+        evidence_class = "effect_scope" if check.check == "effect-scope" else "deterministic"
         evidence_id, _ = write_isolated_run_evidence(
             root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
+            evidence_class=evidence_class,
             authority="verification", kind=kind, role="verifier", event_type="VERIFICATION_COMPLETED",
             dispatch_id=dispatch_id,
             task_id=task_id if methodology_tracked else None,
@@ -1399,6 +1411,7 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
                 kind = "review" if check.check == "effect-scope" else "test"
                 evidence_id, _ = write_isolated_run_evidence(
                     root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
+                    evidence_class="reproducibility",
                     authority="verification", kind=kind, role="verifier", event_type="VERIFICATION_COMPLETED",
                     dispatch_id=dispatch_id, task_id=task_id, requirement_refs=requirement_refs,
                     methodology_version=state["methodology_version"],
@@ -1471,6 +1484,7 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
                     check_status, check_execution_status, check_reason = check.status, check.execution_status, check.reason
                 evidence_id, _ = write_isolated_run_evidence(
                     root, run_id, check, args.actor, check_status, check_execution_status, check_reason,
+                    evidence_class="independent_review",
                     authority="verification", kind="review", role="verifier", event_type="VERIFICATION_COMPLETED",
                     dispatch_id=dispatch_id, provider=reviewer.id, runtime_id=reviewer.id,
                     task_id=task_id if methodology_tracked else None,
