@@ -176,6 +176,22 @@ class ReviewVerdict:
 
 
 @dataclass(frozen=True)
+class GoldenGates:
+    """GOLDEN_GATES (F2b Rev 2.1 section 2.7): the gate conditions that ACTUALLY BIND
+    execution, as distinct from P11_GATE_PLAN (intent). Authoritative owner is the Trust
+    Runtime, not any artifact - this kind never resolves against artifact_refs at all. A
+    marker with no fields: the check reads the runtime gates directory directly and reuses
+    the same hash-integrity primitive cmd_validate already uses (gate_hash), never
+    re-deriving it, and the same accessors (required_commands_from_gate/
+    expected_effect_from_gate) real enforcement code already reads for "binding condition" -
+    never an assumed `rules` field. Deliberately does NOT implement STALE: no authoritative
+    supersession/current-generation selector exists anywhere in this codebase today (a real,
+    registered architectural debt - see _check_golden_gates_kind's docstring), so more than
+    one frozen gate fails closed as ambiguous INVALID rather than guessing a "latest" one.
+    """
+
+
+@dataclass(frozen=True)
 class RequirementCoverage:
     """REQUIREMENTS (F2b Rev 2.1 section 2.10): the authoritative ACTIVE P6_REQUIREMENT set -
     "the complete set of requirements currently in force", not "a requirement exists". A
@@ -218,6 +234,9 @@ ENFORCED_KINDS: dict[str, Any] = {
 
     # -- project-wide authoritative-set coverage (section 2.10) --
     "REQUIREMENTS": RequirementCoverage(),
+
+    # -- owned by the Trust Runtime, not by any artifact (section 2.7) --
+    "GOLDEN_GATES": GoldenGates(),
 
     # -- a file produced by the work --
     "PATCH": ProjectFile(),
@@ -281,7 +300,6 @@ DEFERRED_KINDS: frozenset[str] = frozenset({
     "COST_MODEL",             # GP-13
     "RUNTIME_STRUCTURE",      # no declared field in P9_GOVERNANCE
     "MEMORY_CONFIGURATION",   # GP-9
-    "GOLDEN_GATES",           # no declared field in P11_GATE_PLAN
 })
 
 
@@ -710,6 +728,58 @@ def _check_requirement_coverage_kind(
                    f"{len(active)} ACTIVE requirement(s) exactly covered: {sorted(active_ids)}")
 
 
+def _check_golden_gates_kind(project: Path, kind: str, spec: GoldenGates, refs: list[str]) -> Verdict:
+    """Section 2.7's exact ordered rule. `refs` is accepted only to match the shared dispatch
+    signature - this kind never resolves against artifacts, so it is never read.
+
+    ARCHITECTURAL DEBT (registered here deliberately, not fixed): nogap.py's cmd_verify and
+    nogap_build._frozen_gate() already select a gate through two DIFFERENT mechanisms (a
+    sorted-glob scan taking the first valid frozen match, vs. a literal "gate-0001.json").
+    They happen to agree today because no production code path ever creates a second gate
+    file - but neither is an authoritative "current gate" selector, and this resolver does
+    not invent one either. It fails closed on ambiguity instead. A shared selector is future
+    hardening/Complete-Mediation work, out of scope here.
+    """
+    from nogap import gate_hash
+    from nogap_verification import expected_effect_from_gate, required_commands_from_gate
+
+    gates_dir = project.resolve() / ".code-loop" / "runtime" / "gates"
+    all_gates: list[dict[str, Any]] = []
+    if gates_dir.is_dir():
+        for path in sorted(gates_dir.glob("*.json")):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if isinstance(data, dict):
+                all_gates.append(data)
+
+    frozen = [g for g in all_gates if g.get("status") == "frozen"]
+
+    if not frozen:
+        return Verdict(kind, MISSING, "no gate with status='frozen' exists in the project")
+
+    if len(frozen) > 1:
+        ids = sorted(str(g.get("id")) for g in frozen)
+        return Verdict(kind, INVALID,
+                       f"ambiguous_authoritative_gate: {len(frozen)} frozen gates exist with no "
+                       f"authoritative selector to choose among them: {ids}")
+
+    candidate = frozen[0]
+    if candidate.get("hash") != gate_hash(candidate):
+        return Verdict(kind, INVALID,
+                       f"gate {candidate.get('id')!r} hash does not match its recomputed payload hash")
+
+    has_binding = bool(required_commands_from_gate(candidate)) or \
+        bool(expected_effect_from_gate(candidate).forbidden_paths)
+    if not has_binding:
+        return Verdict(kind, INVALID,
+                       f"gate {candidate.get('id')!r} declares no actual binding condition "
+                       f"(no required_commands, no forbidden_paths)")
+
+    return Verdict(kind, PASS, f"gate {candidate.get('id')!r} (frozen, hash-valid, binding)")
+
+
 def check_required_kinds(
     project: Path, required_kinds: list[str], artifact_refs: list[str],
 ) -> list[Verdict]:
@@ -749,6 +819,8 @@ def check_required_kinds(
             verdicts.append(_check_review_verdict_kind(project, kind, spec, refs))
         elif isinstance(spec, RequirementCoverage):
             verdicts.append(_check_requirement_coverage_kind(project, kind, spec, refs))
+        elif isinstance(spec, GoldenGates):
+            verdicts.append(_check_golden_gates_kind(project, kind, spec, refs))
         else:  # pragma: no cover - the map is closed and tested
             verdicts.append(Verdict(kind, UNMAPPED, f"unknown resolver class {type(spec)}"))
     return verdicts
