@@ -451,6 +451,13 @@ def cmd_validate(args: argparse.Namespace) -> None:
         provenance = item.get("provenance")
         if not isinstance(provenance, dict):
             raise SystemExit(f"FAIL: evidence {evidence_id} missing provenance")
+        # candidate_hash (G1-A) is optional (unbound/legacy); when present it must be a
+        # sha256 hex digest. Never derived for records that lack it.
+        if "candidate_hash" in provenance and not (
+            isinstance(provenance["candidate_hash"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", provenance["candidate_hash"])
+        ):
+            raise SystemExit(f"FAIL: evidence {evidence_id} has malformed candidate_hash")
         require_string(provenance, "created_by", root / "evidence" / f"{evidence_id}.json")
         require_string(provenance, "created_at", root / "evidence" / f"{evidence_id}.json")
         authority = authority_class(provenance)
@@ -896,7 +903,7 @@ def cmd_run(args: argparse.Namespace) -> None:
     methodology_version = task_contract["methodology_version"] if task_contract else None
     evidence_id, artifact_path = write_isolated_run_evidence(
         root, run_id, result, actor, exec_status, execution_status, reason,
-        evidence_class="execution",
+        evidence_class="execution", candidate_hash=None,
         dispatch_id=dispatch_id, provider=selected["provider"], runtime_id=selected["runtime"],
         task_id=task_id, requirement_refs=requirement_refs, methodology_version=methodology_version,
     )
@@ -945,6 +952,7 @@ def write_isolated_run_evidence(
     *,
     authority: str = "execution",
     evidence_class: str,
+    candidate_hash: str | None,
     kind: str = "execution",
     role: str = "implementer",
     event_type: str = "EXECUTION_COMPLETED",
@@ -1010,6 +1018,8 @@ def write_isolated_run_evidence(
         provenance["runtime"] = runtime_id
     if task_id:
         provenance["task_id"] = task_id
+    if candidate_hash is not None:
+        provenance["candidate_hash"] = candidate_hash
     if requirement_refs:
         provenance["requirement_refs"] = list(requirement_refs)
     if methodology_version:
@@ -1088,7 +1098,7 @@ def cmd_execute(args: argparse.Namespace) -> None:
     exec_status, execution_status, reason = classify_generic_execution(result)
     evidence_id, artifact_path = write_isolated_run_evidence(
         root, run_id, result, args.actor, exec_status, execution_status, reason,
-        evidence_class="execution",
+        evidence_class="execution", candidate_hash=None,
     )
     print(
         f"execution {result.execution_id}: {exec_status} (returncode={result.returncode}) "
@@ -1289,6 +1299,15 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
             if self_check is None:
                 raise _MethodologyValidationError(f"no P14_SELF_CHECK recorded for task {task_id!r}")
             patch_hash_value = self_check["fields"]["patch_hash"]
+            # G1-A guard: the patch being VERIFIED must be the one the latest P14 self-check
+            # hashed, or candidate_hash would name a different patch than the one verified.
+            from nogap_build import patch_hash as _compute_patch_hash
+            verified_patch_hash = _compute_patch_hash(patch)
+            if verified_patch_hash != patch_hash_value:
+                raise _MethodologyValidationError(
+                    f"verified patch hash {verified_patch_hash} does not match latest P14_SELF_CHECK "
+                    f"patch_hash {patch_hash_value} for task {task_id!r}; refusing to bind verification evidence"
+                )
             candidate_hash = vb.compute_candidate_hash(task_id, patch_hash_value)
             depth = vb.derive_verification_depth(project_root)
 
@@ -1345,6 +1364,7 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
         evidence_id, _ = write_isolated_run_evidence(
             root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
             evidence_class=evidence_class,
+            candidate_hash=candidate_hash if methodology_tracked else None,
             authority="verification", kind=kind, role="verifier", event_type="VERIFICATION_COMPLETED",
             dispatch_id=dispatch_id,
             task_id=task_id if methodology_tracked else None,
@@ -1412,7 +1432,7 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
                 kind = "review" if check.check == "effect-scope" else "test"
                 evidence_id, _ = write_isolated_run_evidence(
                     root, run_id, check, args.actor, check.status, check.execution_status, check.reason,
-                    evidence_class="reproducibility",
+                    evidence_class="reproducibility", candidate_hash=candidate_hash,
                     authority="verification", kind=kind, role="verifier", event_type="VERIFICATION_COMPLETED",
                     dispatch_id=dispatch_id, task_id=task_id, requirement_refs=requirement_refs,
                     methodology_version=state["methodology_version"],
@@ -1486,6 +1506,7 @@ def cmd_verify_methodology(args: argparse.Namespace) -> None:
                 evidence_id, _ = write_isolated_run_evidence(
                     root, run_id, check, args.actor, check_status, check_execution_status, check_reason,
                     evidence_class="independent_review",
+                    candidate_hash=candidate_hash if methodology_tracked else None,
                     authority="verification", kind="review", role="verifier", event_type="VERIFICATION_COMPLETED",
                     dispatch_id=dispatch_id, provider=reviewer.id, runtime_id=reviewer.id,
                     task_id=task_id if methodology_tracked else None,
