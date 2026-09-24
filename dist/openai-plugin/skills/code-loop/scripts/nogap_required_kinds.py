@@ -198,6 +198,7 @@ ENFORCED_KINDS: dict[str, Any] = {
     "BASELINE": WholeArtifact("P10_BASELINE"),
     "TASK_CONTRACT": WholeArtifact("P12_TASK_CONTRACT"),
     "VERIFICATION_PLAN": WholeArtifact("P15_VERIFICATION_PLAN"),
+    "SCOPE": WholeArtifact("P1_SCOPE"),
 
     # -- a file produced by the work --
     "PATCH": ProjectFile(),
@@ -258,7 +259,6 @@ def semantic_resolver_agreement_problem(kind: str, name: str) -> str | None:
 #: GP-13, which is independent evidence that this list is a real contract gap rather than an
 #: artifact of how the map was built.
 DEFERRED_KINDS: frozenset[str] = frozenset({
-    "SCOPE",                  # P1_SCOPE declares in_scope/out_of_scope; no field named "scope"
     "PRIOR_ART_MAP",          # P3_PRIOR_ART declares no "map" field
     "REQUIREMENTS",           # plural kind, per-requirement artifacts: coverage rule undecided
     "COST_MODEL",             # GP-13
