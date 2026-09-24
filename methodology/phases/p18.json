@@ -9,6 +9,9 @@
   "required_artifacts": [
     "REVIEW_VERDICT"
   ],
+  "semantic_resolvers": {
+    "REVIEW_VERDICT": "REVIEW_VERDICT_RESOLVER"
+  },
   "required_evidence": [
     "verification_evidence"
   ],

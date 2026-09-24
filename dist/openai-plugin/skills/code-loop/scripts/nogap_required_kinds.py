@@ -165,6 +165,16 @@ class EvidenceBundle:
     """
 
 
+@dataclass(frozen=True)
+class ReviewVerdict:
+    """REVIEW_VERDICT (F2b Rev 2.1 section 2.6/2.6.1): the RC's independent review verdicts,
+    checked pre-freeze at P18->P19 (see nogap_lifecycle.review_verdict_problem's docstring
+    for why this never requires FROZEN/V3, unlike EVIDENCE_BUNDLE). A marker with no fields
+    for the same reason EVIDENCE_BUNDLE has none: the check is composite and owned entirely
+    by nogap_lifecycle.py, not expressible as a single artifact field/type/file/ledger kind.
+    """
+
+
 #: Every mapping below is taken from an actual declaration: an exact field name in
 #: ARTIFACT_TYPES, a type whose name the kind repeats, or a resolver class decided explicitly.
 ENFORCED_KINDS: dict[str, Any] = {
@@ -208,6 +218,9 @@ ENFORCED_KINDS: dict[str, Any] = {
 
     # -- composite: the frozen RC's evidence bundle (section 2.11) --
     "EVIDENCE_BUNDLE": EvidenceBundle(),
+
+    # -- composite: the RC's independent review verdicts, pre-freeze (section 2.6/2.6.1) --
+    "REVIEW_VERDICT": ReviewVerdict(),
 }
 
 
@@ -224,6 +237,7 @@ class SemanticResolverSpec:
 #: and the ENFORCED_KINDS implementation must all agree.
 SEMANTIC_RESOLVERS: dict[str, SemanticResolverSpec] = {
     "EVIDENCE_BUNDLE_RESOLVER": SemanticResolverSpec(kind="EVIDENCE_BUNDLE"),
+    "REVIEW_VERDICT_RESOLVER": SemanticResolverSpec(kind="REVIEW_VERDICT"),
 }
 
 
@@ -253,7 +267,6 @@ DEFERRED_KINDS: frozenset[str] = frozenset({
     "METRICS",                # P10 declares primary_metric/secondary_metrics; coverage unclear
     "GOLDEN_GATES",           # no declared field in P11_GATE_PLAN
     "TEST_PLAN",              # no declared field in P11_GATE_PLAN
-    "REVIEW_VERDICT",         # P18 declares independent_review_result; binding rule undecided
 })
 
 
@@ -588,6 +601,40 @@ def _check_evidence_bundle_kind(
     return Verdict(kind, MISSING, "no resolvable release candidate")
 
 
+def _check_review_verdict_kind(
+    project: Path, kind: str, spec: ReviewVerdict, refs: list[str],
+) -> Verdict:
+    """Delegates entirely to nogap_lifecycle.review_verdict_problem - the owner module for
+    candidate_bindings/RC resolution (mirrors _check_evidence_bundle_kind's use of the same
+    module for the same reason: this file declares WHAT a kind means, not how RC/P18/evidence
+    records are loaded and cross-checked)."""
+    from nogap_lifecycle import _load_one, review_verdict_problem
+    from nogap_methodology import MethodologyValidationError
+
+    problems: list[str] = []
+    for ref in refs:
+        if not isinstance(ref, str) or not ref.strip():
+            continue
+        try:
+            record = _load_one(project, "release_candidates", ref)
+        except MethodologyValidationError as exc:
+            problems.append(f"{ref} will not load: {exc}")
+            continue
+        if record is None:
+            continue
+        try:
+            problem = review_verdict_problem(project, ref)
+        except MethodologyValidationError as exc:
+            problems.append(f"{ref} candidate binding does not resolve: {exc}")
+            continue
+        if problem is None:
+            return Verdict(kind, PASS, f"{ref} (every candidate_bindings P18 carries a valid review verdict)")
+        problems.append(problem)
+    if problems:
+        return Verdict(kind, INVALID, "; ".join(problems))
+    return Verdict(kind, MISSING, "no resolvable release candidate")
+
+
 def check_required_kinds(
     project: Path, required_kinds: list[str], artifact_refs: list[str],
 ) -> list[Verdict]:
@@ -623,6 +670,8 @@ def check_required_kinds(
             verdicts.append(_check_lifecycle_kind(project, kind, spec, refs))
         elif isinstance(spec, EvidenceBundle):
             verdicts.append(_check_evidence_bundle_kind(project, kind, spec, refs))
+        elif isinstance(spec, ReviewVerdict):
+            verdicts.append(_check_review_verdict_kind(project, kind, spec, refs))
         else:  # pragma: no cover - the map is closed and tested
             verdicts.append(Verdict(kind, UNMAPPED, f"unknown resolver class {type(spec)}"))
     return verdicts
