@@ -323,6 +323,8 @@ class PreflightAndPlanTests(VerifyCandidateBuilder):
         result = self.latest_result()
         self.assertEqual(result["fields"]["reproducibility_result"], "SKIPPED_PER_PROFILE_POLICY")
         self.assertEqual(result["fields"]["independent_review_result"], "SKIPPED_PER_PROFILE_POLICY")
+        # T4: skipped-per-profile-policy is not an attempted review.
+        self.assertFalse(result["fields"]["independent_review_performed"])
 
     def test_32_and_33_verifier_and_reviewer_never_write_accept(self) -> None:
         self.freeze_gate()
@@ -369,6 +371,9 @@ class DeterministicAndReproducibilityTests(VerifyCandidateBuilder):
         self.assertEqual(result["status"], "VERIFICATION_FAILED")
         self.assertEqual(result["fields"]["reproducibility_result"], "PENDING")  # never reached
         self.assertEqual(result["fields"]["independent_review_result"], "PENDING")
+        # T1: at creation, before independent review ever runs, the new discriminator
+        # defaults to False - no review has been attempted yet.
+        self.assertFalse(result["fields"]["independent_review_performed"])
 
     def test_15_forbidden_path_violation_remains_failed(self) -> None:
         # The candidate (writer_adapter) always writes marker.txt - declare exactly
@@ -444,6 +449,8 @@ class StandardProfileReproducibilityTests(unittest.TestCase):
         self.assertEqual(result["fields"]["independent_review_result"], "passed")
         self.assertEqual(result["status"], "VERIFICATION_COMPLETE_AWAITING_DECISION")
         self.assertNotEqual(result["fields"]["executor_actor_id"], "agent:claude")
+        # T2: review genuinely ran (and passed) - the discriminator must be True.
+        self.assertTrue(result["fields"]["independent_review_performed"])
 
     def test_19_same_actor_under_renamed_role_rejected(self) -> None:
         self.assertFalse(vb.reviewer_is_independent("agent:codex", "agent:codex"))
@@ -454,6 +461,9 @@ class StandardProfileReproducibilityTests(unittest.TestCase):
         result = self.latest_result()
         self.assertEqual(result["fields"]["independent_review_result"], "inconclusive")
         self.assertEqual(result["status"], "VERIFICATION_INCONCLUSIVE")
+        # T3: required but no reviewer was available - "inconclusive" here is SYNTHETIC,
+        # never backed by an evidence record. The discriminator must say so.
+        self.assertFalse(result["fields"]["independent_review_performed"])
 
     def test_22_malformed_reviewer_verdict_is_inconclusive(self) -> None:
         nogap_adapters.ADAPTERS["claude"] = StubAdapter(
@@ -462,6 +472,10 @@ class StandardProfileReproducibilityTests(unittest.TestCase):
         nogap.cmd_verify_methodology(verify_namespace(str(self.project), review=True))
         result = self.latest_result()
         self.assertEqual(result["fields"]["independent_review_result"], "inconclusive")
+        # The discriminator's whole reason for existing: this "inconclusive" IS
+        # evidence-backed (a reviewer really ran and produced a malformed verdict), unlike
+        # test_21's synthetic never-attempted "inconclusive" of the identical string value.
+        self.assertTrue(result["fields"]["independent_review_performed"])
 
     def test_23_reproducibility_enforced_when_required(self) -> None:
         nogap_adapters.ADAPTERS["claude"] = review_adapter("claude", "pass")
