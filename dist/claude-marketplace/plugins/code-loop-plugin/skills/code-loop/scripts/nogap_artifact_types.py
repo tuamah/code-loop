@@ -140,6 +140,7 @@ ARTIFACT_TYPES: dict[str, dict[str, Any]] = {
             "gate_hash", "methodology_version_at_verification", "profile_at_verification", "task_snapshot_hash",
             "executor_actor_id", "levels_attempted",
             "deterministic_result", "reproducibility_result", "independent_review_result",
+            "independent_review_performed",
         ],
         "profile_required_fields": {},
         "reference_fields": {"requirement_refs": "P6_REQUIREMENT_ID"},
