@@ -188,6 +188,7 @@ ENFORCED_KINDS: dict[str, Any] = {
     "TRUST_BOUNDARIES": ArtifactField("P7_ARCHITECTURE", "trust_boundaries"),
     "STRATEGY_DECISION": ArtifactField("P5_STRATEGY_DECISION", "selected_strategy"),
     "BENCHMARK_PROTOCOL": ArtifactField("P10_BASELINE", "measurement_procedure"),
+    "TEST_PLAN": ArtifactField("P11_GATE_PLAN", "required_tests"),
 
     # -- the kind names the whole artifact; its declared contract is the semantic check --
     "PROJECT_INTENT": WholeArtifact("P0_PROJECT_INTENT"),
@@ -266,7 +267,6 @@ DEFERRED_KINDS: frozenset[str] = frozenset({
     "MEMORY_CONFIGURATION",   # GP-9
     "METRICS",                # P10 declares primary_metric/secondary_metrics; coverage unclear
     "GOLDEN_GATES",           # no declared field in P11_GATE_PLAN
-    "TEST_PLAN",              # no declared field in P11_GATE_PLAN
 })
 
 
