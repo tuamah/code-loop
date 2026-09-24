@@ -163,9 +163,9 @@ class DeclarationResolverAgreementGuard(unittest.TestCase):
 
 
 class PartitionCountsPinned(unittest.TestCase):
-    def test_partition_is_27_enforced_10_deferred_37_declared(self):
-        self.assertEqual(len(rk.ENFORCED_KINDS), 27)
-        self.assertEqual(len(rk.DEFERRED_KINDS), 10)
+    def test_partition_is_28_enforced_9_deferred_37_declared(self):
+        self.assertEqual(len(rk.ENFORCED_KINDS), 28)
+        self.assertEqual(len(rk.DEFERRED_KINDS), 9)
         self.assertEqual(len(rk.declared_required_kinds()), 37)
 
 

@@ -48,8 +48,12 @@ class AgreementGuard(unittest.TestCase):
         self.assertIn(fragment, str(ctx.exception))
 
     def test_t1a_unregistered_name_rejected(self):
+        # Clearing the whole registry makes every phase's declared resolver unregistered at
+        # once (D5 added P18's REVIEW_VERDICT_RESOLVER beside P19's own) - load-time
+        # validation fails on whichever phase it reaches first, so the assertion is on the
+        # generic rejection shape, not a specific phase's resolver name.
         with mock.patch.dict(rk.SEMANTIC_RESOLVERS, clear=True):
-            self.assert_load_rejected("unknown resolver 'EVIDENCE_BUNDLE_RESOLVER'")
+            self.assert_load_rejected("references unknown resolver")
             self.assertIn("unknown resolver",
                           rk.semantic_resolver_agreement_problem("EVIDENCE_BUNDLE", "EVIDENCE_BUNDLE_RESOLVER"))
 
