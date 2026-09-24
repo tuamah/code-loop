@@ -249,13 +249,14 @@ class InterlockFixture(unittest.TestCase):
         init_git_repo(self.project)
         init_project(self.project, *self.profile_args, actor="test")
         self.chain = build_p0_p11_chain(self.project, p7_extra=self.p7_extra, objective="interlock fixture")
+        from methodology_fixture_builder import freeze_gate_before_build
+        freeze_gate_before_build(self.project)
         self.contract = make_task_contract(self.project, self.chain)
 
         self._original_adapters = dict(nogap_adapters.ADAPTERS)
         nogap_adapters.ADAPTERS.clear()
         nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.contract["fields"]["task_id"]))
-        run_script("freeze", str(self.project))
 
     def tearDown(self) -> None:
         nogap_adapters.ADAPTERS.clear()
@@ -396,6 +397,8 @@ class LightSkipSatisfiesPreconditionTests(unittest.TestCase):
             init_git_repo(project)
             init_project(project, "research", "low", "low", actor="test")  # LIGHT
             chain = build_p0_p11_chain(project, objective="light skip precondition")
+            from methodology_fixture_builder import freeze_gate_before_build
+            freeze_gate_before_build(project)
             contract = make_task_contract(project, chain)
 
             original_adapters = dict(nogap_adapters.ADAPTERS)
@@ -403,7 +406,6 @@ class LightSkipSatisfiesPreconditionTests(unittest.TestCase):
             nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
             try:
                 nogap.cmd_run(run_namespace(str(project), execute=True, task_id=contract["fields"]["task_id"]))
-                run_script("freeze", str(project))
                 nogap.cmd_verify_methodology(verify_namespace(str(project), review=False))
 
                 result = list_artifacts(project, artifact_type="P18_VERIFICATION_RESULT")[-1]

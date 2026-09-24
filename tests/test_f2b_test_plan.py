@@ -3,9 +3,11 @@
 Concrete source: P11_GATE_PLAN.required_tests, already a required_field on that artifact
 type - validate_record already enforces it non-empty, so TEST_PLAN = ArtifactField(
 "P11_GATE_PLAN", "required_tests") is the same shape D3's BENCHMARK_PROTOCOL already
-established for a field-name mismatch. P11 also declares GOLDEN_GATES on the SAME artifact
-type; GOLDEN_GATES stays DEFERRED, and check_required_kinds's independence invariant means
-this never depends on GOLDEN_GATES having a decided meaning.
+established for a field-name mismatch. P11 also declares GOLDEN_GATES; GOLDEN_GATES was
+DEFERRED when this file was first written and is now ENFORCED too (Rev 2.1 sec 2.7, owned
+by the Trust Runtime, never by P11_GATE_PLAN) - check_required_kinds's independence
+invariant means the two are still resolved from entirely disjoint sources and neither
+kind's outcome depends on the other's.
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ sys.path.insert(0, str(ROOT / "tests"))
 import nogap_artifacts as na                                                 # noqa: E402
 import nogap_methodology as nm                                               # noqa: E402
 import nogap_required_kinds as rk                                            # noqa: E402
+from methodology_fixture_builder import freeze_gate_before_build             # noqa: E402
 from nogap_methodology import can_transition                                 # noqa: E402
 
 
@@ -89,8 +92,8 @@ class TestPlanEnforced(unittest.TestCase):
         deferred = set(rk.DEFERRED_KINDS)
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
-        self.assertEqual(len(enforced), 33)
-        self.assertEqual(len(deferred), 4)
+        self.assertEqual(len(enforced), 34)
+        self.assertEqual(len(deferred), 3)
 
     # -- T1: a real, valid required_tests resolves, VALIDATES, transition allowed -----
 
@@ -100,6 +103,9 @@ class TestPlanEnforced(unittest.TestCase):
         self.assertEqual(verdict.status, rk.PASS)
         self.assertEqual(verdict.outcome, rk.VALIDATED)
         self.assertFalse(verdict.blocks_transition)
+        # F2b GOLDEN_GATES is enforced too now: the real transition also needs a real
+        # frozen, bound gate (freeze before BUILD, per the documented lifecycle).
+        freeze_gate_before_build(self.project)
         self.assertTrue(self.forward("P11", [ref])["allowed"])
 
     # -- T2: MISSING - ref does not resolve at all --
@@ -148,22 +154,39 @@ class TestPlanEnforced(unittest.TestCase):
         self.assertEqual(verdict.status, rk.STALE)
         self.assertTrue(verdict.blocks_transition)
 
-    # -- independence from GOLDEN_GATES: same artifact, one kind decided, one still deferred --
+    # -- independence from GOLDEN_GATES: both are now ENFORCED, on the same P11 phase, but
+    #    resolved from entirely disjoint sources (P11_GATE_PLAN.required_tests vs. the
+    #    runtime's own frozen gate) - each must validate/reject on its own terms, never as
+    #    a side effect of the other's state. --
 
-    def test_independent_of_golden_gates_which_stays_deferred(self):
+    def test_test_plan_valid_independent_of_golden_gates_state(self):
         ref = self.chain["P11"]["artifact_id"]
+        # GOLDEN_GATES not yet satisfiable (no frozen gate at all) - TEST_PLAN must still
+        # resolve correctly on its own required_tests field, unaffected.
         found = self.verdicts("P11", [ref])
         self.assertEqual(found["TEST_PLAN"].outcome, rk.VALIDATED)
-        self.assertEqual(found["GOLDEN_GATES"].status, rk.DEFERRED)
-        self.assertEqual(found["GOLDEN_GATES"].outcome, rk.DEFERRED_OUTCOME)
-        self.assertFalse(found["GOLDEN_GATES"].blocks_transition)
-        # TEST_PLAN being satisfied does not depend on GOLDEN_GATES, and the transition is
-        # not blocked by GOLDEN_GATES remaining undecided.
-        self.assertTrue(self.forward("P11", [ref])["allowed"])
+        self.assertEqual(found["GOLDEN_GATES"].status, rk.MISSING)
+        # TEST_PLAN alone does not unblock the real transition - GOLDEN_GATES still does,
+        # independently.
+        self.assertFalse(self.forward("P11", [ref])["allowed"])
 
-    def test_golden_gates_still_deferred(self):
-        self.assertIn("GOLDEN_GATES", rk.DEFERRED_KINDS)
-        self.assertNotIn("GOLDEN_GATES", rk.ENFORCED_KINDS)
+    def test_golden_gates_valid_independent_of_test_plan_state(self):
+        ref = self.chain["P11"]["artifact_id"]
+        self.rewrite(ref, required_tests=[])  # break TEST_PLAN specifically
+        freeze_gate_before_build(self.project)  # satisfy GOLDEN_GATES specifically
+        found = self.verdicts("P11", [ref])
+        self.assertEqual(found["TEST_PLAN"].status, rk.INVALID)
+        self.assertEqual(found["GOLDEN_GATES"].outcome, rk.VALIDATED)
+        # GOLDEN_GATES being satisfied does not paper over TEST_PLAN's own failure - the
+        # transition stays blocked, and for the right reason.
+        result = self.forward("P11", [ref])
+        self.assertFalse(result["allowed"])
+        self.assertTrue(any("TEST_PLAN" in r for r in result["blocked_reasons"]))
+
+    def test_golden_gates_no_longer_deferred(self):
+        self.assertIn("GOLDEN_GATES", rk.ENFORCED_KINDS)
+        self.assertNotIn("GOLDEN_GATES", rk.DEFERRED_KINDS)
+        self.assertIsInstance(rk.ENFORCED_KINDS["GOLDEN_GATES"], rk.GoldenGates)
 
 
 if __name__ == "__main__":

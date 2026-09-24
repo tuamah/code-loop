@@ -163,6 +163,11 @@ class FixtureBuilder:
             made = self._artifact_for(phase_id)
             if made:
                 artifact_refs.append(made)
+            if phase_id == "P11":
+                # F2b GOLDEN_GATES: leaving P11 now requires a real frozen, bound gate -
+                # the documented lifecycle freezes gates before BUILD, not after, so this
+                # must happen here, before the P11->P12 transition this obligation feeds.
+                self.ensure_gate()
 
         # Once a runtime ledger exists, every evidence ref is resolved against it, so the
         # fixture cites a real record rather than a placeholder that would now be rejected.
@@ -243,8 +248,55 @@ class FixtureBuilder:
         return state
 
 
+#: F2b GOLDEN_GATES (Rev 2.1 sec 2.7): a frozen gate with no required_commands and no
+#: forbidden_paths declares no actual binding condition. "secrets.env" is the exact
+#: forbidden_paths value every P11_GATE_PLAN fixture in this test suite already declares
+#: (build_p0_p11_chain in test_methodology_build.py and test_methodology_verify.py, and
+#: _FIELDS["P11_GATE_PLAN"] below) - using it here means the gate's own binding condition
+#: always matches the plan, so freezing early never creates a NEW gate_alignment_reasons()
+#: mismatch. forbidden_paths (not required_commands) is deliberate: it runs no command, so
+#: it cannot add side effects, flakiness, or an extra "deterministic" evidence record to
+#: fixtures that specifically test the presence/absence of required_commands.
+_DEFAULT_GATE_BINDING_PATH = "secrets.env"
+
+
+def freeze_gate_before_build(project: Path) -> None:
+    """Freezes the project's Trust gate with a real binding condition BEFORE BUILD is
+    entered - matching the documented lifecycle (docs/nogapcode-runtime.md: "freeze gates
+    -> plan -> dispatch implementer"), which is also the order F2b's GOLDEN_GATES now
+    enforces structurally (P11's required_artifacts). cmd_freeze itself never reads
+    anything from P12-P14 or later (verified before this fix), so nothing here waits on
+    build/candidate state either - only the gate's own rules, decided at/after `nogap
+    init`, need to be real before this runs.
+
+    Mutates the DRAFT gate's rules IN PLACE, before the real `nogap freeze` CLI call -
+    never after, since freezing locks the hash to whatever content was actually there.
+    Idempotent: a no-op if the gate is already frozen, or already declares a real binding
+    condition.
+    """
+    import subprocess
+    import sys as _sys
+
+    gate_path = project.resolve() / ".code-loop" / "runtime" / "gates" / "gate-0001.json"
+    if not gate_path.is_file():
+        return  # no Trust runtime yet at this project - nothing to freeze
+    gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    if gate.get("status") == "frozen":
+        return
+    rules = gate.setdefault("rules", {})
+    if not rules.get("required_commands") and not rules.get("forbidden_paths"):
+        rules["forbidden_paths"] = [_DEFAULT_GATE_BINDING_PATH]
+    gate_path.write_text(json.dumps(gate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    root = Path(__file__).resolve().parents[1]
+    done = subprocess.run(
+        [_sys.executable, str(root / "scripts" / "nogap.py"), "freeze", str(project)],
+        capture_output=True, text=True)
+    assert done.returncode == 0, f"freeze failed: {done.stdout}{done.stderr}"
+
+
 def _ensure_frozen_gate(builder: "FixtureBuilder") -> str:
-    """Initialize the real Trust runtime and freeze a real gate; return ITS hash.
+    """Initialize the real Trust runtime and freeze a real, bound gate; return ITS hash.
 
     P18_VERIFICATION_RESULT requires a non-empty gate_hash, and readiness compares that
     value against the live frozen gate. With no Trust runtime there is no frozen gate, so any
@@ -267,13 +319,13 @@ def _ensure_frozen_gate(builder: "FixtureBuilder") -> str:
 
     root = Path(__file__).resolve().parents[1]
     runtime = builder.project.resolve() / ".code-loop" / "runtime"
-    argvs = [["freeze", str(builder.project)]]
     if not (runtime / "run.json").is_file():
-        argvs.insert(0, ["init", str(builder.project), "--objective", "fixture"])
-    for argv in argvs:
-        done = subprocess.run([_sys.executable, str(root / "scripts" / "nogap.py"), *argv],
-                              capture_output=True, text=True)
-        assert done.returncode == 0, f"{argv[0]} failed: {done.stdout}{done.stderr}"
+        done = subprocess.run(
+            [_sys.executable, str(root / "scripts" / "nogap.py"), "init", str(builder.project),
+             "--objective", "fixture"],
+            capture_output=True, text=True)
+        assert done.returncode == 0, f"init failed: {done.stdout}{done.stderr}"
+    freeze_gate_before_build(builder.project)
     gate = _frozen_gate(builder.project)
     assert gate and gate.get("hash"), "freeze did not produce a hashed gate"
     return gate["hash"]

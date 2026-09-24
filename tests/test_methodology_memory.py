@@ -233,6 +233,8 @@ class MemoryFixture(unittest.TestCase):
         init_git_repo(self.project)
         init_project(self.project, *self.profile_args, actor="test")
         self.chain = build_p0_p11_chain(self.project, objective="memory fixture")
+        from methodology_fixture_builder import freeze_gate_before_build
+        freeze_gate_before_build(self.project)
         self.contract = make_task_contract(self.project, self.chain)
         self.task_id = self.contract["fields"]["task_id"]
 
@@ -240,7 +242,6 @@ class MemoryFixture(unittest.TestCase):
         nogap_adapters.ADAPTERS.clear()
         nogap_adapters.ADAPTERS["codex"] = writer_adapter("codex")
         nogap.cmd_run(run_namespace(str(self.project), execute=True, task_id=self.task_id))
-        run_script("freeze", str(self.project))
         nogap.cmd_verify_methodology(verify_namespace(str(self.project)))
         self.assertEqual(mstatus(self.project)["current_phase"], "P18")
         self.exec_evidence_id = next((self.project / ".code-loop" / "runtime" / "evidence").glob("evidence-exec-*.json")).stem
