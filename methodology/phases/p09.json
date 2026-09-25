@@ -7,15 +7,14 @@
   ],
   "required_artifacts": [
     "GOVERNANCE",
-    "RUNTIME_STRUCTURE",
-    "MEMORY_CONFIGURATION"
+    "RUNTIME_STRUCTURE"
   ],
   "required_evidence": [],
   "required_roles": [
     "human_owner"
   ],
   "exit_gate": {
-    "description": "Roles, runtime structure, and project memory configuration are set up before baselining.",
+    "description": "Roles and runtime structure are set up before baselining. Project memory (GP-9) is a build-level capability owned by nogap_memory.py, not a per-project configuration this phase gates - see methodology/enforcement.json.",
     "checks": [
       "governance_defines_acceptance_authority",
       "runtime_structure_initialized"
