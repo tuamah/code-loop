@@ -131,6 +131,25 @@ class FixtureBuilder:
         self.artifacts[phase_id] = record
         return record["artifact_id"]
 
+    def _artifacts_for(self, phase_id: str) -> list[str]:
+        """Create every artifact type PHASE_TO_ARTIFACT_TYPES declares for phase_id (D6-PRE-B).
+
+        The explicit multi-owner path _artifact_for's own docstring points to. Works for
+        single-owner and no-owner phases too (returns a 1-element or empty list), so callers
+        that don't yet know whether a phase is multi-owner can use this unconditionally.
+        """
+        from nogap_artifacts import PHASE_TO_ARTIFACT_TYPES
+
+        artifact_ids: list[str] = []
+        for artifact_type in PHASE_TO_ARTIFACT_TYPES.get(phase_id, ()):
+            extra = {"status": "VERIFICATION_COMPLETE_AWAITING_DECISION"} if (
+                artifact_type == "P18_VERIFICATION_RESULT") else {}
+            record = create_artifact(self.project, artifact_type,
+                                     _FIELDS[artifact_type](self), actor=self.actor, **extra)
+            self.artifacts[phase_id] = record
+            artifact_ids.append(record["artifact_id"])
+        return artifact_ids
+
     # -- what a phase owes to be left forward ---------------------------------------------
 
     def _lifecycle_for(self, phase_id: str) -> list[str]:
@@ -172,9 +191,7 @@ class FixtureBuilder:
         elif phase_id in {"P19", "P20", "P21"}:
             artifact_refs.extend(self._lifecycle_for(phase_id))
         else:
-            made = self._artifact_for(phase_id)
-            if made:
-                artifact_refs.append(made)
+            artifact_refs.extend(self._artifacts_for(phase_id))
             if phase_id == "P11":
                 # F2b GOLDEN_GATES: leaving P11 now requires a real frozen, bound gate -
                 # the documented lifecycle freezes gates before BUILD, not after, so this
@@ -422,6 +439,16 @@ _FIELDS: dict[str, Any] = {
         verification_policy="independent review required",
         human_approval_requirements=["release"],
         adr_refs=[self.artifacts["P8"]["artifact_id"]]),
+    # D6 Rev 3 sec 4.1's minimal valid record: no component/boundary is fabricated to satisfy
+    # any check - every Plane is honestly DOCUMENTED_ONLY, which is exactly what makes the
+    # (otherwise plane-conditional) verifier-independence and plane-coverage invariants
+    # inapplicable rather than violated.
+    "P9_RUNTIME_STRUCTURE": lambda self: dict(
+        components=[], boundaries=[],
+        plane_status={plane: "DOCUMENTED_ONLY" for plane in (
+            "CONTROL_DECISION", "EXECUTION", "TOOL_CAPABILITY",
+            "VERIFICATION_EVIDENCE", "STATE_EVENT", "OBSERVABILITY")},
+        runtime_structure_version="1"),
     "P10_BASELINE": _f(baseline_description="manual process", primary_metric="completion time",
                        secondary_metrics=["error rate"], measurement_procedure="manual timing"),
     "P11_GATE_PLAN": lambda self: dict(

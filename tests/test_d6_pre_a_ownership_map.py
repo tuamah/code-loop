@@ -52,13 +52,19 @@ class OwnershipMapStructure(unittest.TestCase):
             self.assertEqual(len(nat.PHASE_TO_ARTIFACT_TYPES[phase_id]), 1)
             self.assertEqual(nat.PHASE_TO_ARTIFACT_TYPES[phase_id], (artifact_type,))
 
-    def test_legacy_map_omits_no_current_phase_since_none_is_multi_owner_yet(self):
-        # Today (pre-RUNTIME_STRUCTURE) every owned phase_id has exactly one artifact type, so
-        # the legacy map's domain equals the full ownership map's domain. This test pins that
-        # fact so a future PR that silently adds a second P9 artifact type without reading
-        # docs/d6-runtime-structure-contract.md's wiring plan first gets a clear, named failure
-        # here rather than a silent PHASE_TO_ARTIFACT_TYPE[phase_id] KeyError somewhere else.
-        self.assertEqual(set(nat.PHASE_TO_ARTIFACT_TYPE.keys()), set(nat.PHASE_TO_ARTIFACT_TYPES.keys()))
+    def test_legacy_map_omits_exactly_the_known_multi_owner_phases(self):
+        # D6-PRE-B made P9 genuinely multi-owner (P9_GOVERNANCE + P9_RUNTIME_STRUCTURE) - this
+        # test pins that P9 is deliberately absent from the legacy map now, and that it is the
+        # ONLY phase absent, so a future PR that silently adds a second artifact type to any
+        # OTHER phase without reading docs/d6-runtime-structure-contract.md's wiring plan first
+        # still gets a clear, named failure here rather than a silent
+        # PHASE_TO_ARTIFACT_TYPE[phase_id] KeyError somewhere else.
+        multi_owner = {p for p, types in nat.PHASE_TO_ARTIFACT_TYPES.items() if len(types) > 1}
+        self.assertEqual(multi_owner, {"P9"})
+        self.assertEqual(
+            set(nat.PHASE_TO_ARTIFACT_TYPES.keys()) - set(nat.PHASE_TO_ARTIFACT_TYPE.keys()),
+            multi_owner,
+        )
 
     def test_legacy_lookup_on_unknown_phase_fails_closed(self):
         with self.assertRaises(KeyError):
