@@ -184,32 +184,54 @@ class Matrix(unittest.TestCase):
         self.assertEqual(self.verdicts("P13", ["change.patch"])["PATCH"].status, rk.PASS)
 
     # -- DEFERRED ---------------------------------------------------------------------------------
+    #
+    # F2b closed its last item (COST_MODEL, mapped to ArtifactField("P8_ADR", "expected_cost"))
+    # in this same round, so DEFERRED_KINDS is now genuinely empty - no real declared kind stays
+    # in this state any more. The DEFERRED verdict machinery itself is still real production
+    # code (check_required_kinds still has to handle whatever a future declared-but-undecided
+    # kind would produce), so these tests prove it with a synthetic kind added to a real phase
+    # contract and a patched DEFERRED_KINDS, exactly the same technique
+    # test_unmapped_blocks_the_transition already uses for UNMAPPED below - not by calling an
+    # internal branch directly.
 
     def test_deferred_does_not_block_and_never_reads_as_pass(self):
-        """P8 declares ADR (enforced), COST_MODEL (deferred). F2b's METRICS moved P10's own
-        former example, BASELINE(P10)/METRICS, to enforced, so this now uses the next
-        still-deferred kind with an enforced sibling."""
+        definition = nm.load_methodology()
+        phase = definition.get_phase("P8")
+        phase.required_artifacts = list(phase.required_artifacts) + ["A_SYNTHETIC_DEFERRED_KIND"]
         ref = self.chain["P8"]["artifact_id"]
-        found = self.verdicts("P8", [ref])
-        self.assertEqual(found["COST_MODEL"].status, rk.DEFERRED)
-        self.assertEqual(found["COST_MODEL"].outcome, rk.DEFERRED_OUTCOME)
-        self.assertNotEqual(found["COST_MODEL"].status, rk.PASS)
-        self.assertNotEqual(found["COST_MODEL"].outcome, rk.VALIDATED)
-        self.assertFalse(found["COST_MODEL"].blocks_transition)
-        self.assertTrue(self.forward("P8", [ref])["allowed"])
+        with mock.patch.object(nm, "load_methodology", return_value=definition), \
+             mock.patch.object(rk, "DEFERRED_KINDS", frozenset({"A_SYNTHETIC_DEFERRED_KIND"})):
+            found = self.verdicts("P8", [ref])
+            self.assertEqual(found["A_SYNTHETIC_DEFERRED_KIND"].status, rk.DEFERRED)
+            self.assertEqual(found["A_SYNTHETIC_DEFERRED_KIND"].outcome, rk.DEFERRED_OUTCOME)
+            self.assertNotEqual(found["A_SYNTHETIC_DEFERRED_KIND"].status, rk.PASS)
+            self.assertNotEqual(found["A_SYNTHETIC_DEFERRED_KIND"].outcome, rk.VALIDATED)
+            self.assertFalse(found["A_SYNTHETIC_DEFERRED_KIND"].blocks_transition)
+            result = self.forward("P8", [ref])
+        self.assertTrue(result["allowed"])
 
     def test_deferred_is_visible_in_the_report_under_its_own_name(self):
+        definition = nm.load_methodology()
+        phase = definition.get_phase("P8")
+        phase.required_artifacts = list(phase.required_artifacts) + ["A_SYNTHETIC_DEFERRED_KIND"]
         ref = self.chain["P8"]["artifact_id"]
-        phase = nm.load_methodology().get_phase("P8")
-        text = rk.report(rk.check_required_kinds(
-            self.project, list(phase.required_artifacts), [ref]))
-        self.assertIn("COST_MODEL: DEFERRED", text)
+        with mock.patch.object(nm, "load_methodology", return_value=definition), \
+             mock.patch.object(rk, "DEFERRED_KINDS", frozenset({"A_SYNTHETIC_DEFERRED_KIND"})):
+            text = rk.report(rk.check_required_kinds(
+                self.project, list(phase.required_artifacts), [ref]))
+        self.assertIn("A_SYNTHETIC_DEFERRED_KIND: DEFERRED", text)
         self.assertIn("ADR: VALIDATED", text)
+        self.assertIn("COST_MODEL: VALIDATED", text)
 
     def test_a_deferred_kind_cannot_be_satisfied_by_garbage_either(self):
         """DEFERRED is undecided, so it neither blocks nor endorses - and the ENFORCED kinds
         beside it still do their job, which is what keeps the phase honest."""
-        result = self.forward("P10", ["not-an-artifact"])
+        definition = nm.load_methodology()
+        phase = definition.get_phase("P10")
+        phase.required_artifacts = list(phase.required_artifacts) + ["A_SYNTHETIC_DEFERRED_KIND"]
+        with mock.patch.object(nm, "load_methodology", return_value=definition), \
+             mock.patch.object(rk, "DEFERRED_KINDS", frozenset({"A_SYNTHETIC_DEFERRED_KIND"})):
+            result = self.forward("P10", ["not-an-artifact"])
         self.assertFalse(result["allowed"])
         self.assertTrue(any("BASELINE" in r for r in result["blocked_reasons"]))
 
