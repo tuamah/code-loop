@@ -297,13 +297,19 @@ def semantic_resolver_agreement_problem(kind: str, name: str) -> str | None:
     return None
 
 #: Declared by the methodology, semantics NOT yet decided. Enumerated, versioned and tested.
-#: Each becomes an ENFORCED entry in F2b; none is guessed at in the meantime. Two of them are
-#: already on the roadmap under their own names: MEMORY_CONFIGURATION is GP-9 and COST_MODEL is
-#: GP-13, which is independent evidence that this list is a real contract gap rather than an
-#: artifact of how the map was built.
+#: Each becomes an ENFORCED entry in F2b; none is guessed at in the meantime. COST_MODEL is
+#: already on the roadmap under its own name, GP-13, which is independent evidence that this
+#: list is a real contract gap rather than an artifact of how the map was built.
+#:
+#: MEMORY_CONFIGURATION (GP-9) was here until MEMORY-CONFIG-CLASSIFICATION-PRE traced it to its
+#: origin: the single commit that transcribed all of P0-P23 from an external methodology
+#: template (methodology/phases/p09.json's own history), never designed against nogap_memory.py
+#: (which did not exist yet at that point) and never consumed by any test or resolver as a
+#: per-project obligation. GP-9 itself is real and stays tracked in methodology/enforcement.json
+#: as a PARTIAL capability owned by nogap_memory.py - but nothing about it is project-configurable
+#: today, so it was removed from P9.required_artifacts rather than given an invented resolver.
 DEFERRED_KINDS: frozenset[str] = frozenset({
     "COST_MODEL",             # GP-13
-    "MEMORY_CONFIGURATION",   # GP-9
 })
 
 
