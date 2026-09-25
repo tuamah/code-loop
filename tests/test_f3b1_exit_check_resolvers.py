@@ -64,15 +64,21 @@ class RegistryScope(unittest.TestCase):
     (F3-B2) = 23. P5/P8 remain the only UNIMPLEMENTED DIRECT_COMPOSITION rows, still blocked
     on their own wording fixes."""
 
-    def test_registry_loads_and_exactly_23_rows_are_implemented(self):
+    def test_registry_loads_and_exactly_27_rows_are_implemented(self):
+        # 23 F3-B (F3-B1's 21 + F3-B2's 2) + 4 F3-D1 SMALL_BINDING rows (P6/P7/P9/P19).
+        # See tests/test_f3d1_small_binding_resolvers.py for F3-D1's own dedicated coverage.
         registry = er.load_registry()
         self.assertEqual(len(registry), 50)
         implemented = {k for k, v in registry.items() if v.implementation_status == er.IMPLEMENTED}
-        self.assertEqual(len(implemented), 23)
+        self.assertEqual(len(implemented), 27)
         for key in implemented:
             entry = registry[key]
-            self.assertEqual(entry.classification, er.DIRECT_COMPOSITION)
-            self.assertEqual(entry.resolver_id, entry.planned_resolver_id)
+            self.assertIn(entry.classification, (er.DIRECT_COMPOSITION, er.SMALL_BINDING))
+            if entry.classification == er.DIRECT_COMPOSITION:
+                self.assertEqual(entry.resolver_id, entry.planned_resolver_id)
+            else:
+                # F3-A/F3-D micro-repair: SMALL_BINDING never carries planned_resolver_id.
+                self.assertIsNone(entry.planned_resolver_id)
             self.assertEqual(entry.semantic_source, entry.resolver_id)
             self.assertIsNone(entry.unimplemented_reason)
             self.assertIsNone(entry.blocked_by)
@@ -115,9 +121,10 @@ class RegistryScope(unittest.TestCase):
             self.assertIsNone(entry.unimplemented_reason, key)
             self.assertIsNone(entry.blocked_by, key)
 
-    def test_exactly_19_unique_resolvers_bound(self):
-        # 18 (F3-B1) + 1 shared lifecycle:transition_history (F3-B2, serves both P13 and P14).
-        self.assertEqual(len(er.RESOLVERS), 19)
+    def test_exactly_23_unique_resolvers_bound(self):
+        # 18 (F3-B1) + 1 shared lifecycle:transition_history (F3-B2, serves P13 and P14) +
+        # 4 F3-D1 SMALL_BINDING resolvers (P6/P7/P9/P19).
+        self.assertEqual(len(er.RESOLVERS), 23)
 
 
 class P0ThroughP11Fixture(unittest.TestCase):
@@ -226,9 +233,6 @@ class RequiredArtifactFieldResolvers(P0ThroughP11Fixture):
             self.assert_negative(phase, check)
         finally:
             self._restore(artifact_id, original)
-        # WRONG_TYPE: the phase has no P1_SCOPE at all -> MISSING via an empty type filter
-        entry = self._entry("P6", "requirements_have_stable_ids_req_prefix")  # sanity: not IMPLEMENTED
-        self.assertIsNone(entry.resolver_id)
 
     def test_scope_in_and_out_positive_negative(self):
         artifact_id = self.chain["P1"]["artifact_id"]

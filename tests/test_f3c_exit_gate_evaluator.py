@@ -136,11 +136,13 @@ class DerivedFields(unittest.TestCase):
         self.assertFalse(evaluation.all_implemented)
         self.assertFalse(evaluation.all_passed)
 
-    def test_p6_small_binding_row_has_no_blocked_by_in_detail(self):
-        # requirements_have_stable_ids_req_prefix (SMALL_BINDING/NOT_BOUND) never carries
-        # blocked_by (§6 invariant 9) - detail must not fabricate one.
-        evaluation = er.evaluate_exit_gate(self.project, "P6")
-        row = next(r for r in evaluation.results if r.check_name == "requirements_have_stable_ids_req_prefix")
+    def test_p22_small_binding_row_has_no_blocked_by_in_detail(self):
+        # improvement_proposal_cites_evidence (SMALL_BINDING/NOT_BOUND, still unimplemented -
+        # F3-D2's own future scope) never carries blocked_by (§6 invariant 9) - detail must
+        # not fabricate one. (P6/P7/P9/P19's SMALL_BINDING rows are IMPLEMENTED now - F3-D1 -
+        # see tests/test_f3d1_small_binding_resolvers.py for their own coverage.)
+        evaluation = er.evaluate_exit_gate(self.project, "P22")
+        row = next(r for r in evaluation.results if r.check_name == "improvement_proposal_cites_evidence")
         self.assertEqual(row.status, er.UNIMPLEMENTED_RESULT)
         self.assertIn("NOT_BOUND", row.detail)
         self.assertNotIn("blocked_by", row.detail)

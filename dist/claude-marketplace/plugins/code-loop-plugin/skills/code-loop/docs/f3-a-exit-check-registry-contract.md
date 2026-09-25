@@ -103,16 +103,18 @@ RegistryEntry:
                                 # so also null for every row at F3-A freeze.
   planned_resolver_id: str | null   # REPAIR (third REPAIR round), NEW: required iff
                                 # classification == DIRECT_COMPOSITION, regardless of
-                                # implementation_status; null for every other classification.
-                                # Records the namespaced identifier (§4) that §4.4's mapping
-                                # proof already established as this check's authoritative
-                                # source - what resolver_id BECOMES the moment F3-B/F3-D binds
-                                # and flips the row to IMPLEMENTED. This is what lets the
-                                # registry state "the mechanism is known" and "no resolver
-                                # exists yet" simultaneously without conflating the two: a
-                                # DIRECT_COMPOSITION row's planned_resolver_id is filled in at
-                                # F3-A freeze from real code (§4.4); its resolver_id stays null
-                                # until F3-B actually builds and tests the adapter.
+                                # implementation_status; null for EVERY other classification,
+                                # SMALL_BINDING included (F3-A/F3-D micro-repair, below -
+                                # SMALL_BINDING never uses this field, at any point in its
+                                # life). Records the namespaced identifier (§4) that §4.4's
+                                # mapping proof already established as this check's
+                                # authoritative source - what resolver_id BECOMES the moment
+                                # F3-B binds and flips the row to IMPLEMENTED. This is what
+                                # lets the registry state "the mechanism is known" and "no
+                                # resolver exists yet" simultaneously without conflating the
+                                # two: a DIRECT_COMPOSITION row's planned_resolver_id is filled
+                                # in at F3-A freeze from real code (§4.4); its resolver_id
+                                # stays null until F3-B actually builds and tests the adapter.
   unimplemented_reason: NOT_BOUND | NO_REPRESENTATION | WORDING_CONFLICT | SCOPE_MISMATCH
                        | RESOLVER_PENDING | null
                                 # required iff UNIMPLEMENTED (i.e. every row at F3-A freeze).
@@ -593,16 +595,30 @@ anywhere in the registry-loading logic, only a normal `unimplemented_reason` +
     a project resolver, by definition - §2). `obligation_scope: PROJECT` permits any
     `implementation_status`/`unimplemented_reason` combination otherwise valid under
     invariants 5, 6, and 9.
-11. **`planned_resolver_id` consistency (REPAIR, third REPAIR round, new)**: `planned_
-    resolver_id` is non-null if and only if `classification: DIRECT_COMPOSITION`; null for
-    every other classification. When a row's `implementation_status` is `IMPLEMENTED`,
-    `resolver_id` MUST equal `planned_resolver_id` exactly - flipping a row to `IMPLEMENTED`
-    binds the resolver already named at F3-A freeze time (§4.4, §9); it never introduces a
-    different mapping at flip time. A row whose `classification` is not `DIRECT_COMPOSITION`
-    can never become `IMPLEMENTED` via this path - `SMALL_BINDING`/`NO_REPRESENTATION` rows
-    are designed and given a fresh `resolver_id` directly by F3-D/F3-E, with no `planned_
-    resolver_id` precursor, since no pre-existing authoritative mechanism was found for them.
-12. **`classification` / `unimplemented_reason` consistency (REPAIR, fourth REPAIR round,
+11. **`planned_resolver_id` consistency (REPAIR, third REPAIR round, new; scope narrowed by
+    the F3-A/F3-D micro-repair below)**: `planned_resolver_id` is non-null if and only if
+    `classification: DIRECT_COMPOSITION`; null for every other classification, `SMALL_
+    BINDING` explicitly included - a `SMALL_BINDING` row NEVER carries `planned_resolver_id`,
+    at any point in its life, not even after F3-D implements it (invariant 12 governs that
+    row's own `resolver_id`, once F3-D binds one).
+    When a `DIRECT_COMPOSITION` row's
+    `implementation_status` is `IMPLEMENTED`, `resolver_id` MUST equal `planned_resolver_id`
+    exactly - flipping to `IMPLEMENTED` binds the resolver already named at F3-A freeze time
+    (§4.4, §9); it never introduces a different mapping at flip time.
+12. **`SMALL_BINDING` implementation transition (NEW, F3-A/F3-D micro-repair)**: a
+    `SMALL_BINDING` row carries no precursor field at all - it never has a "planned" resolver,
+    unlike `DIRECT_COMPOSITION` (invariant 11). It transitions directly, once F3-D has designed
+    and bound a real resolver for that specific row: while `implementation_status` is
+    `UNIMPLEMENTED`, `resolver_id` MUST be null, `semantic_source` MUST be null, and
+    `unimplemented_reason` MUST be `NOT_BOUND`; once `implementation_status` is `IMPLEMENTED`,
+    `resolver_id` MUST be non-null, `semantic_source` MUST equal `resolver_id` exactly, and
+    `unimplemented_reason` MUST be null. `planned_resolver_id` stays null in both states
+    (invariant 11) - implementation never retroactively grants a SB row a "planned" precursor
+    it never had. A row whose `classification` is
+    `NO_REPRESENTATION` can never become `IMPLEMENTED` via either path - it is designed and
+    given a resolver directly by F3-E under its own future naming, out of this invariant's
+    scope until that contract repair defines it.
+13. **`classification` / `unimplemented_reason` consistency (REPAIR, fourth REPAIR round,
     new)**: the canonical manifest (§9) already fixes exactly one legal `unimplemented_reason`
     per `classification` while `implementation_status == UNIMPLEMENTED`; this invariant makes
     the loader enforce that fact instead of trusting the manifest as documentation only:
@@ -715,8 +731,11 @@ Legend: **DC** = `DIRECT_COMPOSITION` (→ at freeze: `implementation_status: UN
 `unimplemented_reason: RESOLVER_PENDING` for 23 rows / `WORDING_CONFLICT` with a named
 `blocked_by` for the 2 registry-blocked rows (13, 18) - F3-B flips a row to `IMPLEMENTED` with
 `resolver_id == planned_resolver_id`, invariant 11); **SB** = `SMALL_BINDING` (→
-`UNIMPLEMENTED`, `NOT_BOUND`, `PROJECT`, `planned_resolver_id: null` - no pre-existing
-mechanism, F3-D designs a fresh `resolver_id` directly); **NR** = `NO_REPRESENTATION` (→
+`UNIMPLEMENTED`, `NOT_BOUND`, `PROJECT`, `planned_resolver_id: null` always - no pre-existing
+mechanism; F3-D designs a fresh predicate and binds it directly as this row's own
+`resolver_id`, flipping the row to `IMPLEMENTED` with `semantic_source == resolver_id`,
+invariant 12 - see "Post-F3-A implementation status" below for which rows have been bound
+since this freeze); **NR** = `NO_REPRESENTATION` (→
 `UNIMPLEMENTED`, `NO_REPRESENTATION`, `PROJECT`, `planned_resolver_id: null`); **BI** =
 `BUILD_INVARIANT` (→ `UNIMPLEMENTED`, `SCOPE_MISMATCH`, `BUILD`, `blocked_by: "BUILD-
 INVARIANT-PRE"`, `planned_resolver_id: null`); **CONFLICT** = P23 only (→ `UNIMPLEMENTED`,
@@ -781,4 +800,27 @@ null`).
 `WORDING_CONFLICT` with a named `blocked_by` until their rename lands) · SB = 13 · NR = 8 ·
 BI = 3 · CONFLICT = 1 · **Σ = 50**. **Every row's `implementation_status` is `UNIMPLEMENTED`
 at F3-A freeze - `classification` records what KIND of gap each row has, never whether it
-already runs.**
+already runs.** This table is the frozen F3-A freeze-time manifest and is never edited to
+reflect later implementation - see the section immediately below for what has actually been
+built since.
+
+## Post-F3-A implementation status (updated as F3-B/F3-D/F3-E close batches; §9 above stays
+   frozen at its F3-A freeze-time values)
+
+F3-B (F3-B1 + F3-B2) implemented all 23 `RESOLVER_PENDING` `DIRECT_COMPOSITION` rows - rows
+13 and 18 (P5, P8) remain `UNIMPLEMENTED`/`WORDING_CONFLICT`, registry-blocked on their own
+wording fixes, out of F3-B's scope.
+
+F3-D1 implemented 4 of the 13 `SMALL_BINDING` rows, each via a fresh predicate F3-D designed
+and bound directly as `resolver_id` (never `planned_resolver_id` - §6 invariant 11/12):
+
+| § 9 row | Phase / check | `resolver_id` |
+|---|---|---|
+| 15 | P6 `requirements_have_stable_ids_req_prefix` | `artifact_field:P6_REQUIREMENT.requirement_id_prefix` |
+| 17 | P7 `execution_authority_and_acceptance_authority_are_distinct_identities_or_roles` | `artifact_field:P7_ARCHITECTURE.disjoint_authorities` |
+| 20 | P9 `governance_defines_acceptance_authority` | `artifact_field:P9_GOVERNANCE.authority_assignments.acceptance` |
+| 43 | P19 `known_limitations_recorded` | `lifecycle:release_candidate.known_limitations` |
+
+The other 9 `SMALL_BINDING` rows (14, 34, 36, 37, 38, 45, 46, 48, 49) remain `UNIMPLEMENTED`/
+`NOT_BOUND`, awaiting their own F3-D batches (F3-D2, F3-D3) or dedicated PREs (P14, P15, P20,
+P21) per F3-D-PRE's batching.
