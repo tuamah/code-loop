@@ -218,6 +218,16 @@ ENFORCED_KINDS: dict[str, Any] = {
     "STRATEGY_DECISION": ArtifactField("P5_STRATEGY_DECISION", "selected_strategy"),
     "BENCHMARK_PROTOCOL": ArtifactField("P10_BASELINE", "measurement_procedure"),
     "TEST_PLAN": ArtifactField("P11_GATE_PLAN", "required_tests"),
+    # COST_MODEL-PRE (GP-13): P8's own exit_gate says "covers_at_least_one_dimension", not
+    # "covers every GP-13 dimension" - expected_cost is a real, unconditionally-required field
+    # on P8_ADR today (never in allow_empty_fields, never profile-gated) covering the money/
+    # tokens/compute/time dimension. vendor_lock_in stays out of scope: it is STRICT-only, not
+    # a general-profile obligation, and GP-13's other dimensions (token/provider pricing,
+    # budgets, runtime cost tracking) have zero representation anywhere in this codebase today
+    # (confirmed by survey) - inventing a richer schema for them now would be exactly the kind
+    # of resolver-side invention D6 forbade. A richer cost model is future scope (M10), not
+    # this closure.
+    "COST_MODEL": ArtifactField("P8_ADR", "expected_cost"),
 
     # -- the kind names the whole artifact; its declared contract is the semantic check --
     "PROJECT_INTENT": WholeArtifact("P0_PROJECT_INTENT"),
@@ -297,9 +307,9 @@ def semantic_resolver_agreement_problem(kind: str, name: str) -> str | None:
     return None
 
 #: Declared by the methodology, semantics NOT yet decided. Enumerated, versioned and tested.
-#: Each becomes an ENFORCED entry in F2b; none is guessed at in the meantime. COST_MODEL is
-#: already on the roadmap under its own name, GP-13, which is independent evidence that this
-#: list is a real contract gap rather than an artifact of how the map was built.
+#: Each becomes an ENFORCED entry in F2b, or is reclassified out of the declared set entirely
+#: if a survey finds it was never a real obligation to begin with - none is guessed at in the
+#: meantime. Empty now: F2b's last two items closed this way.
 #:
 #: MEMORY_CONFIGURATION (GP-9) was here until MEMORY-CONFIG-CLASSIFICATION-PRE traced it to its
 #: origin: the single commit that transcribed all of P0-P23 from an external methodology
@@ -308,8 +318,16 @@ def semantic_resolver_agreement_problem(kind: str, name: str) -> str | None:
 #: per-project obligation. GP-9 itself is real and stays tracked in methodology/enforcement.json
 #: as a PARTIAL capability owned by nogap_memory.py - but nothing about it is project-configurable
 #: today, so it was removed from P9.required_artifacts rather than given an invented resolver.
+#:
+#: COST_MODEL (GP-13) was here until COST-MODEL-CLASSIFICATION-PRE found the opposite: a real,
+#: already-required field (P8_ADR.expected_cost, unconditional at every profile) that satisfies
+#: P8's own exit_gate wording ("covers_at_least_one_dimension", never "covers every dimension").
+#: Mapped to ArtifactField("P8_ADR", "expected_cost") - the same field-name-mismatch shape as
+#: TEST_PLAN/BENCHMARK_PROTOCOL, no new artifact type. GP-13's richer dimensions (token/provider
+#: pricing, budgets, runtime cost tracking) have no representation anywhere in this codebase and
+#: stay out of scope (future M10 work) - inventing a schema for them now would have been the
+#: resolver-side invention D6 forbade.
 DEFERRED_KINDS: frozenset[str] = frozenset({
-    "COST_MODEL",             # GP-13
 })
 
 
