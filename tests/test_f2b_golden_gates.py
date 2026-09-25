@@ -60,8 +60,8 @@ class GoldenGatesEnforced(unittest.TestCase):
         deferred = set(rk.DEFERRED_KINDS)
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
-        self.assertEqual(len(enforced), 34)
-        self.assertEqual(len(deferred), 3)
+        self.assertEqual(len(enforced), 35)
+        self.assertEqual(len(deferred), 2)
 
     # -- no gate at all: draft, never frozen -> MISSING --
     def test_no_frozen_gate_missing(self):

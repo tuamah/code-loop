@@ -72,18 +72,25 @@ class OwnershipAndMapping(RuntimeStructureFixtureBase):
             nat.PHASE_TO_ARTIFACT_TYPES["P9"], ("P9_GOVERNANCE", "P9_RUNTIME_STRUCTURE"))
         self.assertNotIn("P9", nat.PHASE_TO_ARTIFACT_TYPE)  # now genuinely multi-owner
 
-    def test_runtime_structure_still_deferred(self):
-        self.assertIn("RUNTIME_STRUCTURE", rk.DEFERRED_KINDS)
-        self.assertNotIn("RUNTIME_STRUCTURE", rk.ENFORCED_KINDS)
+    def test_runtime_structure_now_enforced(self):
+        # F2b RUNTIME_STRUCTURE activation (a separate GO after this file's own D6-PRE-B
+        # schema freeze): the schema this file tests was deliberately frozen and implemented
+        # BEFORE this mapping existed (docs/d6-runtime-structure-contract.md sec 3.1's own
+        # rule) - the resolver mapping itself, and its full MISSING/WRONG_TYPE/STALE/PASS
+        # matrix and real-transition proof, live in tests/test_f2b_runtime_structure.py.
+        self.assertNotIn("RUNTIME_STRUCTURE", rk.DEFERRED_KINDS)
+        self.assertIn("RUNTIME_STRUCTURE", rk.ENFORCED_KINDS)
+        self.assertIsInstance(rk.ENFORCED_KINDS["RUNTIME_STRUCTURE"], rk.WholeArtifact)
+        self.assertEqual(rk.ENFORCED_KINDS["RUNTIME_STRUCTURE"].artifact_type, "P9_RUNTIME_STRUCTURE")
 
-    def test_partition_guard_unaffected(self):
+    def test_partition_guard_holds(self):
         declared = rk.declared_required_kinds()
         enforced = set(rk.ENFORCED_KINDS)
         deferred = set(rk.DEFERRED_KINDS)
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
-        self.assertEqual(len(enforced), 34)
-        self.assertEqual(len(deferred), 3)
+        self.assertEqual(len(enforced), 35)
+        self.assertEqual(len(deferred), 2)
 
 
 class MinimalValidRecord(RuntimeStructureFixtureBase):
@@ -383,48 +390,47 @@ class VerifierIndependenceConditional(RuntimeStructureFixtureBase):
 
 
 class FixtureBuilderIntegration(RuntimeStructureFixtureBase):
-    def test_real_p0_p11_chain_does_not_auto_create_runtime_structure(self):
-        # REPAIR (post-D6-PRE-B): ownership != obligation. The real P0-P11 chain builder
-        # (test_methodology_build.build_p0_p11_chain) creates P9_GOVERNANCE only - it was
-        # never required to create P9_RUNTIME_STRUCTURE, and no longer does (that addition
-        # was reverted). P9_RUNTIME_STRUCTURE can still be created and validated directly
-        # (proven throughout this file) - it is simply not part of the default chain while
-        # RUNTIME_STRUCTURE stays DEFERRED.
+    # F2b RUNTIME_STRUCTURE activation superseded these tests' original premise (written while
+    # the kind was still DEFERRED, to prove ownership != obligation - see D6-PRE-B's own
+    # history). Rewritten to prove the opposite now that the kind is genuinely ENFORCED: the
+    # same _enforced_artifact_types() mechanism that correctly excluded it before now correctly
+    # includes it, and the real chain/readiness path is truly wired end to end, not just at the
+    # schema level this file otherwise tests in isolation.
+
+    def test_real_p0_p11_chain_now_creates_runtime_structure(self):
         import test_methodology_build as chain
         from nogap_artifacts import list_artifacts
 
         chain.build_p0_p11_chain(self.project)
-        self.assertEqual(list_artifacts(self.project, artifact_type="P9_RUNTIME_STRUCTURE"), [])
-        governance = list_artifacts(self.project, artifact_type="P9_GOVERNANCE")
-        self.assertEqual(len(governance), 1)
+        records = list_artifacts(self.project, artifact_type="P9_RUNTIME_STRUCTURE")
+        self.assertEqual(len(records), 1)
+        self.assertEqual(validate_record(self.project, records[0]), [])
 
-    def test_prebuild_readiness_unaffected_by_runtime_structure_absence(self):
-        # The causal test the REPAIR requires: P9 genuinely owns both artifact types, one
-        # exists (P9_GOVERNANCE), the other is absent (P9_RUNTIME_STRUCTURE), and
-        # RUNTIME_STRUCTURE is still DEFERRED => prebuild_readiness must behave exactly as it
-        # did before D6-PRE-B ever existed - no mention of P9_RUNTIME_STRUCTURE anywhere in
-        # its reasons, missing or otherwise.
+    def test_prebuild_readiness_now_blocked_by_runtime_structure_absence(self):
+        # The mirror of D6-PRE-B's own causal test: P9 owns both types, P9_GOVERNANCE exists,
+        # P9_RUNTIME_STRUCTURE is deliberately removed after a real chain build, and
+        # RUNTIME_STRUCTURE is now ENFORCED => prebuild_readiness must report it missing - the
+        # narrowing REPAIR did not disable enforcement, it only stopped enforcing OWNERSHIP.
+        import json
         import test_methodology_build as chain
-        from nogap_artifacts import list_artifacts, prebuild_readiness
+        from nogap_artifacts import artifacts_dir, list_artifacts, prebuild_readiness
 
-        chain.build_p0_p11_chain(self.project)
+        made = chain.build_p0_p11_chain(self.project)
+        rs_id = made["P9_RUNTIME_STRUCTURE"]["artifact_id"]
+        (artifacts_dir(self.project) / f"{rs_id}.json").unlink()
         self.assertEqual(list_artifacts(self.project, artifact_type="P9_RUNTIME_STRUCTURE"), [])
-        self.assertIn("RUNTIME_STRUCTURE", rk.DEFERRED_KINDS)
+        self.assertIn("RUNTIME_STRUCTURE", rk.ENFORCED_KINDS)
 
         result = prebuild_readiness(self.project)
-        self.assertFalse(any("P9_RUNTIME_STRUCTURE" in reason for reason in result["missing"]),
-                         result["missing"])
-        # P9_GOVERNANCE, the one enforced-kind-backed type P9 owns, is still required exactly
-        # as before - the fix narrows requiredness, it does not remove it.
-        self.assertFalse(any("P9 (P9_GOVERNANCE)" in reason for reason in result["missing"]),
-                         result["missing"])
+        self.assertTrue(any("P9 (P9_RUNTIME_STRUCTURE): no artifact recorded" in reason
+                            for reason in result["missing"]), result["missing"])
 
-    def test_enforced_artifact_types_excludes_deferred_runtime_structure(self):
+    def test_enforced_artifact_types_includes_runtime_structure_now_enforced(self):
         from nogap_artifacts import _enforced_artifact_types
 
         enforced_types = _enforced_artifact_types()
         self.assertIn("P9_GOVERNANCE", enforced_types)
-        self.assertNotIn("P9_RUNTIME_STRUCTURE", enforced_types)
+        self.assertIn("P9_RUNTIME_STRUCTURE", enforced_types)
 
     def test_artifact_for_now_raises_on_real_p9(self):
         # No longer simulated (D6-PRE-A's test used a monkeypatch) - P9 is now genuinely
