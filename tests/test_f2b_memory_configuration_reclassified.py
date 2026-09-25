@@ -52,15 +52,20 @@ class MemoryConfigurationReclassified(unittest.TestCase):
             self.assertNotIn("MEMORY_CONFIGURATION", data.get("required_artifacts") or [],
                              f"{path.name} still declares MEMORY_CONFIGURATION")
 
-    def test_partition_guard_holds_at_35_enforced_1_deferred_36_declared(self):
+    def test_partition_guard_holds(self):
+        # At the time this file was written, COST_MODEL was the one remaining deferred kind
+        # (35 enforced / 1 deferred / 36 declared). F2b has since closed COST_MODEL too
+        # (tests/test_f2b_cost_model.py) - the set-equality checks below still hold on their
+        # own terms regardless of that history, only the literal deferred-set pin needed
+        # updating.
         declared = rk.declared_required_kinds()
         enforced = set(rk.ENFORCED_KINDS)
         deferred = set(rk.DEFERRED_KINDS)
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
-        self.assertEqual(len(enforced), 35)
-        self.assertEqual(len(deferred), 1)
-        self.assertEqual(deferred, {"COST_MODEL"})
+        self.assertEqual(len(enforced), 36)
+        self.assertEqual(len(deferred), 0)
+        self.assertEqual(deferred, set())
         self.assertEqual(len(declared), 36)
 
     def test_gp9_untouched_still_partial_owned_by_nogap_memory(self):
