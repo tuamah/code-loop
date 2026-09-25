@@ -231,6 +231,11 @@ ENFORCED_KINDS: dict[str, Any] = {
     "SCOPE": WholeArtifact("P1_SCOPE"),
     "METRICS": WholeArtifact("P10_BASELINE"),
     "PRIOR_ART_MAP": WholeArtifact("P3_PRIOR_ART"),
+    # D6 (docs/d6-runtime-structure-contract.md): the schema was frozen and implemented in
+    # D6-PRE-B (_check_runtime_structure_schema, wired into validate_record) before this
+    # mapping ever existed - _check_artifact_kind already calls validate_record for every
+    # WholeArtifact kind, so no new resolver logic is needed here at all.
+    "RUNTIME_STRUCTURE": WholeArtifact("P9_RUNTIME_STRUCTURE"),
 
     # -- project-wide authoritative-set coverage (section 2.10) --
     "REQUIREMENTS": RequirementCoverage(),
@@ -298,7 +303,6 @@ def semantic_resolver_agreement_problem(kind: str, name: str) -> str | None:
 #: artifact of how the map was built.
 DEFERRED_KINDS: frozenset[str] = frozenset({
     "COST_MODEL",             # GP-13
-    "RUNTIME_STRUCTURE",      # no declared field in P9_GOVERNANCE
     "MEMORY_CONFIGURATION",   # GP-9
 })
 
