@@ -93,7 +93,7 @@ class TestPlanEnforced(unittest.TestCase):
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
         self.assertEqual(len(enforced), 35)
-        self.assertEqual(len(deferred), 2)
+        self.assertEqual(len(deferred), 1)
 
     # -- T1: a real, valid required_tests resolves, VALIDATES, transition allowed -----
 

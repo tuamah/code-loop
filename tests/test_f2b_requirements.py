@@ -63,7 +63,7 @@ class RequirementsEnforced(unittest.TestCase):
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
         self.assertEqual(len(enforced), 35)
-        self.assertEqual(len(deferred), 2)
+        self.assertEqual(len(deferred), 1)
 
     # -- rule: single active requirement, exactly covered -> PASS --
     def test_single_active_exactly_covered_passes(self):

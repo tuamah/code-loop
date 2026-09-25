@@ -90,7 +90,7 @@ class OwnershipAndMapping(RuntimeStructureFixtureBase):
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
         self.assertEqual(len(enforced), 35)
-        self.assertEqual(len(deferred), 2)
+        self.assertEqual(len(deferred), 1)
 
 
 class MinimalValidRecord(RuntimeStructureFixtureBase):
