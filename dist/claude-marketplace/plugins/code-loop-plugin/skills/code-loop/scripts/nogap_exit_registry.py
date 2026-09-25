@@ -176,11 +176,13 @@ MANIFEST: tuple[dict[str, Any], ...] = (
      "classification": DIRECT_COMPOSITION, "obligation_scope": PROJECT,
      "planned_resolver_id": "artifact_field:P5_STRATEGY_DECISION.reason"},
     {"phase_id": "P6", "check_name": "requirements_have_stable_ids_req_prefix",
-     "classification": SMALL_BINDING, "obligation_scope": PROJECT},
+     "classification": SMALL_BINDING, "obligation_scope": PROJECT,
+     "resolver_id": "artifact_field:P6_REQUIREMENT.requirement_id_prefix"},
     {"phase_id": "P6", "check_name": "critical_requirements_link_acceptance_criterion_and_planned_test",
      "classification": NO_REPRESENTATION, "obligation_scope": PROJECT},
     {"phase_id": "P7", "check_name": "execution_authority_and_acceptance_authority_are_distinct_identities_or_roles",
-     "classification": SMALL_BINDING, "obligation_scope": PROJECT},
+     "classification": SMALL_BINDING, "obligation_scope": PROJECT,
+     "resolver_id": "artifact_field:P7_ARCHITECTURE.disjoint_authorities"},
     {"phase_id": "P8", "check_name": "adr_records_reason",
      "classification": DIRECT_COMPOSITION, "obligation_scope": PROJECT,
      "planned_resolver_id": "required_kind:ADR"},
@@ -188,7 +190,8 @@ MANIFEST: tuple[dict[str, Any], ...] = (
      "classification": DIRECT_COMPOSITION, "obligation_scope": PROJECT,
      "planned_resolver_id": "required_kind:COST_MODEL"},
     {"phase_id": "P9", "check_name": "governance_defines_acceptance_authority",
-     "classification": SMALL_BINDING, "obligation_scope": PROJECT},
+     "classification": SMALL_BINDING, "obligation_scope": PROJECT,
+     "resolver_id": "artifact_field:P9_GOVERNANCE.authority_assignments.acceptance"},
     {"phase_id": "P9", "check_name": "runtime_structure_initialized",
      "classification": DIRECT_COMPOSITION, "obligation_scope": PROJECT,
      "planned_resolver_id": "required_kind:RUNTIME_STRUCTURE"},
@@ -246,7 +249,8 @@ MANIFEST: tuple[dict[str, Any], ...] = (
      "classification": DIRECT_COMPOSITION, "obligation_scope": PROJECT,
      "planned_resolver_id": "required_kind:EVIDENCE_BUNDLE"},
     {"phase_id": "P19", "check_name": "known_limitations_recorded",
-     "classification": SMALL_BINDING, "obligation_scope": PROJECT},
+     "classification": SMALL_BINDING, "obligation_scope": PROJECT,
+     "resolver_id": "lifecycle:release_candidate.known_limitations"},
     {"phase_id": "P20", "check_name": "security_reviewed",
      "classification": NO_REPRESENTATION, "obligation_scope": PROJECT},
     {"phase_id": "P20", "check_name": "rollback_plan_exists",
@@ -440,6 +444,111 @@ def _candidate_binding_resolver(ctx: ResolverContext, entry: RegistryEntry) -> R
         PASS, f"{candidate.get('release_candidate_id')} candidate_bindings all resolve", semantic_source)
 
 
+# -- F3-D1: 4 SMALL_BINDING rows (P6, P7, P9, P19) - each a small, newly-designed predicate ---
+#
+# Unlike F3-B's DIRECT_COMPOSITION rows, no pre-existing required_kind/authoritative check does
+# this work already - each predicate below is new, but built ONLY from real, already-declared
+# fields (never a new stored field, never invented semantics), exactly what SMALL_BINDING means
+# (F3-D-PRE, ACCEPTED WITH REPAIR).
+
+
+def _valid_records_for_phase(project: Path, artifact_type: str, phase_id: str) -> list[dict[str, Any]]:
+    """The same list_artifacts(phase_id=...) + validate_record + NON_SATISFYING_STATUSES
+    filter every other artifact-scoped resolver in this module already uses - never a new
+    selection rule, just the shared shape."""
+    records = na.list_artifacts(project, artifact_type=artifact_type, phase_id=phase_id)
+    valid = []
+    for record in sorted(records, key=lambda r: str(r.get("artifact_id"))):
+        if record.get("status") in rk.NON_SATISFYING_STATUSES:
+            continue
+        if na.validate_record(project, record):
+            continue
+        valid.append(record)
+    return valid
+
+
+@_register("artifact_field:P6_REQUIREMENT.requirement_id_prefix")
+def _requirement_stable_id_prefix_resolver(ctx: ResolverContext, entry: RegistryEntry) -> ResolverOutcome:
+    """Every P6_REQUIREMENT under this phase must carry a requirement_id in the exact
+    "REQ-NNN" shape nogap_artifacts._next_stable_id assigns at creation
+    (_STABLE_ID_FIELDS["P6_REQUIREMENT"] = ("requirement_id", "REQ")) - re-checked here, at
+    read time, never assumed from the creation-time guarantee alone (F3-D-PRE row 1)."""
+    semantic_source = "artifact_field:P6_REQUIREMENT.requirement_id_prefix"
+    records = _valid_records_for_phase(ctx.project, "P6_REQUIREMENT", ctx.phase_id)
+    if not records:
+        return ResolverOutcome(FAIL, "no valid P6_REQUIREMENT recorded for this phase", semantic_source)
+    bad = [r["fields"]["requirement_id"] for r in records
+           if not str(r["fields"].get("requirement_id", "")).startswith("REQ-")]
+    if bad:
+        return ResolverOutcome(FAIL, f"requirement_id(s) not in REQ-NNN form: {bad}", semantic_source)
+    return ResolverOutcome(PASS, f"{len(records)} requirement(s), all REQ-NNN", semantic_source)
+
+
+@_register("artifact_field:P7_ARCHITECTURE.disjoint_authorities")
+def _architecture_authority_disjointness_resolver(ctx: ResolverContext, entry: RegistryEntry) -> ResolverOutcome:
+    """P7_ARCHITECTURE.execution_authorities and .acceptance_authorities are both real,
+    required fields (validate_record already enforces non-empty presence); this checks the
+    ONE thing no existing check covers - that the two sets share no identity/role
+    (F3-D-PRE row 2)."""
+    semantic_source = "artifact_field:P7_ARCHITECTURE.disjoint_authorities"
+    records = _valid_records_for_phase(ctx.project, "P7_ARCHITECTURE", ctx.phase_id)
+    if not records:
+        return ResolverOutcome(FAIL, "no valid P7_ARCHITECTURE recorded for this phase", semantic_source)
+    problems: list[str] = []
+    for record in records:
+        execution = set(record["fields"].get("execution_authorities") or [])
+        acceptance = set(record["fields"].get("acceptance_authorities") or [])
+        overlap = execution & acceptance
+        if overlap:
+            problems.append(f"{record['artifact_id']}: shared authority/role(s) {sorted(overlap)}")
+            continue
+        return ResolverOutcome(PASS, f"{record['artifact_id']}: execution/acceptance authorities disjoint",
+                                semantic_source)
+    return ResolverOutcome(FAIL, "; ".join(problems), semantic_source)
+
+
+@_register("artifact_field:P9_GOVERNANCE.authority_assignments.acceptance")
+def _governance_acceptance_authority_resolver(ctx: ResolverContext, entry: RegistryEntry) -> ResolverOutcome:
+    """P9_GOVERNANCE.authority_assignments is a real, required dict field; this checks that
+    its "acceptance" key is present with a real, non-empty value - never merely that the key
+    exists (F3-D-PRE row 3, empty-value negative case required)."""
+    semantic_source = "artifact_field:P9_GOVERNANCE.authority_assignments.acceptance"
+    records = _valid_records_for_phase(ctx.project, "P9_GOVERNANCE", ctx.phase_id)
+    if not records:
+        return ResolverOutcome(FAIL, "no valid P9_GOVERNANCE recorded for this phase", semantic_source)
+    problems: list[str] = []
+    for record in records:
+        assignments = record["fields"].get("authority_assignments")
+        value = assignments.get("acceptance") if isinstance(assignments, dict) else None
+        if value is None or (isinstance(value, str) and not value.strip()):
+            problems.append(f"{record['artifact_id']}: authority_assignments carries no 'acceptance' entry")
+            continue
+        return ResolverOutcome(PASS, f"{record['artifact_id']}: acceptance authority = {value!r}", semantic_source)
+    return ResolverOutcome(FAIL, "; ".join(problems), semantic_source)
+
+
+@_register("lifecycle:release_candidate.known_limitations")
+def _release_candidate_known_limitations_resolver(ctx: ResolverContext, entry: RegistryEntry) -> ResolverOutcome:
+    """The current release candidate's own known_limitations field, non-empty - reuses
+    get_current_release_candidate() exactly as EVIDENCE_BUNDLE/candidate_binding already do
+    (F3-B1), never a new RC selector (F3-D-PRE row 9)."""
+    semantic_source = "lifecycle:release_candidate.known_limitations"
+    result = _current_release_candidate(ctx.project)
+    status = result["status"]
+    if status == "NONE":
+        return ResolverOutcome(FAIL, "no FROZEN release candidate exists for this project", semantic_source)
+    if status == "CONFLICT":
+        return ResolverOutcome(
+            FAIL, f"ambiguous current release candidate: {result.get('conflicting_ids')}", semantic_source)
+    candidate = result["candidate"]
+    limitations = candidate.get("known_limitations")
+    if not limitations:
+        return ResolverOutcome(
+            FAIL, f"{candidate.get('release_candidate_id')} declares no known_limitations", semantic_source)
+    return ResolverOutcome(
+        PASS, f"{candidate.get('release_candidate_id')} known_limitations: {limitations!r}", semantic_source)
+
+
 # -- F3-B2: P13/P14, lifecycle:transition_history (§4.4.1's frozen lineage rule) -------------
 
 
@@ -543,12 +652,29 @@ def load_registry(methodology_dir: Path | None = None) -> dict[tuple[str, str], 
         classification = row["classification"]
         obligation_scope = row["obligation_scope"]
         planned_resolver_id = row.get("planned_resolver_id")
+        # SMALL_BINDING's own manifest key for a resolver F3-D has designed and bound for this
+        # specific row (§6 invariant 12, REPAIR). Deliberately NOT "planned_resolver_id" and
+        # NOT a separate concept/field name either - it is literally this row's real
+        # resolver_id, the same name RegistryEntry itself uses, because unlike DIRECT_
+        # COMPOSITION (whose mechanism is known at F3-A freeze, so planned_resolver_id names
+        # it ahead of the binding), a SMALL_BINDING row's predicate does not exist until F3-D
+        # designs it - there is no earlier "planned" state to distinguish from the final one.
+        manifest_resolver_id = row.get("resolver_id")
 
-        # invariant 11: planned_resolver_id iff DIRECT_COMPOSITION
+        # invariant 11: planned_resolver_id is DIRECT_COMPOSITION-only, always - required for
+        # every DC row, forbidden for every other classification INCLUDING SMALL_BINDING, at
+        # every point in a SMALL_BINDING row's life (never set retroactively once F3-D
+        # implements one either).
         if classification == DIRECT_COMPOSITION and not planned_resolver_id:
             raise RegistryLoadError(f"{key}: DIRECT_COMPOSITION row with no planned_resolver_id")
         if classification != DIRECT_COMPOSITION and planned_resolver_id:
             raise RegistryLoadError(f"{key}: non-DIRECT_COMPOSITION row carries a planned_resolver_id")
+
+        # invariant 12 (REPAIR, F3-A/F3-D micro-repair): the MANIFEST "resolver_id" key is
+        # legal only on SMALL_BINDING rows (and only once F3-D has actually bound one for it -
+        # enforced below via RESOLVERS membership, not just presence in MANIFEST).
+        if classification != SMALL_BINDING and manifest_resolver_id:
+            raise RegistryLoadError(f"{key}: {classification} row must not carry a resolver_id in MANIFEST")
 
         # invariant 10: obligation_scope BUILD <-> SCOPE_MISMATCH
         if obligation_scope == BUILD and classification != BUILD_INVARIANT:
@@ -556,7 +682,7 @@ def load_registry(methodology_dir: Path | None = None) -> dict[tuple[str, str], 
 
         reason, blocked_by = _reason_and_blocked_by(row)
 
-        # invariant 12: classification/reason matrix
+        # invariant 13: classification/reason matrix
         legal = _LEGAL_REASON_FOR_CLASSIFICATION[classification]
         if reason not in legal:
             raise RegistryLoadError(f"{key}: reason {reason!r} illegal for classification {classification!r}")
@@ -573,26 +699,46 @@ def load_registry(methodology_dir: Path | None = None) -> dict[tuple[str, str], 
         semantic_source: str | None = None
         implementation_status = UNIMPLEMENTED
 
-        # F3-B1: flip a row to IMPLEMENTED only when classification is DIRECT_COMPOSITION,
-        # reason is RESOLVER_PENDING (never WORDING_CONFLICT - P5/P8 stay UNIMPLEMENTED
-        # regardless of RESOLVERS' contents), and a real resolver is bound for its
-        # planned_resolver_id (F3-B2's two rows have none bound - §6 invariant 5 then simply
-        # leaves them UNIMPLEMENTED, exactly as required).
+        # Flip a row to IMPLEMENTED along exactly one of two SEPARATE paths, never conflated:
+        #   DC path (F3-B): classification DIRECT_COMPOSITION, reason RESOLVER_PENDING (never
+        #     WORDING_CONFLICT - P5/P8 stay UNIMPLEMENTED regardless of RESOLVERS), binds
+        #     against planned_resolver_id (the mechanism already known at F3-A freeze).
+        #   SB path (F3-D): classification SMALL_BINDING, reason NOT_BOUND, binds directly
+        #     against the row's own MANIFEST resolver_id (a predicate F3-D designed fresh for
+        #     this row - no "planned" precursor state). A row with no resolver bound (every
+        #     SMALL_BINDING row not yet reached by an authorized F3-D batch) simply stays
+        #     UNIMPLEMENTED - §6 invariant 5.
+        binding_id: str | None = None
         if classification == DIRECT_COMPOSITION and reason == RESOLVER_PENDING:
-            bound = RESOLVERS.get(planned_resolver_id)
-            if bound is not None:
-                resolver_id = planned_resolver_id
-                semantic_source = planned_resolver_id  # invariant 8: identical namespace string
-                implementation_status = IMPLEMENTED
-                reason = None
-                blocked_by = None
+            binding_id = planned_resolver_id
+        elif classification == SMALL_BINDING and reason == NOT_BOUND and manifest_resolver_id:
+            binding_id = manifest_resolver_id
+            # fail-closed (REPAIR): a MANIFEST resolver_id on a SMALL_BINDING row is F3-D
+            # declaring this row bound and implemented - unlike DC's planned_resolver_id
+            # (which may legitimately predate F3-B ever building the adapter), there is no
+            # earlier "planned" state for SB to fall back to. A missing RESOLVERS symbol here
+            # is a runtime fault, never a silent regression to UNIMPLEMENTED/NOT_BOUND.
+            if RESOLVERS.get(binding_id) is None:
+                raise RegistryLoadError(
+                    f"{key}: SMALL_BINDING row declares resolver_id {binding_id!r} in MANIFEST "
+                    "but no such resolver is registered"
+                )
+
+        if binding_id is not None and RESOLVERS.get(binding_id) is not None:
+            resolver_id = binding_id
+            semantic_source = binding_id  # invariant 8: identical namespace string
+            implementation_status = IMPLEMENTED
+            reason = None
+            blocked_by = None
 
         if implementation_status == UNIMPLEMENTED and (resolver_id is not None or semantic_source is not None):
             raise RegistryLoadError(f"{key}: UNIMPLEMENTED row must have null resolver_id/semantic_source")  # pragma: no cover
         if implementation_status == IMPLEMENTED and (resolver_id is None or semantic_source is None):
             raise RegistryLoadError(f"{key}: IMPLEMENTED row must have non-null resolver_id/semantic_source")  # pragma: no cover
-        if implementation_status == IMPLEMENTED and resolver_id != planned_resolver_id:
-            raise RegistryLoadError(f"{key}: resolver_id must equal planned_resolver_id when IMPLEMENTED")  # pragma: no cover
+        if implementation_status == IMPLEMENTED and resolver_id != binding_id:
+            raise RegistryLoadError(f"{key}: resolver_id must equal its binding source when IMPLEMENTED")  # pragma: no cover
+        if classification == SMALL_BINDING and planned_resolver_id is not None:
+            raise RegistryLoadError(f"{key}: SMALL_BINDING row must never carry a planned_resolver_id")  # pragma: no cover
 
         entries[key] = RegistryEntry(
             check_name=row["check_name"], phase_id=row["phase_id"], classification=classification,
