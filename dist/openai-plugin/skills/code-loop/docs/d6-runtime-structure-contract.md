@@ -1,6 +1,7 @@
 # D6 — RUNTIME_STRUCTURE Schema Contract (`P9_RUNTIME_STRUCTURE`)
 
-Status: **Rev 2 — REPAIR applied, still not accepted.** This document fixes the semantics of a new
+Status: **Rev 3 — ACCEPTED (Rev 2 accepted; this REPAIR applies before D6-PRE-B implementation).**
+This document fixes the semantics of a new
 artifact type before any resolver or schema code exists, per `docs/f2b-semantic-contract-
 proposal.md` §3.1: "It MUST NOT be designed incidentally inside a resolver." No production file
 changes until this contract is reviewed and accepted; `RUNTIME_STRUCTURE` stays in
@@ -137,30 +138,43 @@ Both fields hold a **repository-relative path or dotted module path**, not a des
 6. **V-ROLE-SEPARATION**: no single `components[]` entry's `authority_roles` contains both
    `execution` and `acceptance` (mirrors the runtime's own primary invariant, "Execution Authority
    MUST NOT be Acceptance Authority").
-7. **V-VERIFIER-INDEPENDENCE** (REPAIR, Rev 2 — tied explicitly to the Authority Model, not a
-   general "must be independent" phrase):
-   - at least one `components[]` entry's `authority_roles` contains `verification`;
-   - for every `components[]` entry whose `authority_roles` contains `verification`: that same
-     entry's `authority_roles` MUST NOT also contain `execution` (an execution-role component
+7. **V-VERIFIER-INDEPENDENCE** (REPAIR, Rev 3 — conditioned on `plane_status["VERIFICATION_EVIDENCE"]`,
+   never unconditional; Rev 2's wording made an empty `components[]` structurally impossible to
+   validate, which contradicted §5's ban on fabricating a component just to satisfy an invariant.
+   The Authority Model's `verification` role is a fact about a real, implemented verifier — it
+   cannot be required of a Plane the artifact itself declares as not yet implemented):
+   - **if `plane_status["VERIFICATION_EVIDENCE"] == ENFORCED`**: at least one `components[]` entry
+     MUST have `plane == VERIFICATION_EVIDENCE`; at least one such entry's `authority_roles` MUST
+     contain `verification`; for every entry whose `authority_roles` contains `verification`, that
+     same entry's `authority_roles` MUST NOT also contain `execution` (an execution-role component
      cannot simultaneously be the independent verifier — this is what "independent" means
      operationally, per `docs/nogapcode-runtime.md` § Authority Model: `verification` "may produce
-     authoritative verification evidence when independent from execution");
-   - for every `components[]` entry whose `authority_roles` contains `verification`: if that same
+     authoritative verification evidence when independent from execution"); and if that same
      entry's `authority_roles` also contains `acceptance`, this is allowed ONLY when it also
      contains `human` (the Authority Model explicitly permits `human` to "act as verification or
      acceptance authority when recorded explicitly" — a non-human component combining
      `verification` and `acceptance` collapses independent verification into self-acceptance and is
      rejected).
-8. **V-PLANE-COVERAGE** (REPAIR, Rev 2 — moved off `boundaries[]`, defined on `plane_status`):
+   - **if `plane_status["VERIFICATION_EVIDENCE"] == DOCUMENTED_ONLY`**: no verification component is
+     required; an empty `components[]` (or one with no `VERIFICATION_EVIDENCE` entry) is valid; the
+     verifier-independence requirement is not "satisfied" in this case, it is simply not applicable
+     to a Plane the artifact declares unenforced.
+8. **V-PLANE-COVERAGE** (REPAIR, Rev 3 — now a true biconditional, not one-directional):
    - `set(plane_status.keys()) == set(Plane)` (§1.1) — exactly the 6 Planes, no more, no fewer, as
      keys; a missing or extra key is `INVALID`.
-   - every `plane_status[p] == EnforcementStatus.ENFORCED` entry MUST have at least one
-     `components[]` entry with `plane == p` AND a valid, resolvable `implementation_ref` (per
-     §2.3/V-IMPL-REF) — an `ENFORCED` Plane with no real backing component is `INVALID`, not
-     silently accepted on the strength of the top-level declaration alone.
-   - a `plane_status[p] == EnforcementStatus.DOCUMENTED_ONLY` entry requires no component and is
-     never treated as raising trust — it is explicitly and only a statement that the Plane is not
-     yet backed by anything checkable.
+   - **`plane_status[p] == ENFORCED` <=> at least one `components[]` entry has `plane == p` with a
+     valid, resolvable `implementation_ref` (per §2.3/V-IMPL-REF)**, for every Plane `p`, in both
+     directions:
+     - `ENFORCED` with no real backing component is `INVALID` (unchanged from Rev 2) — not silently
+       accepted on the strength of the top-level declaration alone.
+     - (Rev 3, new direction) a real `components[]` entry declaring `plane == p` with a resolvable
+       `implementation_ref` while `plane_status[p] == DOCUMENTED_ONLY` is *also* `INVALID`: a real,
+       resolvable component IS evidence the Plane is actually represented, so declaring that same
+       Plane `DOCUMENTED_ONLY` at the top level directly contradicts the component list. The two
+       fields would then disagree about the one fact V-PLANE-COVERAGE exists to pin down.
+   - a `plane_status[p] == DOCUMENTED_ONLY` entry with zero matching components is the only valid
+     "unenforced" shape, and is never treated as raising trust — it is explicitly and only a
+     statement that the Plane is not yet backed by anything checkable.
    - no fabricated/placeholder `components[]` entry may be used to turn a `DOCUMENTED_ONLY` Plane
      into an apparently-`ENFORCED` one; §2.3's existence-only guarantee bounds what "real component"
      means, and inventing one purely to satisfy this invariant is out of scope for any resolver
@@ -180,9 +194,10 @@ Both fields hold a **repository-relative path or dotted module path**, not a des
 | unresolvable implementation reference | `INVALID` | V-IMPL-REF |
 | enforced boundary without a resolvable enforcement reference | `INVALID` | V-ENFORCEMENT-REF |
 | execution/acceptance role collision | `INVALID` | V-ROLE-SEPARATION |
-| verifier not independent (collapses with execution, or with acceptance outside the `human` exception) | `INVALID` | V-VERIFIER-INDEPENDENCE |
+| `VERIFICATION_EVIDENCE` is `ENFORCED` but no component backs it, or a backing verifier is not independent (collapses with execution, or with acceptance outside the `human` exception) | `INVALID` | V-VERIFIER-INDEPENDENCE |
 | `plane_status` key set is not exactly the 6 Planes | `INVALID` | V-PLANE-COVERAGE |
 | an `ENFORCED` Plane has no real, resolvable backing component | `INVALID` | V-PLANE-COVERAGE |
+| a real, resolvable component declares a Plane that `plane_status` marks `DOCUMENTED_ONLY` | `INVALID` | V-PLANE-COVERAGE |
 | `runtime_structure_version` outside the closed version set | `INVALID` | §2 |
 | a `DOCUMENTED_ONLY` boundary carries a non-null `enforcement_ref` | `INVALID` | V-ENFORCEMENT-REF |
 | any other malformed nested schema / unknown enum value | `INVALID` | (schema-level) |
@@ -194,6 +209,21 @@ No `STALE` outcome is defined for this kind at this contract level: nothing in t
 or this survey identifies a supersession/lifecycle-status concept for `P9_RUNTIME_STRUCTURE` (same
 reasoning `GOLDEN_GATES` used to deliberately omit STALE — not guessed, left absent because no
 selector mechanism exists to make it meaningful).
+
+### 4.1 The minimal valid record (Rev 3)
+
+```
+components: []
+boundaries: []
+plane_status: {every one of the 6 Planes -> DOCUMENTED_ONLY}
+runtime_structure_version: "1"
+```
+
+This is `PASS`, not a fabrication: V-VERIFIER-INDEPENDENCE is inapplicable (no Plane is
+`ENFORCED`), V-PLANE-COVERAGE's biconditional holds (no `ENFORCED` Plane exists, and no component
+exists to contradict a `DOCUMENTED_ONLY` one), V-ENDPOINT/V-DUP-* hold vacuously on empty lists.
+It is an honest statement that nothing about the runtime is asserted as checkable yet - not a
+claim that the runtime has no real structure.
 
 ## 5. Explicitly excluded from this contract (not invented)
 

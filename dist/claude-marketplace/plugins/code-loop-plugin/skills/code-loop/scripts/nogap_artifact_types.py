@@ -82,6 +82,21 @@ ARTIFACT_TYPES: dict[str, dict[str, Any]] = {
         "profile_required_fields": {},
         "reference_fields": {"adr_refs": "P8_ADR"},
     },
+    "P9_RUNTIME_STRUCTURE": {
+        # D6 (docs/d6-runtime-structure-contract.md, Rev 3): a separate artifact type from
+        # P9_GOVERNANCE, deliberately - governance says who owns what and what policy applies;
+        # this says what components exist, how they connect, and what trust/execution
+        # boundaries separate them. Never merged into one record. components/boundaries MAY be
+        # empty (Rev 3's minimal valid record, sec 4.1) - allow_empty_fields covers that; the
+        # nested-shape, enum, uniqueness, endpoint, version, ref-syntax, authority-conflict and
+        # plane-coverage invariants live in nogap_artifacts._check_runtime_structure_schema,
+        # since this module stays pure data (see this file's own docstring).
+        "phase_id": "P9",
+        "required_fields": ["components", "boundaries", "plane_status", "runtime_structure_version"],
+        "allow_empty_fields": frozenset({"components", "boundaries"}),
+        "profile_required_fields": {},
+        "reference_fields": {},
+    },
     "P10_BASELINE": {
         "phase_id": "P10",
         "required_fields": ["baseline_description", "primary_metric", "secondary_metrics", "measurement_procedure"],

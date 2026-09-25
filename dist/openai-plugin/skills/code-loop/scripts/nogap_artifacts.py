@@ -75,6 +75,222 @@ VERIFICATION_RESULT_STATUSES = {
     "VERIFICATION_INCONCLUSIVE", "VERIFICATION_COMPLETE_AWAITING_DECISION",
 }
 
+# D6 (docs/d6-runtime-structure-contract.md, Rev 3): closed enums for P9_RUNTIME_STRUCTURE, taken
+# verbatim from docs/nogapcode-runtime.md's own Planes and Authority Model sections - no new
+# vocabulary invented here.
+RUNTIME_STRUCTURE_PLANES = frozenset({
+    "CONTROL_DECISION", "EXECUTION", "TOOL_CAPABILITY",
+    "VERIFICATION_EVIDENCE", "STATE_EVENT", "OBSERVABILITY",
+})
+RUNTIME_STRUCTURE_AUTHORITY_ROLES = frozenset({"execution", "verification", "acceptance", "human", "tool"})
+RUNTIME_STRUCTURE_BOUNDARY_TYPES = frozenset({"authority", "trust", "execution", "verification", "state"})
+RUNTIME_STRUCTURE_ENFORCEMENT_STATUSES = frozenset({"ENFORCED", "DOCUMENTED_ONLY"})
+RUNTIME_STRUCTURE_VERSIONS = frozenset({"1"})
+
+# D6 sec 2.3: implementation_ref/enforcement_ref resolve against THIS repository (the runtime
+# the contract describes is code-loop's own Trust Runtime, not whatever project happens to hold
+# the artifact record) - nogap_artifacts.py lives in <repo>/scripts/, so its own grandparent is
+# the repo root, matching the contract's "resolvable under scripts/" wording for the dotted form.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def _runtime_structure_ref_resolves(ref: Any) -> bool:
+    """D6 sec 2.3: existence-only guarantee, never a functional one. Repo-relative path form
+    (rejects absolute paths and '..' traversal) or dotted-module form resolved to a real .py
+    file directly under scripts/ - the dotted form only proves the top-level module exists, not
+    that any attribute after the first '.' does, matching the contract's own limitation."""
+    if not isinstance(ref, str) or not ref:
+        return False
+    normalized = ref.replace("\\", "/")
+    if normalized.startswith("/") or normalized.startswith("~"):
+        return False
+    if any(part == ".." for part in normalized.split("/")):
+        return False
+    if "/" in normalized:
+        return (_REPO_ROOT / normalized).exists()
+    module_name = normalized.split(".", 1)[0]
+    if not module_name or not all(c.isalnum() or c == "_" for c in module_name):
+        return False
+    return (_REPO_ROOT / "scripts" / f"{module_name}.py").is_file()
+
+
+def _check_runtime_structure_schema(fields: dict[str, Any]) -> list[str]:
+    """D6 (docs/d6-runtime-structure-contract.md, Rev 3): P9_RUNTIME_STRUCTURE's own nested
+    schema, enum, uniqueness, endpoint, version, ref-syntax, authority-conflict and
+    plane-coverage invariants. Schema-level only, runs on every validate_record call (creation
+    and prebuild_readiness) - this enforces the already-frozen contract, it never defines one; a
+    RUNTIME_STRUCTURE required_kinds resolver remains a separate, not-yet-authorized step."""
+    problems: list[str] = []
+
+    version = fields.get("runtime_structure_version")
+    if version is not None and version not in RUNTIME_STRUCTURE_VERSIONS:
+        problems.append(
+            f"runtime_structure_version must be one of {sorted(RUNTIME_STRUCTURE_VERSIONS)}, got {version!r}"
+        )
+
+    plane_status = fields.get("plane_status")
+    plane_status_valid = isinstance(plane_status, dict)
+    if plane_status is not None and not plane_status_valid:
+        problems.append("plane_status must be an object mapping each Plane to an EnforcementStatus")
+    elif plane_status_valid:
+        if set(plane_status.keys()) != RUNTIME_STRUCTURE_PLANES:
+            problems.append(
+                f"plane_status keys must be exactly {sorted(RUNTIME_STRUCTURE_PLANES)}, "
+                f"got {sorted(plane_status.keys())}"
+            )
+        bad_values = {p: s for p, s in plane_status.items() if s not in RUNTIME_STRUCTURE_ENFORCEMENT_STATUSES}
+        if bad_values:
+            problems.append(
+                f"plane_status values must be one of {sorted(RUNTIME_STRUCTURE_ENFORCEMENT_STATUSES)}, "
+                f"got {bad_values!r}"
+            )
+
+    components = fields.get("components")
+    if components is not None and not isinstance(components, list):
+        problems.append("components must be a list")
+        components = []
+    components = [c for c in (components or []) if isinstance(c, dict)]
+    for entry in (fields.get("components") or []):
+        if not isinstance(entry, dict):
+            problems.append(f"components entry must be an object, got {entry!r}")
+
+    boundaries = fields.get("boundaries")
+    if boundaries is not None and not isinstance(boundaries, list):
+        problems.append("boundaries must be a list")
+        boundaries = []
+    boundaries = [b for b in (boundaries or []) if isinstance(b, dict)]
+    for entry in (fields.get("boundaries") or []):
+        if not isinstance(entry, dict):
+            problems.append(f"boundaries entry must be an object, got {entry!r}")
+
+    component_ids: list[str] = []
+    component_by_id: dict[str, dict[str, Any]] = {}
+    for entry in components:
+        cid = entry.get("component_id")
+        plane = entry.get("plane")
+        impl_ref = entry.get("implementation_ref")
+        roles = entry.get("authority_roles")
+
+        if not isinstance(cid, str) or not cid:
+            problems.append(f"component missing a non-empty component_id: {entry!r}")
+        else:
+            component_ids.append(cid)
+            component_by_id[cid] = entry
+
+        if plane is not None and plane not in RUNTIME_STRUCTURE_PLANES:
+            problems.append(f"component {cid!r} plane must be one of {sorted(RUNTIME_STRUCTURE_PLANES)}, got {plane!r}")
+
+        if not _runtime_structure_ref_resolves(impl_ref):
+            problems.append(f"component {cid!r} implementation_ref does not resolve to a real path: {impl_ref!r}")
+
+        if not isinstance(roles, list) or not roles:
+            problems.append(f"component {cid!r} authority_roles must be a non-empty list")
+        else:
+            bad_roles = [r for r in roles if r not in RUNTIME_STRUCTURE_AUTHORITY_ROLES]
+            if bad_roles:
+                problems.append(f"component {cid!r} authority_roles has unknown role(s) {bad_roles!r}")
+            if "execution" in roles and "acceptance" in roles:
+                problems.append(f"component {cid!r} authority_roles must not contain both execution and acceptance")
+
+    dup_components = sorted({cid for cid in component_ids if component_ids.count(cid) > 1})
+    if dup_components:
+        problems.append(f"duplicate component_id(s): {dup_components}")
+
+    boundary_ids: list[str] = []
+    for entry in boundaries:
+        bid = entry.get("boundary_id")
+        source = entry.get("source_component_id")
+        target = entry.get("target_component_id")
+        boundary_type = entry.get("boundary_type")
+        flows = entry.get("permitted_flows")
+        enforcement_status = entry.get("enforcement_status")
+        enforcement_ref = entry.get("enforcement_ref")
+
+        if not isinstance(bid, str) or not bid:
+            problems.append(f"boundary missing a non-empty boundary_id: {entry!r}")
+        else:
+            boundary_ids.append(bid)
+
+        if source not in component_by_id:
+            problems.append(f"boundary {bid!r} source_component_id {source!r} does not resolve to a declared component")
+        if target not in component_by_id:
+            problems.append(f"boundary {bid!r} target_component_id {target!r} does not resolve to a declared component")
+
+        if boundary_type is not None and boundary_type not in RUNTIME_STRUCTURE_BOUNDARY_TYPES:
+            problems.append(
+                f"boundary {bid!r} boundary_type must be one of {sorted(RUNTIME_STRUCTURE_BOUNDARY_TYPES)}, "
+                f"got {boundary_type!r}"
+            )
+
+        if not isinstance(flows, list) or not flows:
+            problems.append(f"boundary {bid!r} permitted_flows must be a non-empty list")
+
+        if enforcement_status is not None and enforcement_status not in RUNTIME_STRUCTURE_ENFORCEMENT_STATUSES:
+            problems.append(
+                f"boundary {bid!r} enforcement_status must be one of "
+                f"{sorted(RUNTIME_STRUCTURE_ENFORCEMENT_STATUSES)}, got {enforcement_status!r}"
+            )
+        elif enforcement_status == "ENFORCED":
+            if not _runtime_structure_ref_resolves(enforcement_ref):
+                problems.append(f"boundary {bid!r} is ENFORCED but enforcement_ref does not resolve: {enforcement_ref!r}")
+        elif enforcement_status == "DOCUMENTED_ONLY" and enforcement_ref is not None:
+            problems.append(
+                f"boundary {bid!r} is DOCUMENTED_ONLY but declares a non-null enforcement_ref "
+                f"{enforcement_ref!r} - must be null"
+            )
+
+    dup_boundaries = sorted({bid for bid in boundary_ids if boundary_ids.count(bid) > 1})
+    if dup_boundaries:
+        problems.append(f"duplicate boundary_id(s): {dup_boundaries}")
+
+    # D6 Rev 3, V-PLANE-COVERAGE: biconditional between plane_status[p] == ENFORCED and a real,
+    # resolvable component declaring plane == p - checked only once plane_status itself is
+    # well-formed (avoids compounding an already-reported malformed-plane_status problem).
+    if plane_status_valid and set(plane_status.keys()) == RUNTIME_STRUCTURE_PLANES:
+        for plane in RUNTIME_STRUCTURE_PLANES:
+            backing = [
+                c for c in components
+                if c.get("plane") == plane and _runtime_structure_ref_resolves(c.get("implementation_ref"))
+            ]
+            status = plane_status.get(plane)
+            if status == "ENFORCED" and not backing:
+                problems.append(
+                    f"plane_status[{plane!r}] is ENFORCED but no component declares that plane "
+                    f"with a resolvable implementation_ref"
+                )
+            if status == "DOCUMENTED_ONLY" and backing:
+                problems.append(
+                    f"plane_status[{plane!r}] is DOCUMENTED_ONLY but a real, resolvable component "
+                    f"({[c.get('component_id') for c in backing]!r}) declares that plane - mark it "
+                    f"ENFORCED instead"
+                )
+
+        # D6 Rev 3, V-VERIFIER-INDEPENDENCE: conditioned on VERIFICATION_EVIDENCE's own status,
+        # never unconditional - see docs/d6-runtime-structure-contract.md sec 3 item 7.
+        if plane_status.get("VERIFICATION_EVIDENCE") == "ENFORCED":
+            verifier_evidence_components = [c for c in components if c.get("plane") == "VERIFICATION_EVIDENCE"]
+            verifier_components = [
+                c for c in verifier_evidence_components
+                if "verification" in (c.get("authority_roles") or [])
+            ]
+            if not verifier_components:
+                problems.append(
+                    "plane_status['VERIFICATION_EVIDENCE'] is ENFORCED but no component with "
+                    "plane == VERIFICATION_EVIDENCE holds the verification authority role"
+                )
+            for c in verifier_components:
+                roles = c.get("authority_roles") or []
+                cid = c.get("component_id")
+                if "execution" in roles:
+                    problems.append(f"component {cid!r} holds both verification and execution - not independent")
+                if "acceptance" in roles and "human" not in roles:
+                    problems.append(
+                        f"component {cid!r} holds verification and acceptance without human - collapses "
+                        f"independent verification into self-acceptance"
+                    )
+
+    return problems
+
 # Stable, monotonically-increasing ID namespaces distinct from the generic artifact_id -
 # never reused, checked for uniqueness whether auto-generated or explicitly supplied.
 # Maps artifact_type -> (field_name, id_prefix).
@@ -345,6 +561,9 @@ def validate_record(project: Path, record: dict[str, Any]) -> list[str]:
             if not known:
                 problems.append(f"task_id references unknown P12_TASK_CONTRACT: {task_id!r}")
 
+    if artifact_type == "P9_RUNTIME_STRUCTURE":
+        problems.extend(_check_runtime_structure_schema(fields))
+
     if artifact_type == "P18_VERIFICATION_RESULT":
         plan_id = fields.get("verification_plan_id")
         if plan_id is not None:
@@ -513,11 +732,28 @@ def _sync_risk_and_claim_from_p2(project: Path, fields: dict[str, Any], actor: s
     _write_state(project, state)
 
 
+def _enforced_artifact_types() -> frozenset[str]:
+    """D6-PRE-B REPAIR: ownership (PHASE_TO_ARTIFACT_TYPES) is never obligation on its own.
+    A type existing under a phase only means it CAN be created and validated there - whether a
+    record of it is REQUIRED for readiness is decided by the methodology's own required_kinds
+    map (the phase contract's actual required-artifact semantics), never inferred from the
+    ownership map itself. A type backing only a currently-DEFERRED kind (e.g.
+    P9_RUNTIME_STRUCTURE while RUNTIME_STRUCTURE is deferred) is real, creatable, and
+    independently validatable, but its absence is not yet a readiness blocker - that starts
+    the moment its kind moves to ENFORCED_KINDS, and nowhere else."""
+    from nogap_required_kinds import ENFORCED_KINDS
+
+    return frozenset(
+        spec.artifact_type for spec in ENFORCED_KINDS.values() if hasattr(spec, "artifact_type")
+    )
+
+
 def prebuild_readiness(project: Path) -> dict[str, Any]:
     """Whether P0-P11's obligations are satisfied for the project's active profile.
     Explains WHY when not: one reason string per missing/invalid obligation, never a bare
     "not ready". Not consulted by nogap run/execute - that wiring is M7-F."""
     state, definition = _require_state(project)
+    required_types = _enforced_artifact_types()
     missing: list[str] = []
     for phase_id in PREBUILD_PHASES:
         # D6-PRE-A: a phase may own more than one artifact type (P9). Index by the real 1:N
@@ -526,9 +762,12 @@ def prebuild_readiness(project: Path) -> dict[str, Any]:
         artifact_types = PHASE_TO_ARTIFACT_TYPES[phase_id]
         for artifact_type in artifact_types:
             records = list_artifacts(project, artifact_type=artifact_type, phase_id=phase_id)
-            # a requirement phase (P6) may have many records; every other type needs at least one
+            # a requirement phase (P6) may have many records; every other required type needs
+            # at least one. An owned-but-not-yet-required type (its kind still DEFERRED) is
+            # simply skipped when absent - it is real, just not yet obligatory.
             if not records:
-                missing.append(f"{phase_id} ({artifact_type}): no artifact recorded")
+                if artifact_type in required_types:
+                    missing.append(f"{phase_id} ({artifact_type}): no artifact recorded")
                 continue
             if artifact_type == "P6_REQUIREMENT":
                 active = [r for r in records if r.get("status") == "ACTIVE" or r.get("status") == "SATISFIED"]
