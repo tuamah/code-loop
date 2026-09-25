@@ -137,6 +137,18 @@ def build_full_chain(project: Path, actor: str = "team", p7_extra: dict | None =
         "human_approval_requirements": ["release"], "adr_refs": [made["P8_ADR"]["artifact_id"]],
     }, actor=actor)
 
+    # F2b RUNTIME_STRUCTURE now ENFORCED (docs/d6-runtime-structure-contract.md): P9 owns both
+    # P9_GOVERNANCE and P9_RUNTIME_STRUCTURE, and RUNTIME_STRUCTURE's required kind is checked
+    # for real now, so a real chain must create both. Rev 3's minimal valid record (sec 4.1):
+    # no fabricated component/boundary.
+    made["P9_RUNTIME_STRUCTURE"] = create_artifact(project, "P9_RUNTIME_STRUCTURE", {
+        "components": [], "boundaries": [],
+        "plane_status": {p: "DOCUMENTED_ONLY" for p in (
+            "CONTROL_DECISION", "EXECUTION", "TOOL_CAPABILITY",
+            "VERIFICATION_EVIDENCE", "STATE_EVENT", "OBSERVABILITY")},
+        "runtime_structure_version": "1",
+    }, actor=actor)
+
     made["P10_BASELINE"] = create_artifact(project, "P10_BASELINE", {
         "baseline_description": "current manual process", "primary_metric": "task completion time",
         "secondary_metrics": ["error rate"], "measurement_procedure": "manual timing",

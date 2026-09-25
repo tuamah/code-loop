@@ -198,6 +198,17 @@ def build_p0_p11_chain(
         "execution_backend_policy": "isolated worktree only", "verification_policy": "independent review required",
         "human_approval_requirements": ["release"], "adr_refs": [made["P8"]["artifact_id"]],
     }, actor=actor)
+    # F2b RUNTIME_STRUCTURE now ENFORCED (docs/d6-runtime-structure-contract.md): P9 owns
+    # both P9_GOVERNANCE and P9_RUNTIME_STRUCTURE, and RUNTIME_STRUCTURE's required kind
+    # is checked for real now, so a real chain must create both. Rev 3's minimal valid
+    # record (sec 4.1): no fabricated component/boundary.
+    made["P9_RUNTIME_STRUCTURE"] = create_artifact(project, "P9_RUNTIME_STRUCTURE", {
+        "components": [], "boundaries": [],
+        "plane_status": {p: "DOCUMENTED_ONLY" for p in (
+            "CONTROL_DECISION", "EXECUTION", "TOOL_CAPABILITY",
+            "VERIFICATION_EVIDENCE", "STATE_EVENT", "OBSERVABILITY")},
+        "runtime_structure_version": "1",
+    }, actor=actor)
     made["P10"] = create_artifact(project, "P10_BASELINE", {
         "baseline_description": "manual process", "primary_metric": "completion time",
         "secondary_metrics": ["error rate"], "measurement_procedure": "manual timing",
@@ -211,9 +222,13 @@ def build_p0_p11_chain(
     order = ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11"]
     for current, nxt in zip(order, order[1:]):
         evidence_refs = [_record_source_evidence(project, actor)] if current == "P3" else []
+        # P9 owns two enforced-kind-backed artifact types now (GOVERNANCE + RUNTIME_STRUCTURE) -
+        # both refs are needed to satisfy the transition, each checked independently.
+        refs = ([made["P9"]["artifact_id"], made["P9_RUNTIME_STRUCTURE"]["artifact_id"]]
+                if current == "P9" else [made[current]["artifact_id"]])
         transition(
             project, nxt, actor, f"{current} obligations satisfied",
-            artifact_refs=[made[current]["artifact_id"]], evidence_refs=evidence_refs, authority_class="tool",
+            artifact_refs=refs, evidence_refs=evidence_refs, authority_class="tool",
         )
     return made
 
