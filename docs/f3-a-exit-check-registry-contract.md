@@ -419,14 +419,14 @@ attributed. `artifact_field:` is used only when neither exists.
 | P2 | claim_strength_set | `required_kind:CLAIM_STRENGTH` (dedicated `ArtifactField`) |
 | P4 | gap_analysis_references_prior_art_map | `required_kind:GAP_ANALYSIS` (`WholeArtifact`; `validate_record` includes the `prior_art_refs` reference check) |
 | P5 | decision_value_is_one_of_build_buy_adopt_fork_integrate | `required_kind:STRATEGY_DECISION` (dedicated `ArtifactField`; `STRATEGY_OPTIONS` enum-validates it already) - **registry-blocked on the `HYBRID` wording fix (§6 invariant 7); mechanism-complete today** |
-| P5 | decision_has_reason | `artifact_field:P5_STRATEGY_DECISION.reason` (`STRATEGY_DECISION` kind binds `selected_strategy` only, independently, per F2a's "verdict per kind" rule - `reason` has no kind of its own) |
+| P5 | decision_has_reason | `artifact_field:P5_STRATEGY_DECISION.reason` (`STRATEGY_DECISION` kind binds `selected_strategy` only, independently, per F2a's "verdict per kind" rule - `reason` has no kind of its own; authoritative source is `nogap_artifacts.check_required_field` - ARTIFACT-FIELD-ATTRIBUTION-PRE, F3-B1 - not whole-record `validate_record`, which mutation testing proved mis-attributes an unrelated field's failure to this check) |
 | P8 | adr_records_reason | `required_kind:ADR` (`WholeArtifact`; `rationale` is a required field of `P8_ADR`) - **registry-blocked on the `reason`→`rationale` wording fix; mechanism-complete today** |
 | P8 | cost_model_covers_at_least_one_dimension | `required_kind:COST_MODEL` |
 | P9 | runtime_structure_initialized | `required_kind:RUNTIME_STRUCTURE` |
 | P10 | baseline_recorded | `required_kind:BASELINE` |
 | P10 | at_least_one_primary_metric_defined | `required_kind:METRICS` |
 | P11 | frozen_gate_exists | `required_kind:GOLDEN_GATES` |
-| P11 | stop_conditions_defined | `artifact_field:P11_GATE_PLAN.stop_conditions` (no dedicated kind targets this field; `TEST_PLAN` binds `required_tests` only) |
+| P11 | stop_conditions_defined | `artifact_field:P11_GATE_PLAN.stop_conditions` (no dedicated kind targets this field; `TEST_PLAN` binds `required_tests` only; authoritative source is `nogap_artifacts.check_required_field` - ARTIFACT-FIELD-ATTRIBUTION-PRE, F3-B1 - not whole-record `validate_record`, same reason as P5 `decision_has_reason` above) |
 | P12 | task_contract_has_goal_and_scope | `required_kind:TASK_CONTRACT` (`WholeArtifact`) |
 | P12 | task_contract_has_forbidden_scope | `required_kind:TASK_CONTRACT` |
 | P12 | task_contract_has_acceptance_criteria | `required_kind:TASK_CONTRACT` |
@@ -681,7 +681,7 @@ null`).
 | 11 | P3 | prior_art_map_has_..._or_explicit_none_found_justification | NR | `sources` always required non-empty; no alternate "none found" path exists | — | NONE |
 | 12 | P4 | gap_analysis_references_prior_art_map | DC | `_check_references` validates `prior_art_refs` inside `validate_record` | `required_kind:GAP_ANALYSIS` | NONE |
 | 13 | P5 | decision_value_is_one_of_build_buy_adopt_fork_integrate | DC (registry-blocked; `unimplemented_reason: WORDING_CONFLICT`, `blocked_by: "P5-STRATEGY-WORDING-FIX"`) | `STRATEGY_OPTIONS` enum (6 values incl. `HYBRID`) already validated | `required_kind:STRATEGY_DECISION` | DRIFT |
-| 14 | P5 | decision_has_reason | DC | `P5_STRATEGY_DECISION.reason` required_field (no dedicated kind; presence enforced by `validate_record` generically) | `artifact_field:P5_STRATEGY_DECISION.reason` | NONE |
+| 14 | P5 | decision_has_reason | DC | `P5_STRATEGY_DECISION.reason` required_field (no dedicated kind; presence enforced by `nogap_artifacts.check_required_field` - ARTIFACT-FIELD-ATTRIBUTION-PRE, F3-B1 - never whole-record `validate_record`) | `artifact_field:P5_STRATEGY_DECISION.reason` | NONE |
 | 15 | P6 | requirements_have_stable_ids_req_prefix | SB | `next_requirement_id`/`_STABLE_ID_FIELDS` guarantee the prefix only at creation, never re-checked at read | — | NONE |
 | 16 | P6 | critical_requirements_link_acceptance_criterion_and_planned_test | NR | no "critical requirement" concept anywhere; no P6↔P11 traceability field | — | NONE |
 | 17 | P7 | execution_authority_and_acceptance_authority_are_distinct_identities_or_roles | SB | `P7_ARCHITECTURE.execution_authorities`/`.acceptance_authorities` real fields, no disjointness check exists | — | NONE |
@@ -693,7 +693,7 @@ null`).
 | 23 | P10 | at_least_one_primary_metric_defined | DC | `P10_BASELINE.primary_metric` | `required_kind:METRICS` | NONE |
 | 24 | P11 | frozen_gate_exists | DC | gate JSON directly | `required_kind:GOLDEN_GATES` | NONE |
 | 25 | P11 | test_plan_covers_critical_requirements | NR | no "critical" concept; no P6↔P11 traceability | — | NONE |
-| 26 | P11 | stop_conditions_defined | DC | `P11_GATE_PLAN.stop_conditions` required_field | `artifact_field:P11_GATE_PLAN.stop_conditions` | NONE |
+| 26 | P11 | stop_conditions_defined | DC | `P11_GATE_PLAN.stop_conditions` required_field, presence enforced by `nogap_artifacts.check_required_field` (ARTIFACT-FIELD-ATTRIBUTION-PRE, F3-B1 - never whole-record `validate_record`) | `artifact_field:P11_GATE_PLAN.stop_conditions` | NONE |
 | 27 | P12 | task_contract_has_goal_and_scope | DC | `P12_TASK_CONTRACT.goal`/`.scope` | `required_kind:TASK_CONTRACT` | NONE |
 | 28 | P12 | task_contract_has_forbidden_scope | DC | `P12_TASK_CONTRACT.forbidden_scope` | `required_kind:TASK_CONTRACT` | NONE |
 | 29 | P12 | task_contract_has_acceptance_criteria | DC | `P12_TASK_CONTRACT.acceptance_criteria` | `required_kind:TASK_CONTRACT` | NONE |
