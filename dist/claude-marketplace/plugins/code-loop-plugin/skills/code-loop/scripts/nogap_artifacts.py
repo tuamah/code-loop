@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -443,6 +444,19 @@ def _resolve_reference(project: Path, ref: str, target: str) -> bool:
     return artifact is not None and artifact.get("artifact_type") == target
 
 
+def _field_requirement_problem(key: str, fields: dict[str, Any], allow_empty: frozenset[str]) -> str | None:
+    """The one rule behind every required field: present AND non-empty, unless the type's own
+    `allow_empty_fields` names this key as an exception (present is still mandatory even then).
+    The SOLE predicate both `_check_fields` (whole-record, every required field at once) and
+    the public `check_required_field` (one named field, ARTIFACT-FIELD-ATTRIBUTION-PRE) compose
+    over - never duplicated, never reimplemented a second time."""
+    if key not in fields or fields[key] is None:
+        return f"missing or empty required field: {key}"
+    if key not in allow_empty and _is_empty(fields[key]):
+        return f"missing or empty required field: {key}"
+    return None
+
+
 def _check_fields(artifact_type: str, fields: dict[str, Any], effective_profile: str) -> list[str]:
     info = ARTIFACT_TYPES[artifact_type]
     problems = []
@@ -452,11 +466,47 @@ def _check_fields(artifact_type: str, fields: dict[str, Any], effective_profile:
     # rejected), but an empty value (e.g. []) is legitimate content, not a missing requirement.
     allow_empty = info.get("allow_empty_fields", frozenset())
     for key in required:
-        if key not in fields or fields[key] is None:
-            problems.append(f"missing or empty required field: {key}")
-        elif key not in allow_empty and _is_empty(fields[key]):
-            problems.append(f"missing or empty required field: {key}")
+        problem = _field_requirement_problem(key, fields, allow_empty)
+        if problem is not None:
+            problems.append(problem)
     return problems
+
+
+@dataclass(frozen=True)
+class FieldRequirementVerdict:
+    """ARTIFACT-FIELD-ATTRIBUTION-PRE: the public, field-scoped surface for the "required and
+    non-empty" rule - structured, so a caller (F3's artifact_field: resolvers) never has to
+    parse free text to know whether ITS field, specifically, is satisfied."""
+
+    field: str
+    satisfied: bool
+    detail: str
+
+
+def check_required_field(project: Path, artifact_type: str, field: str, fields: dict[str, Any]) -> FieldRequirementVerdict:
+    """ARTIFACT-FIELD-ATTRIBUTION-PRE: isolates ONE required field's own requirement verdict -
+    never any other field's, never a reference check, never any of validate_record's
+    artifact_type-specific semantic blocks (enum checks, cross-artifact lookups, etc). Read-only
+    and deterministic, over already-loaded state - composes over the exact same `_field_
+    requirement_problem` predicate `_check_fields` uses for every field at once, never a second
+    copy of the rule. Does not replace validate_record for whole-artifact checks; existing
+    ArtifactField/WholeArtifact required_kind resolvers keep composing over validate_record
+    exactly as before - this exists only for the field-scoped composition surface F3's
+    artifact_field: namespace needs."""
+    state = load_state(project)
+    if state is None:
+        return FieldRequirementVerdict(field, False, "no methodology state; run 'nogap methodology init' first")
+    info = ARTIFACT_TYPES[artifact_type]
+    phase_contract = load_methodology().get_phase(info["phase_id"])
+    effective_profile = _effective_profile_for_phase(state, phase_contract)
+    required = list(info["required_fields"]) + _cumulative_profile_fields(artifact_type, effective_profile)
+    if field not in required:
+        return FieldRequirementVerdict(field, False, f"{field!r} is not a required field of {artifact_type}")
+    allow_empty = info.get("allow_empty_fields", frozenset())
+    problem = _field_requirement_problem(field, fields, allow_empty)
+    if problem is not None:
+        return FieldRequirementVerdict(field, False, problem)
+    return FieldRequirementVerdict(field, True, f"{field} present and non-empty")
 
 
 def _check_references(project: Path, artifact_type: str, fields: dict[str, Any]) -> list[str]:
