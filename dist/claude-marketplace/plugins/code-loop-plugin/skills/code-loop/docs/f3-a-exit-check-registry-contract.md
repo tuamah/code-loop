@@ -430,8 +430,8 @@ attributed. `artifact_field:` is used only when neither exists.
 | P12 | task_contract_has_goal_and_scope | `required_kind:TASK_CONTRACT` (`WholeArtifact`) |
 | P12 | task_contract_has_forbidden_scope | `required_kind:TASK_CONTRACT` |
 | P12 | task_contract_has_acceptance_criteria | `required_kind:TASK_CONTRACT` |
-| P13 | patch_artifact_recorded | `required_kind:PATCH` |
-| P14 | execution_evidence_authority_is_execution | `required_kind:EXECUTION_EVIDENCE` (`LedgerEvidence(kinds=('execution',), authorities=('execution',))` - `authorities` is checked as an exact match against the evidence record's own `provenance.authority`, which is precisely this check's claim) |
+| P13 | patch_artifact_recorded | `lifecycle:transition_history` (REPAIR, RESOLVER-CONTEXT-REF-GAP-PRE - see the boxed rule below; reads the fixed P13→P14 transition record's `artifact_refs`, then feeds the named ref into `required_kind:PATCH`'s own `_check_file_kind`) |
+| P14 | execution_evidence_authority_is_execution | `lifecycle:transition_history` (REPAIR, RESOLVER-CONTEXT-REF-GAP-PRE - same fixed transition record, reads its `evidence_refs` instead, then feeds the named ref into `required_kind:EXECUTION_EVIDENCE`'s own `LedgerEvidence(kinds=('execution',), authorities=('execution',))` check - `authorities` is checked as an exact match against the evidence record's own `provenance.authority`, which is precisely this check's claim) |
 | P19 | evidence_bundle_references_verification_evidence | `required_kind:EVIDENCE_BUNDLE` |
 | P19 | release_candidate_commit_matches_verified_commit | `lifecycle:candidate_binding` (`nogap_lifecycle.resolve_candidate_binding`/`candidate_hash` matching - not a `required_kind`) |
 
@@ -439,6 +439,63 @@ All 25 resolve under the namespaces defined in §4 (no sixth namespace was neede
 verified by checking every row's actual proven content, not assumed from a kind sharing a
 phase or a theme with the check). Two rows (P5, P8) are mechanism-complete but registry-
 blocked on a small, named wording correction - see §6 invariant 7 and §9.
+
+### 4.4.1 `lifecycle:transition_history` - the fixed P13→P14 edge and its lineage rule
+(REPAIR, RESOLVER-CONTEXT-REF-GAP-PRE)
+
+P13 `patch_artifact_recorded` and P14 `execution_evidence_authority_is_execution` were
+originally mapped to `required_kind:PATCH`/`required_kind:EXECUTION_EVIDENCE` directly, but
+neither kind is resolvable from `ResolverContext{project, phase_id}` alone: `PATCH` has no
+persisted artifact type at all, and evidence-ledger records carry no `phase_id` field - both
+require a transition-scoped reference (a patch file path, an evidence id) with no
+phase-indexed record to discover, and no existing "current" selector for either (unlike
+release candidates - see §4.4's P19 rows, which reuse a real one). Inventing a "latest
+evidence"/"latest patch" selector was explicitly rejected: it is exactly the kind of new
+selection semantics §4.1 forbids, and no code anywhere already performs it.
+
+A real, existing, code-grounded binding was found instead: `nogap_build.enter_self_check_phase`
+performs the actual P13→P14 transition via a single call -
+`nogap_methodology.transition(project, "P14", ..., evidence_refs=[execution_evidence_id],
+artifact_refs=[patch_path])` - which `transition()` persists permanently into
+`state["transition_history"]` (append-only; the only write anywhere is `.append`, confirmed by
+direct inspection - no entry is ever rewritten). Both refs this PRE needed were already being
+recorded, at the exact moment they were real and validated; they were simply never read by
+anything outside the methodology engine until now.
+
+**The fixed edge, not a per-check derivation.** Both checks read the SAME transition record,
+identified by the one fixed edge `(from_phase == "P13", to_phase == "P14")` - never derived
+generically from `ctx.phase_id` (that derivation is wrong for P14's own check, since its
+evidence lives on the edge INTO P14, not on any edge FROM it). P13's check reads that record's
+`artifact_refs`; P14's check reads its `evidence_refs`. One shared lookup, two fields read from
+it - never two independent scans.
+
+**The lineage rule (REQUIRED, not optional - this is what makes the selector safe, not a bare
+"last match"):** every phase's `failure_transition` in the whole contract graph routes back to
+`_UNIVERSAL_REPAIR_TARGET = "P13"` (`nogap_methodology.py`), so a failure at ANY later phase can
+send the project back to P13 for a redo - and that return is itself an ordinary, visible,
+appended `transition_history` entry (`transition_type: "LOOP_RETURN"`, `to_phase: "P13"`),
+exactly like the normal `P12→P13` start of a fresh attempt (`enter_execution_phase`). A resolver
+that simply took "the last `P13→P14` entry anywhere in history" would report a STALE PASS after
+such a return, if the redo has not yet produced a fresh successful close - a real correctness
+bug, not a hypothetical one. The safe rule:
+
+```
+scan transition_history in append order, tracking only two event kinds:
+  entry-into-P13:  to_phase == "P13"                     (fresh attempt begins - forward OR repair return)
+  close-of-P13:    from_phase == "P13" and to_phase == "P14"   (the ONLY function that ever writes this: enter_self_check_phase)
+
+find the LAST occurrence of either kind (by array index - append-only, so this is a total order):
+  if it is a close-of-P13  -> that record's artifact_refs/evidence_refs are the current,
+                               authoritative binding for both P13's and P14's checks
+  if it is an entry-into-P13 (no close since)
+                            -> no valid current binding exists: MISSING/FAIL, never a stale PASS
+```
+
+This is provable from the code (append-only history, the fixed set of functions that ever
+write `to_phase=="P13"` or the `P13→P14` edge), not an analogy to `current_phase` and not a
+heuristic - the F3-B2 resolver, when implemented, composes over this rule and the already-
+authoritative `required_kind:PATCH`/`required_kind:EXECUTION_EVIDENCE` checks, never
+reimplementing either.
 
 ## 5. Coverage: every declared check gets exactly one row, including P23's (Opus's finding, adopted)
 
@@ -698,8 +755,8 @@ null`).
 | 28 | P12 | task_contract_has_forbidden_scope | DC | `P12_TASK_CONTRACT.forbidden_scope` | `required_kind:TASK_CONTRACT` | NONE |
 | 29 | P12 | task_contract_has_acceptance_criteria | DC | `P12_TASK_CONTRACT.acceptance_criteria` | `required_kind:TASK_CONTRACT` | NONE |
 | 30 | P13 | execution_ran_inside_isolated_worktree | **BI** | verified true by construction (no alternate code path in `nogap_execution.py`); **no evidence field records it** (checked `provenance` dict directly - no `worktree_path` or equivalent) | — | NONE |
-| 31 | P13 | patch_artifact_recorded | DC | patch persisted | `required_kind:PATCH` | NONE |
-| 32 | P14 | execution_evidence_authority_is_execution | DC | `_check_evidence_kind`: `authority == "execution"` exact match | `required_kind:EXECUTION_EVIDENCE` | NONE |
+| 31 | P13 | patch_artifact_recorded | DC | patch persisted; ref obtained via the fixed P13→P14 transition record's `artifact_refs` per the lineage rule (§4.4.1, RESOLVER-CONTEXT-REF-GAP-PRE), then checked by `required_kind:PATCH`'s own `_check_file_kind` | `lifecycle:transition_history` | NONE |
+| 32 | P14 | execution_evidence_authority_is_execution | DC | `_check_evidence_kind`: `authority == "execution"` exact match; ref obtained via the SAME fixed transition record's `evidence_refs` per the lineage rule (§4.4.1) | `lifecycle:transition_history` | NONE |
 | 33 | P14 | execution_evidence_never_self_marked_authoritative | SB | `EXECUTION_EVIDENCE`'s shape-check does not cover this; `is_authoritative_evidence()`/`execution_actor_ids()` are real, reusable standalone functions | — | NONE |
 | 34 | P15 | verification_ladder_depth_matches_active_profile_risk_and_claim_strength | SB | `_effective_profile_for_phase`/`PROFILE_ORDER` real; no comparison logic against `required_levels` exists | — | NONE |
 | 35 | P16 | deterministic_verification_ran_in_fresh_worktree | **BI** | same structural guarantee, same absence of per-run evidence, as row 30 | — | NONE |
