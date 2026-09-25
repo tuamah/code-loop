@@ -212,10 +212,10 @@ MANIFEST: tuple[dict[str, Any], ...] = (
      "classification": BUILD_INVARIANT, "obligation_scope": BUILD},
     {"phase_id": "P13", "check_name": "patch_artifact_recorded",
      "classification": DIRECT_COMPOSITION, "obligation_scope": PROJECT,
-     "planned_resolver_id": "required_kind:PATCH"},
+     "planned_resolver_id": "lifecycle:transition_history"},
     {"phase_id": "P14", "check_name": "execution_evidence_authority_is_execution",
      "classification": DIRECT_COMPOSITION, "obligation_scope": PROJECT,
-     "planned_resolver_id": "required_kind:EXECUTION_EVIDENCE"},
+     "planned_resolver_id": "lifecycle:transition_history"},
     {"phase_id": "P14", "check_name": "execution_evidence_never_self_marked_authoritative",
      "classification": SMALL_BINDING, "obligation_scope": PROJECT},
     {"phase_id": "P15", "check_name": "verification_ladder_depth_matches_active_profile_risk_and_claim_strength",
@@ -431,6 +431,69 @@ def _candidate_binding_resolver(ctx: ResolverContext, entry: RegistryEntry) -> R
         return ResolverOutcome(FAIL, str(exc), semantic_source)
     return ResolverOutcome(
         PASS, f"{candidate.get('release_candidate_id')} candidate_bindings all resolve", semantic_source)
+
+
+# -- F3-B2: P13/P14, lifecycle:transition_history (§4.4.1's frozen lineage rule) -------------
+
+
+def _current_p13_attempt_binding(project: Path) -> dict[str, Any] | None:
+    """§4.4.1, verbatim: scan `transition_history` in append order, tracking only two event
+    kinds - `to_phase == "P13"` (a fresh attempt begins, forward or repair LOOP_RETURN alike)
+    and `from_phase == "P13" and to_phase == "P14"` (the ONLY function that ever writes this,
+    `nogap_build.enter_self_check_phase`). The LAST occurrence of either kind decides: a
+    close-of-P13 is the current, authoritative binding for both P13's and P14's checks; an
+    entry-into-P13 with no close since means no valid binding exists yet. One shared lookup -
+    P13's and P14's resolvers both call this, never scanning independently."""
+    from nogap_methodology import load_state
+
+    state = load_state(project)
+    if state is None:
+        return None
+    last_kind: str | None = None
+    last_record: dict[str, Any] | None = None
+    for record in state.get("transition_history", []):
+        if record.get("to_phase") == "P13":
+            last_kind, last_record = "entry", record
+        elif record.get("from_phase") == "P13" and record.get("to_phase") == "P14":
+            last_kind, last_record = "close", record
+    return last_record if last_kind == "close" else None
+
+
+_NO_CURRENT_BINDING_DETAIL = (
+    "no current P13-attempt binding: either no P13→P14 transition has ever occurred, or "
+    "the project re-entered P13 (repair) and has not closed it again"
+)
+
+
+@_register("lifecycle:transition_history")
+def _transition_history_resolver(ctx: ResolverContext, entry: RegistryEntry) -> ResolverOutcome:
+    """P13 `patch_artifact_recorded` and P14 `execution_evidence_authority_is_execution` share
+    this ONE resolver_id (§4.4.1: both read the SAME transition record) - so this is one
+    function, dispatching on `entry.phase_id`, not two independently-registered resolvers under
+    a colliding key. One shared lookup (`_current_p13_attempt_binding`) either way; P13 reads
+    the binding's `artifact_refs` and feeds `required_kind:PATCH`'s own authoritative check
+    (`_check_file_kind`); P14 reads its `evidence_refs` and feeds `required_kind:
+    EXECUTION_EVIDENCE`'s own authoritative check (`_check_evidence_kind`,
+    `authorities=('execution',)`). Neither reimplements PATCH/authority semantics - both defer
+    entirely to `nogap_required_kinds.check_required_kinds`."""
+    semantic_source = "lifecycle:transition_history"
+    binding = _current_p13_attempt_binding(ctx.project)
+    if binding is None:
+        return ResolverOutcome(FAIL, _NO_CURRENT_BINDING_DETAIL, semantic_source)
+
+    if entry.phase_id == "P13":
+        refs = list(binding.get("artifact_refs") or [])
+        verdict = rk.check_required_kinds(ctx.project, ["PATCH"], refs)[0]
+        outcome = _required_kind_outcome("PATCH", verdict)
+    elif entry.phase_id == "P14":
+        refs = list(binding.get("evidence_refs") or [])
+        verdict = rk.check_required_kinds(ctx.project, ["EXECUTION_EVIDENCE"], refs)[0]
+        outcome = _required_kind_outcome("EXECUTION_EVIDENCE", verdict)
+    else:  # pragma: no cover - only P13/P14 rows carry this resolver_id (registry-load invariant 11)
+        return ResolverOutcome(ERROR, f"lifecycle:transition_history has no binding for phase {entry.phase_id!r}",
+                                semantic_source)
+
+    return ResolverOutcome(outcome.status, outcome.detail, semantic_source)
 
 
 # -- registry loader (§6) ---------------------------------------------------------------------
