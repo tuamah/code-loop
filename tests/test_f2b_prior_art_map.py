@@ -67,7 +67,7 @@ class PriorArtMapEnforced(unittest.TestCase):
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
         self.assertEqual(len(enforced), 35)
-        self.assertEqual(len(deferred), 2)
+        self.assertEqual(len(deferred), 1)
         self.assertIn("PRIOR_ART_MAP", enforced)
         self.assertNotIn("PRIOR_ART_MAP", deferred)
 

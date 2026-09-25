@@ -61,7 +61,7 @@ class GoldenGatesEnforced(unittest.TestCase):
         self.assertEqual(declared - (enforced | deferred), set())
         self.assertEqual((enforced | deferred) - declared, set())
         self.assertEqual(len(enforced), 35)
-        self.assertEqual(len(deferred), 2)
+        self.assertEqual(len(deferred), 1)
 
     # -- no gate at all: draft, never frozen -> MISSING --
     def test_no_frozen_gate_missing(self):
