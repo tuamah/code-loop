@@ -23,8 +23,15 @@ blocked on their own wording fixes) and every SMALL_BINDING/NO_REPRESENTATION/BU
 CONFLICT row are equally out of scope - F3-D/F3-E/`BUILD-INVARIANT-PRE`/`P23-LIFECYCLE-OUTCOME-
 PRE` own those, not this module.
 
-No F3-C evaluator exists here - `evaluate_exit_gate` is F3-C's own deliverable, not built yet.
-Nothing in this module is wired into `_evaluate_transition`; nothing here blocks anything.
+F3-B2 (RESOLVER-CONTEXT-REF-GAP-PRE) added P13/P14's shared `lifecycle:transition_history`
+resolver (§4.4.1's frozen lineage rule - see `_current_p13_attempt_binding`), so all 23
+`RESOLVER_PENDING` rows are IMPLEMENTED as of that closure; only P5/P8 (registry-blocked on
+their own wording fixes) remain UNIMPLEMENTED among the `DIRECT_COMPOSITION` rows.
+
+F3-C adds `evaluate_exit_gate(project, phase_id) -> ExitGateEvaluation`: a read-only, report-
+only evaluator, never called from `_evaluate_transition`, never blocking anything - it only
+produces real PASS/FAIL/ERROR/UNIMPLEMENTED results for a phase's declared exit_gate.checks
+for the first time. Nothing in this module is wired into `_evaluate_transition`.
 """
 from __future__ import annotations
 
@@ -624,3 +631,97 @@ def resolve(entry: RegistryEntry, ctx: ResolverContext) -> ResolverOutcome:
                                        f"{outcome.semantic_source!r}, registry row is {entry.semantic_source!r}",
                                 entry.semantic_source or "")
     return outcome
+
+
+# -- F3-C: report-only evaluator ---------------------------------------------------------------
+#
+# `evaluate_exit_gate` is read-only and self-contained: it never mutates project state, never
+# writes an evidence/artifact/decision record, and is never called from `_evaluate_transition`
+# (nogap_methodology.py) - nothing here blocks anything. It only PRODUCES, for the first time,
+# real PASS/FAIL/ERROR/UNIMPLEMENTED results for a phase's declared exit_gate.checks - it does
+# not decide what any of that means for a transition (F3-F's own, later, deliberately separate
+# question).
+
+UNIMPLEMENTED_RESULT = "UNIMPLEMENTED"  # §3 - the fourth ExitCheckResult.status value
+REGISTRY_VERSION_SENTINEL = "unversioned"  # §3 - fixed until F3-F assigns real versions/digests
+
+
+@dataclass(frozen=True)
+class ExitCheckResult:
+    """§3, verbatim."""
+
+    phase_id: str
+    check_name: str
+    status: str  # PASS | FAIL | ERROR | UNIMPLEMENTED
+    detail: str
+    semantic_source: str | None
+
+
+@dataclass(frozen=True)
+class ExitGateEvaluation:
+    """§3, verbatim. `all_implemented`/`all_passed` are computed in `evaluate_exit_gate` at
+    construction time - never stored as an independently-settable field, so they can never
+    disagree with `results` itself (§3's own REPAIR note)."""
+
+    phase_id: str
+    results: tuple[ExitCheckResult, ...]
+    all_implemented: bool
+    all_passed: bool
+    registry_version: str
+
+
+def _declared_checks_for_phase(phase_id: str, methodology_dir: Path | None = None) -> list[str]:
+    """The one phase's own `exit_gate.checks`, in DECLARED ORDER - never a registry dict's
+    iteration order, never sorted. Mirrors `_declared_exit_checks`'s own file-reading shape,
+    scoped to a single phase."""
+    import json
+
+    from nogap_methodology import METHODOLOGY_DIR
+
+    directory = Path(methodology_dir) if methodology_dir else METHODOLOGY_DIR
+    for path in sorted((directory / "phases").glob("p*.json")):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if data["id"] == phase_id:
+            return list(data["exit_gate"]["checks"])
+    raise ValueError(f"unknown phase_id: {phase_id!r}")  # fail closed on a bad phase id
+
+
+def _unimplemented_detail(entry: RegistryEntry) -> str:
+    detail = f"UNIMPLEMENTED: {entry.unimplemented_reason}"
+    if entry.blocked_by:
+        detail += f" (blocked_by: {entry.blocked_by})"
+    return detail
+
+
+def evaluate_exit_gate(project: Path, phase_id: str,
+                       methodology_dir: Path | None = None) -> ExitGateEvaluation:
+    """§7 item 2's own deliverable, verbatim signature. Loads the registry (fail-closed, §6),
+    resolves every declared check for `phase_id` in its declared order, and returns one
+    immutable `ExitGateEvaluation` - PASS/FAIL/ERROR for every IMPLEMENTED row (via `resolve`,
+    §4.2's exception/mismatch handling included), UNIMPLEMENTED for every row that is not.
+    Never raises for an ordinary UNIMPLEMENTED row - only `load_registry`'s own fail-closed
+    invariants, or an unknown `phase_id`, can raise here."""
+    registry = load_registry(methodology_dir)
+    ctx = ResolverContext(project=project, phase_id=phase_id)
+
+    results: list[ExitCheckResult] = []
+    for check_name in _declared_checks_for_phase(phase_id, methodology_dir):
+        entry = registry[(phase_id, check_name)]
+        if entry.implementation_status == IMPLEMENTED:
+            outcome = resolve(entry, ctx)
+            results.append(ExitCheckResult(
+                phase_id=phase_id, check_name=check_name, status=outcome.status,
+                detail=outcome.detail, semantic_source=outcome.semantic_source))
+        else:
+            results.append(ExitCheckResult(
+                phase_id=phase_id, check_name=check_name, status=UNIMPLEMENTED_RESULT,
+                detail=_unimplemented_detail(entry), semantic_source=entry.semantic_source))
+
+    results_tuple = tuple(results)
+    return ExitGateEvaluation(
+        phase_id=phase_id,
+        results=results_tuple,
+        all_implemented=all(r.status != UNIMPLEMENTED_RESULT for r in results_tuple),
+        all_passed=all(r.status == PASS for r in results_tuple),
+        registry_version=REGISTRY_VERSION_SENTINEL,
+    )
