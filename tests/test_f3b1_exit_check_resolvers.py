@@ -56,17 +56,19 @@ def _project_hash(project: Path) -> str:
 
 
 class RegistryScope(unittest.TestCase):
-    """Point 7: registry-load invariants stay correct, and exactly the authorized 21 rows are
-    IMPLEMENTED - never more, never fewer."""
+    """Point 7: registry-load invariants stay correct, and exactly the authorized rows are
+    IMPLEMENTED - never more, never fewer.
 
-    def test_registry_loads_and_exactly_21_rows_are_implemented(self):
-        # ARTIFACT-FIELD-ATTRIBUTION-PRE closed: the 2 artifact_field: rows (P5
-        # decision_has_reason, P11 stop_conditions_defined) are back to IMPLEMENTED, now bound
-        # to nogap_artifacts.check_required_field instead of whole-record validate_record().
+    F3-B2 closed RESOLVER-CONTEXT-REF-GAP-PRE: P13/P14 are IMPLEMENTED now too (tests/
+    test_f3b2_transition_history_resolvers.py owns their own coverage) - 21 (F3-B1) + 2
+    (F3-B2) = 23. P5/P8 remain the only UNIMPLEMENTED DIRECT_COMPOSITION rows, still blocked
+    on their own wording fixes."""
+
+    def test_registry_loads_and_exactly_23_rows_are_implemented(self):
         registry = er.load_registry()
         self.assertEqual(len(registry), 50)
         implemented = {k for k, v in registry.items() if v.implementation_status == er.IMPLEMENTED}
-        self.assertEqual(len(implemented), 21)
+        self.assertEqual(len(implemented), 23)
         for key in implemented:
             entry = registry[key]
             self.assertEqual(entry.classification, er.DIRECT_COMPOSITION)
@@ -75,26 +77,17 @@ class RegistryScope(unittest.TestCase):
             self.assertIsNone(entry.unimplemented_reason)
             self.assertIsNone(entry.blocked_by)
 
-    def test_p5_p8_p13_p14_stay_unimplemented(self):
+    def test_p5_p8_stay_unimplemented(self):
         registry = er.load_registry()
         for key in (("P5", "decision_value_is_one_of_build_buy_adopt_fork_integrate"),
-                    ("P8", "adr_records_reason"),
-                    ("P13", "patch_artifact_recorded"),
-                    ("P14", "execution_evidence_authority_is_execution")):
+                    ("P8", "adr_records_reason")):
             entry = registry[key]
             self.assertEqual(entry.implementation_status, er.UNIMPLEMENTED, key)
             self.assertEqual(entry.classification, er.DIRECT_COMPOSITION, key)
             self.assertIsNone(entry.resolver_id, key)
             self.assertIsNone(entry.semantic_source, key)
-        self.assertEqual(registry[("P5", "decision_value_is_one_of_build_buy_adopt_fork_integrate")]
-                          .unimplemented_reason, er.WORDING_CONFLICT)
-        self.assertEqual(registry[("P8", "adr_records_reason")].unimplemented_reason, er.WORDING_CONFLICT)
-        self.assertEqual(registry[("P13", "patch_artifact_recorded")].unimplemented_reason,
-                          er.RESOLVER_PENDING)
-        self.assertEqual(registry[("P14", "execution_evidence_authority_is_execution")]
-                          .unimplemented_reason, er.RESOLVER_PENDING)
-        self.assertIsNone(registry[("P13", "patch_artifact_recorded")].blocked_by)
-        self.assertIsNone(registry[("P14", "execution_evidence_authority_is_execution")].blocked_by)
+            self.assertEqual(entry.unimplemented_reason, er.WORDING_CONFLICT, key)
+            self.assertIsNotNone(entry.blocked_by, key)
 
     def test_artifact_field_rows_reimplemented_after_attribution_repair(self):
         # ARTIFACT-FIELD-ATTRIBUTION-PRE closed: both rows are IMPLEMENTED again, bound to
@@ -108,12 +101,23 @@ class RegistryScope(unittest.TestCase):
             self.assertIsNone(entry.unimplemented_reason, key)
             self.assertIsNone(entry.blocked_by, key)
 
-    def test_no_resolver_bound_for_p13_p14(self):
-        self.assertNotIn("required_kind:PATCH", er.RESOLVERS)
-        self.assertNotIn("required_kind:EXECUTION_EVIDENCE", er.RESOLVERS)
+    def test_p13_p14_reimplemented_after_ref_gap_repair(self):
+        # RESOLVER-CONTEXT-REF-GAP-PRE closed (F3-B2): both rows IMPLEMENTED, bound to the
+        # SAME shared resolver_id lifecycle:transition_history.
+        registry = er.load_registry()
+        for key in (("P13", "patch_artifact_recorded"),
+                    ("P14", "execution_evidence_authority_is_execution")):
+            entry = registry[key]
+            self.assertEqual(entry.implementation_status, er.IMPLEMENTED, key)
+            self.assertEqual(entry.classification, er.DIRECT_COMPOSITION, key)
+            self.assertEqual(entry.resolver_id, "lifecycle:transition_history", key)
+            self.assertEqual(entry.resolver_id, entry.planned_resolver_id, key)
+            self.assertIsNone(entry.unimplemented_reason, key)
+            self.assertIsNone(entry.blocked_by, key)
 
-    def test_exactly_18_unique_resolvers_bound(self):
-        self.assertEqual(len(er.RESOLVERS), 18)
+    def test_exactly_19_unique_resolvers_bound(self):
+        # 18 (F3-B1) + 1 shared lifecycle:transition_history (F3-B2, serves both P13 and P14).
+        self.assertEqual(len(er.RESOLVERS), 19)
 
 
 class P0ThroughP11Fixture(unittest.TestCase):
