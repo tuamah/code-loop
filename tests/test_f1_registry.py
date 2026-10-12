@@ -312,6 +312,31 @@ class StoreBoundaryTests(RegistryFixture):
         for required in ("transaction", "commit"):
             self.assertTrue(callable(getattr(r.RegistryStore, required, None)))
 
+    def test_lifecycle_changes_are_written_back_through_put_key(self):
+        """Found by I5b's durable wiring, not by this suite.
+
+        Retirement and revocation mutated the object get_key returned and never called put_key.
+        That worked only because the in-memory store hands back a live reference — an aliasing
+        assumption the RegistryStore interface never made. A store that deserializes silently
+        dropped both. This asserts the contract the code actually depends on.
+        """
+        class NoAliasing(r.InMemoryRegistryStore):
+            """Returns a copy, like any store that serializes."""
+
+            def get_key(self, key_id):
+                import copy
+                state = super().get_key(key_id)
+                return copy.deepcopy(state) if state is not None else None
+
+        registry = r.AuthorityRegistry(self.root_sk.public_key(), store=NoAliasing())
+        self.commit("add_key", [grant_entry("key-1", self.pub)], registry=registry)
+        self.commit("retire_key", [{"key_id": "key-1"}], registry=registry)
+        self.assertEqual(registry.state_of("key-1"), r.RETIRED,
+                         "retirement was lost because it was never written back")
+        self.commit("revoke_key", [{"key_id": "key-1", "compromised_after_epoch": 2}],
+                    registry=registry)
+        self.assertEqual(registry.state_of("key-1"), r.REVOKED)
+
     def test_commit_outside_a_transaction_is_refused(self):
         # Found by mutation. Nothing in I2's flow reaches it, but I5 writes the next store against
         # this interface, and a commit() that silently no-ops outside a transaction is how a
