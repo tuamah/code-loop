@@ -1,0 +1,36 @@
+{
+  "id": "P2",
+  "macro_phase": "DEFINE",
+  "name": "Success / Failure / Risk / Claim Strength",
+  "required_inputs": [
+    "PROBLEM_STATEMENT",
+    "SCOPE"
+  ],
+  "required_artifacts": [
+    "SUCCESS_CRITERIA",
+    "FAILURE_CRITERIA",
+    "RISK_CLASSIFICATION",
+    "CLAIM_STRENGTH"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "human_owner"
+  ],
+  "exit_gate": {
+    "description": "Success, failure, risk, and claim-strength are all classified before RESEARCH begins. DEFINE completion here does not by itself authorize BUILD.",
+    "checks": [
+      "success_criteria_measurable",
+      "failure_criteria_recorded",
+      "risk_level_set",
+      "claim_strength_set"
+    ]
+  },
+  "allowed_next": [
+    "P3"
+  ],
+  "allowed_back_transitions": [
+    "P1"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

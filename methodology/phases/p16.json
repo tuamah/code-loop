@@ -1,0 +1,33 @@
+{
+  "id": "P16",
+  "macro_phase": "VERIFY",
+  "name": "Three-Level Validation",
+  "loop": "verify_loop",
+  "required_inputs": [
+    "VERIFICATION_PLAN"
+  ],
+  "required_artifacts": [
+    "DETERMINISTIC_VERIFICATION_EVIDENCE"
+  ],
+  "required_evidence": [
+    "verification_evidence"
+  ],
+  "required_roles": [
+    "verifier"
+  ],
+  "exit_gate": {
+    "description": "Deterministic verification (code check, local tests, clean-environment run) runs in a fresh isolated worktree independent of the one that produced the patch.",
+    "checks": [
+      "deterministic_verification_ran_in_fresh_worktree",
+      "required_commands_and_forbidden_paths_checked"
+    ]
+  },
+  "allowed_next": [
+    "P17"
+  ],
+  "allowed_back_transitions": [
+    "P15"
+  ],
+  "failure_transition": "P13",
+  "minimum_profile": "LIGHT"
+}

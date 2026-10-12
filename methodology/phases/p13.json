@@ -1,0 +1,34 @@
+{
+  "id": "P13",
+  "macro_phase": "BUILD",
+  "name": "Minimal Controlled Implementation",
+  "loop": "build_loop",
+  "required_inputs": [
+    "TASK_CONTRACT"
+  ],
+  "required_artifacts": [
+    "PATCH"
+  ],
+  "required_evidence": [
+    "dispatch_record",
+    "execution_evidence"
+  ],
+  "required_roles": [
+    "implementer"
+  ],
+  "exit_gate": {
+    "description": "Implementation happens only inside an isolated, bounded execution boundary and produces a patch, never a direct edit to the trusted working tree.",
+    "checks": [
+      "execution_ran_inside_isolated_worktree",
+      "patch_artifact_recorded"
+    ]
+  },
+  "allowed_next": [
+    "P14"
+  ],
+  "allowed_back_transitions": [
+    "P12"
+  ],
+  "failure_transition": "P12",
+  "minimum_profile": "LIGHT"
+}

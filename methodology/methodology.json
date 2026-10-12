@@ -1,0 +1,31 @@
+{
+  "methodology_id": "vibe-coding-engineering-methodology",
+  "version": "1.0.0",
+  "source": "VIBE_CODING_ENGINEERING_METHODOLOGY_MASTER (P0-P23 Canonical Lifecycle)",
+  "macro_phases": [
+    "DEFINE",
+    "RESEARCH",
+    "DESIGN",
+    "PREPARE",
+    "BUILD",
+    "VERIFY",
+    "RELEASE",
+    "OPERATE",
+    "EVOLVE"
+  ],
+  "subphases": [
+    "P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9", "P10", "P11",
+    "P12", "P13", "P14", "P15", "P16", "P17", "P18", "P19", "P20", "P21", "P22", "P23"
+  ],
+  "loops": [
+    "research_loop",
+    "build_loop",
+    "verify_loop",
+    "repair_loop",
+    "improvement_loop"
+  ],
+  "principles": [
+    "GP-1", "GP-2", "GP-3", "GP-4", "GP-5", "GP-6", "GP-7", "GP-8", "GP-9", "GP-10",
+    "GP-11", "GP-12", "GP-13", "GP-14", "GP-15", "GP-16", "GP-17", "GP-18", "GP-19", "GP-20"
+  ]
+}

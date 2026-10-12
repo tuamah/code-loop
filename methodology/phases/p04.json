@@ -1,0 +1,30 @@
+{
+  "id": "P4",
+  "macro_phase": "RESEARCH",
+  "name": "Gap & Existing-Solution Analysis",
+  "loop": "research_loop",
+  "required_inputs": [
+    "PRIOR_ART_MAP"
+  ],
+  "required_artifacts": [
+    "GAP_ANALYSIS"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "researcher"
+  ],
+  "exit_gate": {
+    "description": "The gap between prior art and this project's problem is explicit.",
+    "checks": [
+      "gap_analysis_references_prior_art_map"
+    ]
+  },
+  "allowed_next": [
+    "P5"
+  ],
+  "allowed_back_transitions": [
+    "P3"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

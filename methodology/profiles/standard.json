@@ -1,0 +1,6 @@
+{
+  "id": "STANDARD",
+  "name": "Standard",
+  "description": "For normal production work. No phase is structurally skippable: reproducibility (P17) and independent review (P18) are both required before a release candidate can be frozen.",
+  "skippable_phases": []
+}

@@ -14,6 +14,7 @@ TEXT_FILES = [
     ROOT / "AGENTS.md",
     ROOT / "README.md",
     ROOT / "agents" / "openai.yaml",
+    ROOT / "dashboard" / "index.html",
     *sorted((ROOT / "references").glob("*.md")),
     *sorted((ROOT / "council" / "roles").glob("*.md")),
     *sorted((ROOT / "council" / "workflows").glob("*.md")),
@@ -73,6 +74,7 @@ def main() -> None:
         "references/risk-matrix.md",
         "references/verification.md",
         "references/token-discipline.md",
+        "references/nogap-runtime.md",
     ]
     for ref in required_refs:
         if ref not in skill:
@@ -102,6 +104,10 @@ def main() -> None:
         ROOT / "scripts" / "install-project.py",
         ROOT / "scripts" / "validate-council.py",
         ROOT / "scripts" / "nogap.py",
+        ROOT / "scripts" / "nogap_dashboard.py",
+        ROOT / "scripts" / "nogap_connections.py",
+        ROOT / "dashboard" / "index.html",
+        ROOT / "runtime" / "config" / "model-router.policy.json",
         ROOT / "benchmarks" / "__init__.py",
         ROOT / "benchmarks" / "nogapbench" / "__init__.py",
         ROOT / "benchmarks" / "nogapbench" / "test_nogapbench.py",
@@ -114,6 +120,7 @@ def main() -> None:
         ROOT / "runtime" / "schemas" / "decision.schema.json",
         ROOT / "runtime" / "schemas" / "lesson.schema.json",
         ROOT / "runtime" / "schemas" / "literature-claim.schema.json",
+        ROOT / "runtime" / "schemas" / "routing-decision.schema.json",
     ]
     missing_required = [str(path.relative_to(ROOT)) for path in required_paths if not path.exists()]
     if missing_required:

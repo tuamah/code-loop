@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "NoGapCode Methodology Loop Record",
+  "description": "One of the five methodology loops entered by a project (M7-C). A loop is not a P-stage: it is metadata/context around phase transitions. Append-only: resolving a loop updates its status in place, it is never removed from state.loops.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["loop_id", "loop_type", "origin_phase", "current_phase", "reason", "status", "entered_at", "evidence_refs"],
+  "properties": {
+    "loop_id": { "type": "string", "minLength": 1 },
+    "loop_type": { "enum": ["research_loop", "build_loop", "verify_loop", "repair_loop", "improvement_loop"] },
+    "origin_phase": { "type": "string", "pattern": "^P([0-9]|1[0-9]|2[0-3])$" },
+    "current_phase": { "type": "string", "pattern": "^P([0-9]|1[0-9]|2[0-3])$" },
+    "reason": { "type": "string", "minLength": 1 },
+    "status": { "enum": ["ACTIVE", "RESOLVED", "BLOCKED", "INCONCLUSIVE"] },
+    "entered_at": { "type": "string", "format": "date-time" },
+    "resolved_at": { "type": ["string", "null"], "format": "date-time" },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}

@@ -37,6 +37,11 @@
       "uniqueItems": true
     },
     "evidence_strength": { "enum": ["primary", "secondary", "weak"] },
+    "acceptance_evidence": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
     "decision": { "enum": ["learn", "defer", "reject"] },
     "reason": { "type": "string" },
     "can_be_tested_by": { "type": "string" },

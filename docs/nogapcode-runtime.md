@@ -1,13 +1,13 @@
 # NoGapCode Runtime Architecture
 
-NoGapCode is the product direction for Code Loop: a vendor-neutral verified engineering runtime.
-The current `code-loop` package remains the lightweight protocol, skill, and compatibility layer
-until the repository and distribution names are intentionally migrated.
+NoGapCode is the product direction for Code Loop: a provider-neutral Trust Runtime. The current
+`code-loop` package remains the lightweight protocol, skill, and compatibility layer until the
+repository and distribution names are intentionally migrated.
 
 ## Positioning
 
-NoGapCode is not another coding agent. It runs coding agents under shared gates, evidence, policy,
-and decisions.
+NoGapCode is not another coding agent. It runs coding agents, humans, tools, and model providers
+under shared gates, evidence provenance, policy, and deterministic decisions.
 
 ```text
 NoGapCode = no gap between code claims and verified evidence
@@ -15,7 +15,13 @@ NoGapCode = no gap between code claims and verified evidence
 
 The core value is not multi-agent execution by itself. The core value is preventing false success:
 an agent must not pass by deleting tests, relaxing thresholds, changing baselines, hiding failures,
-or rewriting the definition of done.
+renaming its role, or issuing ACCEPT for its own work.
+
+Primary invariant:
+
+```text
+Execution Authority MUST NOT be Acceptance Authority.
+```
 
 ## Runtime Thesis
 
@@ -27,6 +33,7 @@ Implementer adapter
 Independent Verifier
 Immutable Gate
 Evidence artifact
+Authority identity
 Bounded repair loop
 Final decision
 ```
@@ -61,17 +68,23 @@ new features must reduce authority or strengthen evidence rather than merely add
 ## Planes
 
 ```text
-Control Plane
-  Council policy, gate policy, budget, escalation, final decision
+Control / Decision Plane
+  deterministic lifecycle, gate policy, risk, escalation, budget, Decision Engine
 
 Execution Plane
-  Task lifecycle, provider adapters, tool access, sandbox, retries, cancellation
+  AgentRuntime, execution lifecycle, bounded repair, cancellation, sandbox boundary
 
-Evidence Plane
-  Claims, tests, traces, reviews, artifacts, provenance, stale evidence checks
+Tool / Capability Plane
+  ToolProvider, capability metadata, permission boundary
 
-State Plane
+Verification / Evidence Plane
+  immutable gates, claims, independent verifier identity, provenance, stale evidence checks
+
+State / Event Plane
   Repository, .code-loop/, append-only events, checkpoints, decisions
+
+Observability Plane
+  structured run events, routing decisions, verification and decision summaries
 ```
 
 ## Lifecycle
@@ -85,6 +98,7 @@ task intake
 -> collect patch
 -> verify independently
 -> collect evidence
+-> check authority separation
 -> repair if bounded
 -> re-verify
 -> decide pass / repair / abstain / human-review
@@ -101,7 +115,12 @@ human approval.
 ## Evidence
 
 Every important claim should link to evidence. Evidence is stronger when it is deterministic,
-reproducible, and tied to a commit hash, run id, gate hash, and command output.
+reproducible, and tied to a producer identity, authority class, role, commit hash, run id, gate
+hash, command output, and artifact path when available.
+
+Authoritative final acceptance requires at least one passing evidence item produced by an
+independent verification or human authority for the frozen gate. Executor evidence may be useful,
+but it is not authoritative for final ACCEPT.
 
 Evidence should be modeled as edges before adopting a graph database:
 
@@ -113,6 +132,98 @@ Claim C17
 ```
 
 Start with files or SQLite. Defer graph infrastructure until queries prove it is needed.
+
+## Authority Model
+
+The current runtime uses a deliberately small authority model:
+
+- `execution`: may inspect gates, edit project code, run local checks, and submit claims.
+- `verification`: may produce authoritative verification evidence when independent from execution.
+- `acceptance`: may issue ACCEPT only when admissible independent evidence exists.
+- `human`: may act as verification or acceptance authority when recorded explicitly.
+- `tool`: may produce useful non-authoritative evidence unless a policy elevates it later.
+
+Identity is based on `actor_id` when present, falling back to producer fields such as `created_by`.
+Role strings are advisory metadata; changing `role` to `verifier` does not bypass an execution
+identity conflict.
+
+## Decision Engine
+
+The minimal acceptance policy is:
+
+- all referenced ACCEPT evidence must be passing
+- evidence must reference a known frozen gate hash
+- at least one referenced item must be authoritative independent verification or human evidence
+- the final acceptor must use acceptance or human authority
+- the final acceptor cannot be an execution identity for the same run
+- failed, blocked, or inconclusive authoritative evidence blocks ACCEPT
+
+When these checks fail, the runtime repairs, abstains, or asks for human review rather than turning
+model confidence or local checks into trust.
+
+## Provider Contracts
+
+Provider-neutrality is represented by separate contracts rather than one broad provider interface:
+
+- `ModelProvider`: model metadata and invocation capability
+- `AgentRuntime`: execution lifecycle for coding/reasoning clients
+- `ToolProvider`: tools and permission/capability metadata
+- `AuthProvider`: identity, credential, and account boundary
+- `ExecutionBackend`: local, sandboxed, remote, or accelerator-backed execution
+
+Routing decisions are serializable evidence/event metadata: selected provider/runtime/model, reason,
+cheap alternatives, cost or quota metadata when known, and policy version. Pricing and model
+rankings are adapter/config facts, not immutable gate semantics.
+
+The current default routing policy is stored as mutable configuration in
+`runtime/config/model-router.policy.json`: `gpt-5.6-terra` plans, `gpt-5.4` implements, and
+`gpt-5.6-sol` judges. This policy selects clients; it does not grant acceptance authority.
+
+During current NoGapCode construction, the working roles are: Terra plans, 5.4 executes, and Sol
+judges. This is build coordination, not a permanent product rule.
+
+## Provider Connections
+
+The Dashboard owns connection UX, but JavaScript never runs provider shell commands directly and
+never stores secrets. The local server exposes a small control-plane API:
+
+- `GET /api/connections`
+- `POST /api/connections/openrouter/connect`
+- `POST /api/connections/openrouter`
+- `POST /api/connections/openrouter/test`
+- `POST /api/connections/openrouter/disconnect`
+- `POST /api/connections/codex/connect`
+- `POST /api/connections/codex/test`
+- `POST /api/connections/claude/connect`
+- `POST /api/connections/claude/test`
+
+Dashboard controls are not allowed to be decorative. A visible control must either call a real local
+API, navigate to runtime-backed records, or be visibly unavailable until the matching runtime
+capability exists. Project selection is backed by `.nogap/projects.json`, and runtime validation is
+available through `POST /api/runtime/validate`.
+
+OpenRouter supports local OAuth PKCE login. NoGapCode starts that login from the Dashboard, receives
+the localhost callback, exchanges the authorization code for a user-controlled API key, and stores
+that key through the OS credential store on Windows under a credential reference. Manual API-key
+entry remains a fallback. The API returns only `credential_present`, `credential_ref`, and a masked
+hint. Codex and Claude Code use their official local CLI authentication flows; NoGapCode detects and
+probes them but does not ask for, copy, or persist their account tokens.
+
+If a local CLI is installed outside the server process `PATH`, set `CODEX_CLI_PATH` or
+`CLAUDE_CODE_PATH` to the executable path. A local profile without an executable is reported as
+detected but not ready. On Windows, `~/.local/bin/claude.exe` is checked automatically.
+
+Claude's product web page is not treated as an OAuth callback. NoGapCode can open it as
+install/sign-in guidance, but Claude connection readiness requires a local `claude` executable that
+runs the official Claude Code login flow. Claude becomes ready only when `claude auth status`
+reports a signed-in account.
+
+Connection status is capability based. For Codex, the current probe checks executable presence,
+version, login status, runtime health, provider reachability, and WebSocket streaming through
+redacted `codex doctor --json` output. For OpenRouter, the probe checks secure-store presence,
+authentication, and real model discovery against the OpenRouter API. Model-specific streaming,
+tool-calling, and quota checks remain explicit warnings until the router runs provider-specific
+execution probes.
 
 ## Context Learning
 
@@ -135,13 +246,56 @@ retrieval needs exceed tags and explicit risk signals.
 
 For external literature, use `docs/literature-learning.md`: NoGapCode may ingest claims from trusted
 sources and high-quality GitHub projects, but every claim must pass source quality, benefit, cost,
-testability, meaning-quality, and conflict checks before becoming a lesson. Meaning-quality means
-the learned lesson remains accurate to the source, concise enough for recall, and complete enough to
+testability, meaning-quality, and conflict checks before it is even eligible. Promotion to a trusted
+lesson also requires acceptance evidence under the normal decision policy. Meaning-quality means the
+learned lesson remains accurate to the source, concise enough for recall, and complete enough to
 preserve the operational meaning.
 
 Goal-directed autolearning is a bounded loop over available literature claims, not a free-running
 belief engine. It should run locally or in GitHub Actions, learn only claims that match the active
 goal and pass the existing gates, and submit repository changes through a pull request.
+
+## Orchestrator (`nogap run`)
+
+`nogap run <project>` is orchestration-only in this milestone. It proposes a plan record
+(`plans/`), selects a route for the implementer role from real, live adapter health in
+`scripts/nogap_adapters.py` (never from static policy config alone), and records a dispatch
+*intent* (`dispatches/`, `status: intended`). If no `AgentRuntime` adapter reports a connected
+health probe, no route or dispatch is written — the run stops after the plan with a clear
+message, rather than fabricating a route to something that is not actually ready.
+
+`nogap run` does not invoke Codex, Claude Code, or any AgentRuntime to make changes. Execution
+dispatch, patch collection, independent verification, and the bounded repair loop remain
+NOT_IMPLEMENTED until the runtime carries those stages end to end.
+
+## Independent Verification Pipeline (`nogap verify`)
+
+`nogap verify <project>` verifies a dispatch's execution evidence independently of
+whatever worktree originally produced it. It applies the patch to a *fresh* isolated
+worktree and runs two layers, each writing its own `authority: verification` evidence
+(never `authority: acceptance` - a verifier only ever reports passed/failed/
+inconclusive; `nogap decide` alone accepts):
+
+- **Deterministic layer** (always runs): re-checks the patch against the frozen
+  gate's `rules.forbidden_paths` (an effect/scope check), then runs every command in
+  `rules.required_commands` against the patched worktree. This is the strongest
+  evidence - reproducible, no agent judgment involved.
+- **Independent review layer** (`--review`): dispatches a *different* ready
+  AgentRuntime than the one that executed (mirroring the identity-separation rule
+  already enforced for ACCEPT) to review the diff. The reviewer is asked to write a
+  structured verdict file rather than narrate a judgment in prose, and that file is
+  read back from the resulting patch (observed world state), not parsed out of
+  stdout. A missing or unparsable verdict is `inconclusive`, never trusted as a pass.
+
+## Failure-First Research Loop
+
+When a nontrivial attempt fails, repair should first inspect prior local evidence, previous lessons,
+relevant literature, and similar project failures before blind repeated retries:
+
+```text
+Plan -> Retrieve prior evidence/literature -> Execute -> Independently Verify -> Gate
+-> Accept / Reject -> Repair -> Learn
+```
 
 ## Deferred
 
@@ -155,3 +309,15 @@ Do not build these in the first runtime:
 - marketplace
 - dozens of agents
 - multi-cloud execution
+
+## Product Extension
+
+NoGapCode should not become web-only or desktop-only. The architectural path is:
+
+1. `NoGapCode Core Runtime`: local service, schemas, gates, evidence, and decision engine without GUI.
+2. `NoGapCode CLI`: commands such as `nogap run`, `nogap verify`, `nogap status`, and `nogap dashboard`.
+3. `NoGapCode Dashboard`: a localhost web UI that reads runtime APIs and event files.
+4. `Desktop Shell`: later Tauri packaging of the same Dashboard and Runtime for Windows, Linux, and macOS.
+5. `Server Mode`: optional remote Dashboard with authentication.
+
+If the Dashboard fails, the Runtime must still run, verify, and decide from the CLI.

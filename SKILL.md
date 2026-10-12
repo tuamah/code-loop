@@ -126,8 +126,7 @@ Use the lightest domain check that prevents expert-level mistakes:
 - **Code**: follow local patterns; prefer tests, type checks, lint, or a minimal repro.
 - **Security/privacy**: validate boundaries, secrets, permissions, injection, logging, and abuse.
 - **Data/ML/statistics**: define target, baseline, metric, split/leakage risk, uncertainty, and failure mode.
-- **Math/physics/engineering**: check units, assumptions, boundary conditions, conservation laws,
-  approximation limits, and order of magnitude.
+- **Math/physics/engineering**: check units, assumptions, limits, invariants, and order of magnitude.
 - **Medical/legal/financial/safety-critical**: use current authoritative sources, state uncertainty,
   avoid diagnosis or final professional advice, and recommend qualified review where appropriate.
 - **Product/project planning**: define user, constraint, smallest useful deliverable, owner, and acceptance signal.
@@ -155,6 +154,7 @@ Every non-trivial task needs one check that can fail:
 - Innovation: define failure signals and run or propose the smallest falsifying experiment.
 
 Read `references/verification.md` when choosing the check is not obvious.
+Read `references/nogap-runtime.md` before running or trusting any `nogap` command.
 
 ## Token Discipline
 

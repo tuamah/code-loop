@@ -1,0 +1,26 @@
+{
+  "id": "P0",
+  "macro_phase": "DEFINE",
+  "name": "Project Intent",
+  "required_inputs": [],
+  "required_artifacts": [
+    "PROJECT_INTENT"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "human_owner"
+  ],
+  "exit_gate": {
+    "description": "A concrete project intent is recorded before any other work begins.",
+    "checks": [
+      "intent_classified_as_research_production_or_experimental",
+      "objective_stated_in_one_paragraph_or_less"
+    ]
+  },
+  "allowed_next": [
+    "P1"
+  ],
+  "allowed_back_transitions": [],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}

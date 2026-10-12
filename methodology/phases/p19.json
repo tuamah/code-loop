@@ -1,0 +1,32 @@
+{
+  "id": "P19",
+  "macro_phase": "RELEASE",
+  "name": "Release Candidate & Freeze",
+  "required_inputs": [
+    "REVIEW_VERDICT"
+  ],
+  "required_artifacts": [
+    "RELEASE_CANDIDATE",
+    "EVIDENCE_BUNDLE"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "human_owner"
+  ],
+  "exit_gate": {
+    "description": "A verified commit is frozen as the release candidate, with its dependency/config snapshot, evidence bundle, and known limitations recorded. Any further code change reopens verification.",
+    "checks": [
+      "release_candidate_commit_matches_verified_commit",
+      "evidence_bundle_references_verification_evidence",
+      "known_limitations_recorded"
+    ]
+  },
+  "allowed_next": [
+    "P20"
+  ],
+  "allowed_back_transitions": [
+    "P18"
+  ],
+  "failure_transition": "P13",
+  "minimum_profile": "LIGHT"
+}

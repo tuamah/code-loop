@@ -6,7 +6,7 @@ automatically.
 The learning path is:
 
 ```text
-source -> claim -> benefit gate -> evidence link -> lesson/context -> recall
+source -> claim -> benefit gate -> independent acceptance evidence -> lesson/context -> recall
 ```
 
 Even after a claim passes the source and benefit gates, the learned lesson must be:
@@ -57,6 +57,7 @@ python scripts/nogap.py literature add /path/to/project \
   --benefit accuracy \
   --benefit token-cost \
   --evidence-strength primary \
+  --acceptance-evidence evidence-literature \
   --test "python scripts/nogap.py recall PROJECT --tag context" \
   --accurate --concise --complete
 
@@ -66,8 +67,9 @@ python scripts/nogap.py recall /path/to/project --tag context
 ```
 
 `evaluate` rejects the claim unless source, benefit, testability, evidence strength, and all three
-meaning-quality flags pass. `learn` then writes a normal decision-linked lesson, so later runtime
-validation and recall use the same path as project-local lessons.
+meaning-quality flags pass. `learn` also requires `acceptance_evidence` that satisfies the normal
+runtime decision policy. Source quality and model agreement are never enough by themselves to create
+a trusted lesson.
 
 ## Goal-Directed Autolearning
 

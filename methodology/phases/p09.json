@@ -1,0 +1,32 @@
+{
+  "id": "P9",
+  "macro_phase": "PREPARE",
+  "name": "Project Runtime & Governance Setup",
+  "required_inputs": [
+    "ADR"
+  ],
+  "required_artifacts": [
+    "GOVERNANCE",
+    "RUNTIME_STRUCTURE",
+    "MEMORY_CONFIGURATION"
+  ],
+  "required_evidence": [],
+  "required_roles": [
+    "human_owner"
+  ],
+  "exit_gate": {
+    "description": "Roles, runtime structure, and project memory configuration are set up before baselining.",
+    "checks": [
+      "governance_defines_acceptance_authority",
+      "runtime_structure_initialized"
+    ]
+  },
+  "allowed_next": [
+    "P10"
+  ],
+  "allowed_back_transitions": [
+    "P8"
+  ],
+  "failure_transition": null,
+  "minimum_profile": "LIGHT"
+}
